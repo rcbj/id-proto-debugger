@@ -258,6 +258,86 @@ function urlsFor(base, id) {
   return out;
 }
 
+// AN EXTERNALLY REACHABLE BASE (#470, B5). The URLs a session hands out are
+// read by a WALLET, which is often a phone that scanned a QR code — and the
+// Host the page reached this service at (`localhost`, `api`) names nothing
+// that phone can reach. So the base is, in order: the page's own
+// `publicBaseUrl` on create, this service's `oid4vpVerifierPublicBaseUrl`,
+// and only then the base the caller used (server.js's publicBaseUrl()).
+//
+// LETTING THE PAGE CHOOSE IT IS SAFE, and the reason is what the base is
+// used for: three strings handed back to the page that asked. This service
+// fetches nothing from it, redirects nobody to it and serves on its own
+// host whatever it says; the page could write any request_uri it liked into
+// the invocation without asking, and the Wallet reaches whatever it names.
+// A base that does not lead back here simply makes a request no Wallet can
+// answer. It is held to the shape a Wallet will accept — an absolute https
+// URL with no query, fragment or credentials — so a typing mistake is
+// refused by name rather than discovered on a phone.
+var MAX_PUBLIC_BASE_URL = 2048;
+
+function readPublicBaseUrl(value, name) {
+  log.debug('Entering readPublicBaseUrl(). ' + name);
+  if (value === undefined || value === null ||
+      String(value).trim() === '') {
+    log.debug('Leaving readPublicBaseUrl(). None.');
+    return { value: '' };
+  }
+  var text = String(value).trim();
+  if (text.length > MAX_PUBLIC_BASE_URL) {
+    log.debug('Leaving readPublicBaseUrl(). Too long.');
+    return { error: name + ' is ' + text.length + ' characters and this ' +
+        'service takes at most ' + MAX_PUBLIC_BASE_URL + '.' };
+  }
+  var url;
+  try {
+    url = new URL(text);
+  } catch (e) {
+    log.debug('Leaving readPublicBaseUrl(). Not a URL.');
+    return { error: name + ' must be an absolute https:// URL; ' +
+        JSON.stringify(text) + ' is not a URL.' };
+  }
+  if (url.protocol !== 'https:') {
+    log.debug('Leaving readPublicBaseUrl(). Not https.');
+    return { error: name + ' must be an https:// URL: a Wallet fetches ' +
+        'request_uri and posts to response_uri over TLS. It was ' +
+        JSON.stringify(text) + '.' };
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    log.debug('Leaving readPublicBaseUrl(). Extra parts.');
+    return { error: name + ' must be a base URL: no credentials, query ' +
+        'or fragment, because the session\'s paths are appended to it. ' +
+        'It was ' + JSON.stringify(text) + '.' };
+  }
+  log.debug('Leaving readPublicBaseUrl().');
+  return { value: url.origin + url.pathname.replace(/\/+$/, '') };
+}
+
+// The configured base, '' when unset. A malformed one is logged and
+// ignored, so the role keeps working on the caller's base.
+function configuredPublicBaseUrl(appconfig) {
+  log.debug('Entering configuredPublicBaseUrl().');
+  var read = readPublicBaseUrl(appconfig &&
+      appconfig.oid4vpVerifierPublicBaseUrl, 'oid4vpVerifierPublicBaseUrl');
+  if (read.error) {
+    log.warn('Ignoring oid4vpVerifierPublicBaseUrl: ' + read.error);
+    log.debug('Leaving configuredPublicBaseUrl(). Malformed.');
+    return '';
+  }
+  log.debug('Leaving configuredPublicBaseUrl(). ' + read.value);
+  return read.value;
+}
+
+// The base a session's URLs are built from: the page's, the setting's, or
+// the one the caller reached this service at.
+function publicBase(appconfig, asked, callerBase) {
+  log.debug('Entering publicBase().');
+  var base = asked || configuredPublicBaseUrl(appconfig) ||
+      String(callerBase || '');
+  log.debug('Leaving publicBase(). ' + base);
+  return base;
+}
+
 // Drop what has expired. From every entry point rather than on a timer,
 // for the SSF receiver's reason: a timer keeps the event loop alive for a
 // feature nobody is using.
@@ -340,7 +420,7 @@ function readRedirectUri(value) {
 
 // ---------------------------------------------------------------------------
 // POST /oid4vp/verifier. `options` is { redirectUri?, ttlMs?, idleTtlMs?,
-// liveSigning? };
+// liveSigning?, publicBaseUrl? };
 // `caller` is the request's address, which the per-caller cap counts.
 // ---------------------------------------------------------------------------
 function create(appconfig, options, caller) {
@@ -396,6 +476,11 @@ function create(appconfig, options, caller) {
     log.debug('Leaving create(). idleTtlMs refused.');
     return { ok: false, status: 400, error: idle.error };
   }
+  var base = readPublicBaseUrl(asked.publicBaseUrl, 'publicBaseUrl');
+  if (base.error) {
+    log.debug('Leaving create(). publicBaseUrl refused.');
+    return { ok: false, status: 400, error: base.error };
+  }
   var live = asked.liveSigning;
   if (live !== undefined && live !== null && typeof live !== 'boolean') {
     log.debug('Leaving create(). liveSigning refused.');
@@ -424,7 +509,8 @@ function create(appconfig, options, caller) {
   sessions.set(one.id, one);
   log.debug('Leaving create(). ' + one.id);
   return { ok: true, status: 201, id: one.id, secret: one.secret,
-    liveSigning: one.liveSigning, expiresAt: expiresAt(one) };
+    liveSigning: one.liveSigning, expiresAt: expiresAt(one),
+    publicBaseUrl: base.value };
 }
 
 function find(appconfig, id) {
@@ -1148,6 +1234,9 @@ function limits(appconfig) {
                             DEFAULTS.liveSignWaitMs),
     maxPendingSignings: setting(appconfig,
       'oid4vpVerifierMaxPendingSignings', DEFAULTS.maxPendingSignings),
+    // '' when unset: the URLs then use the base the page reached this
+    // service at, which a phone may not be able to reach (#470, B5).
+    publicBaseUrl: configuredPublicBaseUrl(appconfig),
     held: sessions.size,
     requestObjectMediaType: REQUEST_OBJECT_MEDIA_TYPE,
     caMediaType: CA_MEDIA_TYPE,
@@ -1191,6 +1280,9 @@ module.exports = {
   DEFAULTS: DEFAULTS,
   enabled: enabled,
   urlsFor: urlsFor,
+  readPublicBaseUrl: readPublicBaseUrl,
+  configuredPublicBaseUrl: configuredPublicBaseUrl,
+  publicBase: publicBase,
   create: create,
   publish: publish,
   publishFor: publishFor,

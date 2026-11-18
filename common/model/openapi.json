@@ -10630,6 +10630,13 @@
           "body": {
             "type": "string"
           },
+          "bodyEncoding": {
+            "type": "string",
+            "enum": [
+              "base64"
+            ],
+            "description": "\"base64\" when the call asked for responseEncoding base64: `body` is\nthen the bytes in base64 and `json` is null. Absent for text."
+          },
           "json": {},
           "http_exchange": {
             "$ref": "#/components/schemas/HttpExchange"
@@ -10683,6 +10690,18 @@
             "x-passthrough": true,
             "x-checked-in-code": "api/oid4vp_proxy.js: a string, none on a GET, at most oid4vpMaxRequestBytes"
           },
+          "responseEncoding": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\"text\" (absent: the default) or \"base64\": how the far end's body\ncomes back. base64 is for bytes that are not text, a CWT status list.",
+            "x-checked-in-code": "api/oid4vp_proxy.js: \"text\" or \"base64\""
+          },
           "sslValidate": {
             "anyOf": [
               {
@@ -10720,12 +10739,19 @@
         "type": "object",
         "required": [
           "methods",
+          "responseEncodings",
           "refusedHeaders",
           "maxRequestBytes",
           "statusRule"
         ],
         "properties": {
           "methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "responseEncodings": {
             "type": "array",
             "items": {
               "type": "string"
@@ -10861,6 +10887,18 @@
               }
             ],
             "description": "Hold a Wallet's request_uri POST (section 5.10) for the page to sign\na Request Object carrying its wallet_nonce."
+          },
+          "publicBaseUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The base the three URLs are built from, overriding\noid4vpVerifierPublicBaseUrl and the caller's own base: an address a\nWallet can reach. It only shapes the strings handed back.",
+            "x-checked-in-code": "api/oid4vp_verifier.js: an absolute https URL, at most 2048 characters, with no credentials, query or fragment"
           }
         },
         "description": "A Verifier session, as the page asks for one."
@@ -11034,6 +11072,7 @@
           "maxSessionBytes",
           "liveSignWaitMs",
           "maxPendingSignings",
+          "publicBaseUrl",
           "held",
           "requestObjectMediaType",
           "caMediaType",
@@ -11083,6 +11122,10 @@
           "maxPendingSignings": {
             "type": "number",
             "format": "double"
+          },
+          "publicBaseUrl": {
+            "type": "string",
+            "description": "oid4vpVerifierPublicBaseUrl, or \"\" when unset: the URLs then use the\nbase the page reached this service at."
           },
           "held": {
             "type": "integer",

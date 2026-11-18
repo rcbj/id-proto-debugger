@@ -296,7 +296,10 @@ const REPLACED = {
     // on 2026-11-16 (the static inventory did not read its SAVE table).
     sc_save_otp_key: ["sc_otp_aes_key"],
     sc_save_oath_secret: ["sc_oath_secret"],
-    sc_save_api_key: ["sc_otp_api_key"]
+    sc_save_api_key: ["sc_otp_api_key"],
+    // The OpenID4VP Verifier's identity (#470, B4): its root CA, attester
+    // and request key, kept across runs behind "Keep this identity".
+    vpv_save_identity: ["vpv_identity"]
   }
 };
 

@@ -62,6 +62,13 @@ var log = bunyan.createLogger({
 var ssfProxy = require('./ssf_proxy');
 
 var METHODS = ['GET', 'POST'];
+
+// How the far end's body comes back (#470, B3). `text` is every wallet
+// exchange: a Request Object is a JWS, a reply is JSON or nothing. `base64`
+// is for the Verifier page's issuer, DID and status list fetches, because a
+// Token Status List may be a CWT (binary CBOR) and text would turn its
+// bytes into replacement characters before the page could say what it was.
+var RESPONSE_ENCODINGS = ['text', 'base64'];
 var DEFAULT_MAX_REQUEST_BYTES = 262144;
 
 // The seventeenth outbound setting: a cap on the BODY this service forwards.
@@ -150,6 +157,16 @@ function describeRequest(input, appconfig) {
           'service forwards at most ' + limit + ' (oid4vpMaxRequestBytes).' };
     }
   }
+  var encoding = given.responseEncoding;
+  if (encoding === undefined || encoding === null || encoding === '') {
+    encoding = 'text';
+  }
+  if (RESPONSE_ENCODINGS.indexOf(encoding) < 0) {
+    log.debug('Leaving describeRequest(). Encoding ' + encoding + '.');
+    return { ok: false, error: 'responseEncoding must be "text" or ' +
+        '"base64": the body comes back as the text that arrived, or as ' +
+        'its bytes in base64 (a status list may be binary CBOR).' };
+  }
   var headers = headerResult.headers;
   if (body !== null && !hasHeader(headers, 'content-type')) {
     headers['Content-Type'] = 'application/x-www-form-urlencoded';
@@ -159,6 +176,7 @@ function describeRequest(input, appconfig) {
   }
   log.debug('Leaving describeRequest(). ' + method + ' ' + url);
   return { ok: true, method: method, url: url, headers: headers, body: body,
+           responseEncoding: encoding,
            sslValidate: !(given.sslValidate === false ||
                           given.sslValidate === 'false') };
 }
@@ -166,8 +184,21 @@ function describeRequest(input, appconfig) {
 // The Verifier's answer as the page reads it: the status, the headers, and
 // the body as TEXT (a Request Object is a JWS, a reply may be JSON or
 // nothing). `json` is the parse when it is JSON, for the page's convenience.
-function readResponse(status, headers, raw) {
+// Under responseEncoding "base64" `raw` is the bytes (a Buffer), `body` is
+// their base64, `bodyEncoding` says so, and `json` is null: the caller
+// decodes.
+function readResponse(status, headers, raw, encoding) {
   log.debug('Entering readResponse(). status=' + status);
+  if (encoding === 'base64') {
+    var bytes = Buffer.isBuffer(raw) ? raw :
+        (raw === null || raw === undefined) ? Buffer.alloc(0) :
+        ArrayBuffer.isView(raw) || raw instanceof ArrayBuffer ?
+          Buffer.from(raw) : Buffer.from(String(raw), 'utf8');
+    log.debug('Leaving readResponse(). ' + bytes.length + ' bytes.');
+    return { status: status, ok: status >= 200 && status < 300,
+             headers: headers || {}, body: bytes.toString('base64'),
+             bodyEncoding: 'base64', json: null };
+  }
   var text = (raw === null || raw === undefined) ? '' : String(raw);
   var json = null;
   if (text !== '') {
@@ -187,7 +218,8 @@ function readResponse(status, headers, raw) {
 function limits(appconfig) {
   log.debug('Entering limits().');
   log.debug('Leaving limits().');
-  return { methods: METHODS, refusedHeaders: Object.keys(
+  return { methods: METHODS, responseEncodings: RESPONSE_ENCODINGS,
+           refusedHeaders: Object.keys(
              ssfProxy.REFUSED_HEADERS), maxRequestBytes:
              maxRequestBytes(appconfig),
            statusRule: 'a 400 is this service refusing; a 502 is the ' +
@@ -197,6 +229,7 @@ function limits(appconfig) {
 
 module.exports = {
   METHODS: METHODS,
+  RESPONSE_ENCODINGS: RESPONSE_ENCODINGS,
   DEFAULT_MAX_REQUEST_BYTES: DEFAULT_MAX_REQUEST_BYTES,
   maxRequestBytes: maxRequestBytes,
   describeRequest: describeRequest,

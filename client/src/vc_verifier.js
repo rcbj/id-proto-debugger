@@ -21,9 +21,14 @@
 // Access names, and polls for what the wallet sent. Without an api (the static
 // sites) the page can still check an answer pasted into pane 4.
 //
-// NOTHING SECRET IS STORED. The request's private key, the response
-// decryption key and the api session's secret live in this page load only;
-// VERIFIER_KEYS below is the configuration a reader would otherwise retype.
+// NOTHING SECRET IS STORED, EXCEPT THE IDENTITY, AND THAT ONE IS AN
+// OPT-OUT. The response decryption key, each request's leaf key and the api
+// session's secret live in this page load only; VERIFIER_KEYS below is the
+// configuration a reader would otherwise retype. The Verifier's IDENTITY —
+// its root CA, its attester and its request key — is key material kept
+// across runs (#470, B4), because a wallet configured with trust anchors
+// can only trust what it was given before the request: see "THE
+// VERIFIER'S IDENTITY" below.
 // ---------------------------------------------------------------------------
 
 var appconfig = require(process.env.CONFIG_FILE);
@@ -46,8 +51,13 @@ var VERIFIER_KEYS = [
   "vpv_query_id", "vpv_format", "vpv_type", "vpv_claims", "vpv_binding",
   "vpv_dcql", "vpv_client_prefix", "vpv_response_mode", "vpv_delivery",
   "vpv_scheme", "vpv_redirect_uri", "vpv_client_id_typed", "vpv_dc_signed",
-  "vpv_trust_anchors", "vpv_issuer_bindings"
+  "vpv_trust_anchors", "vpv_fetch_via_api", "vpv_save_identity",
+  "vpv_public_base_url", "vpv_issuer_bindings"
 ];
+
+// Whether issuer metadata, DID documents and status lists are fetched
+// through the api (#470, B3). See fetchViaApi().
+var FETCH_VIA_API_ID = "vpv_fetch_via_api";
 
 // The configured iss-to-certificate mapping typed into pane 2 (SD-JWT VC
 // -27 section 2.5): "<iss> = sha256:<hex>" or "<iss> = cn:<name>", one per
@@ -155,6 +165,276 @@ function togglePane(id) {
 }
 
 // ---------------------------------------------------------------------------
+// THE VERIFIER'S IDENTITY (#470, B4).
+//
+// Until #470 every request made a new root CA, leaf, attester and request
+// key, so only a wallet that fetches its anchor from the leaf's Authority
+// Information Access could trust the Verifier: one CONFIGURED with anchors,
+// or with an attester's key, or with a registered JWKS, refused every
+// signed request, because what it had been given belonged to a run that was
+// over. So three things now outlive a request:
+//
+//   the root CA      what a wallet anchors for x509_hash and x509_san_dns
+//                    (the leaf stays per request: its SAN and its AIA name
+//                    the api host and the session, which change);
+//   the attester     whose key a wallet trusts for verifier_attestation;
+//   the request key  the DID of decentralized_identifier, and the JWKS a
+//                    wallet registered for a pre-registered client_id.
+//
+// They are KEY MATERIAL, under the rules every key-pair pane here follows
+// (CLAUDE.md, "Key Implementation Notes"): kept in localStorage under
+// vpv_identity only while "Keep this identity" (vpv_save_identity) is
+// ticked, which is the default; unticking it removes the stored identity on
+// the spot, saveState() removes it whenever the box is off, and so does
+// every page load, so no path leaves yesterday's private keys behind. A
+// page with no such box (an older cached copy) keeps saving: only an
+// explicit "0" stops it. With saving off the identity lasts this page load,
+// and the Download button and the import field carry it instead.
+// ---------------------------------------------------------------------------
+var IDENTITY_KEY = "vpv_identity";
+var SAVE_IDENTITY_KEY = "vpv_save_identity";
+
+// { root?, attester?, requestKey? }, as verifier.readVerifierIdentityFile()
+// returns it. Each part is made when a prefix first needs it.
+var identity = null;
+
+// Why the stored identity could not be read, shown until another is used.
+var identityProblem = "";
+
+function savingIdentity() {
+  log.debug("Entering savingIdentity().");
+  var box = el(SAVE_IDENTITY_KEY);
+  if (box) {
+    log.debug("Leaving savingIdentity(). " + box.checked);
+    return !!box.checked;
+  }
+  var stored = null;
+  try {
+    stored = localStorage.getItem(SAVE_IDENTITY_KEY);
+  } catch (e) {
+    stored = null;
+  }
+  log.debug("Leaving savingIdentity(). No box; stored " + stored);
+  return stored !== "0";
+}
+
+function hasIdentityParts(id) {
+  log.debug("Entering hasIdentityParts().");
+  var any = !!(id && (id.root || id.attester || id.requestKey));
+  log.debug("Leaving hasIdentityParts(). " + any);
+  return any;
+}
+
+// Remove the stored identity when saving is off. Called from saveState()
+// and on load, so it holds whichever way the box was cleared.
+function purgeIdentityIfOff() {
+  log.debug("Entering purgeIdentityIfOff().");
+  if (savingIdentity()) {
+    log.debug("Leaving purgeIdentityIfOff(). Saving.");
+    return;
+  }
+  try {
+    localStorage.removeItem(IDENTITY_KEY);
+  } catch (e) {
+    log.debug("purgeIdentityIfOff(): no storage — " + e.message);
+  }
+  log.debug("Leaving purgeIdentityIfOff(). Removed.");
+}
+
+function storeIdentity() {
+  log.debug("Entering storeIdentity().");
+  try {
+    if (savingIdentity() && hasIdentityParts(identity)) {
+      localStorage.setItem(IDENTITY_KEY, JSON.stringify(
+        verifier.verifierIdentityFile(identity)));
+    } else {
+      localStorage.removeItem(IDENTITY_KEY);
+    }
+  } catch (e) {
+    log.debug("storeIdentity(): no storage — " + e.message);
+  }
+  log.debug("Leaving storeIdentity().");
+}
+
+function loadIdentity() {
+  log.debug("Entering loadIdentity().");
+  purgeIdentityIfOff();
+  identity = {};
+  if (!savingIdentity()) {
+    log.debug("Leaving loadIdentity(). Not saving.");
+    return;
+  }
+  var text = null;
+  try {
+    text = localStorage.getItem(IDENTITY_KEY);
+  } catch (e) {
+    text = null;
+  }
+  if (!text) {
+    log.debug("Leaving loadIdentity(). None stored.");
+    return;
+  }
+  try {
+    identity = verifier.readVerifierIdentityFile(text);
+  } catch (e) {
+    // Unreadable is not silently replaced: the reader is told, and a new
+    // identity is made only when a request needs one.
+    log.warn("loadIdentity(): the stored identity is unreadable — " +
+             e.message);
+    identityProblem = "The stored identity could not be read (" +
+      e.message + "); a new one will be made.";
+    identity = {};
+  }
+  log.debug("Leaving loadIdentity().");
+}
+
+// The parts a request needs, made now if they are missing. The root needs
+// Web Crypto (makeSigner() says so first); the two keys are pure JS.
+async function ensureIdentity(needRoot) {
+  log.debug("Entering ensureIdentity(). root=" + !!needRoot);
+  identity = identity || {};
+  var made = false;
+  if (needRoot && !identity.root) {
+    identity.root = await verifier.makeVerifierRoot();
+    made = true;
+  }
+  if (!identity.requestKey) {
+    identity.requestKey = verifier.makeRequestKey();
+    made = true;
+  }
+  if (!identity.attester) {
+    identity.attester = verifier.makeAttester();
+    made = true;
+  }
+  if (made) {
+    storeIdentity();
+  }
+  showIdentity();
+  log.debug("Leaving ensureIdentity(). made=" + made);
+  return identity;
+}
+
+// What a wallet must be given to trust this Verifier, per prefix.
+function identityTrustText() {
+  log.debug("Entering identityTrustText().");
+  var id = identity || {};
+  var lines = [];
+  lines.push("x509_hash, x509_san_dns: give the wallet this ROOT CA as a " +
+             "trust anchor (each request's leaf is issued under it):");
+  lines.push(id.root ? id.root.certificatePem.trim()
+                     : "(not made yet: the first x509 request makes it)");
+  lines.push("");
+  lines.push("verifier_attestation: give the wallet the attester's JWKS " +
+             "(its iss is " + (id.attester ? id.attester.iss
+                                           : "not made yet") + "):");
+  lines.push(id.attester ? JSON.stringify(id.attester.jwks, null, 2)
+                         : "(not made yet)");
+  lines.push("");
+  lines.push("decentralized_identifier: the Verifier's DID, which " +
+             "resolves with no network:");
+  lines.push(id.requestKey ? verifier.clientIdFor("decentralized_identifier",
+    id.requestKey, { didMethod: "jwk" }).replace(/^[^:]*:/, "")
+                           : "(not made yet)");
+  lines.push("");
+  lines.push("pre-registered: the JWKS to register for the client_id:");
+  lines.push(id.requestKey ? JSON.stringify(
+    verifier.preRegisteredJwks(id.requestKey), null, 2) : "(not made yet)");
+  log.debug("Leaving identityTrustText().");
+  return lines.join("\n");
+}
+
+function showIdentity() {
+  log.debug("Entering showIdentity().");
+  setVal("vpv_identity_trust", identityTrustText());
+  var how = savingIdentity()
+    ? "Kept in this browser across runs (key material: untick \"Keep " +
+      "this identity\" to remove it)."
+    : "Not kept: this identity lasts this page load. Download it to " +
+      "carry it.";
+  setText("vpv_identity_status", (identityProblem ? identityProblem + " "
+    : "") + how, identityProblem ? "vc-bad"
+    : savingIdentity() ? "vc-ok" : "vc-pending");
+  log.debug("Leaving showIdentity().");
+}
+
+function saveIdentityChanged() {
+  log.debug("Entering saveIdentityChanged().");
+  saveState();
+  storeIdentity();
+  showIdentity();
+  log.debug("Leaving saveIdentityChanged().");
+  return false;
+}
+
+// One JSON file, PEM and JWK: verifier.verifierIdentityFile()'s shape.
+async function downloadIdentity() {
+  log.debug("Entering downloadIdentity().");
+  try {
+    var canRoot = typeof crypto !== "undefined" && !!crypto.subtle;
+    await ensureIdentity(canRoot);
+    var text = JSON.stringify(verifier.verifierIdentityFile(identity),
+                              null, 2) + "\n";
+    var blob = new Blob([text], { type: "application/json" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "oid4vp-verifier-identity.json";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(function () {
+      URL.revokeObjectURL(link.href);
+    }, 0);
+    setText("vpv_identity_status", "Downloaded. The file holds PRIVATE " +
+      "keys: whoever has it can sign as this Verifier." +
+      (canRoot ? "" : " It has no root CA: this page is not in a secure " +
+       "context, so none can be made here."), "vc-ok");
+  } catch (e) {
+    log.warn("downloadIdentity(): " + e.message);
+    setText("vpv_identity_status", "Could not download the identity: " +
+            e.message, "vc-bad");
+  }
+  log.debug("Leaving downloadIdentity().");
+  return false;
+}
+
+// The pasted file replaces the identity. The field itself is never stored.
+function importIdentity() {
+  log.debug("Entering importIdentity().");
+  try {
+    identity = verifier.readVerifierIdentityFile(
+      val("vpv_identity_import").trim());
+    identityProblem = "";
+    setVal("vpv_identity_import", "");
+    storeIdentity();
+    showIdentity();
+    setText("vpv_identity_status", "Imported (" +
+      Object.keys(identity).join(", ") + ")" + (savingIdentity()
+        ? ", and kept in this browser." : ", for this page load only."),
+      "vc-ok");
+  } catch (e) {
+    log.debug("importIdentity(): " + e.message);
+    setText("vpv_identity_status", "Not imported: " + e.message, "vc-bad");
+  }
+  log.debug("Leaving importIdentity().");
+  return false;
+}
+
+// Throw the identity away. Every wallet that trusted the old one must be
+// given the new one.
+function newIdentity() {
+  log.debug("Entering newIdentity().");
+  identity = {};
+  identityProblem = "";
+  storeIdentity();
+  showIdentity();
+  setText("vpv_identity_status", "Discarded. A new identity is made by the " +
+    "next request; a wallet that trusted the old one must be given the " +
+    "new one.", "vc-pending");
+  log.debug("Leaving newIdentity().");
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // STATE.
 // ---------------------------------------------------------------------------
 function saveState() {
@@ -174,11 +454,14 @@ function saveState() {
     // No storage for this origin. Every field still works; nothing is kept.
     log.debug("saveState(): no storage — " + e.message);
   }
+  // Key material behind its checkbox: off means removed, on every save.
+  purgeIdentityIfOff();
   log.debug("Leaving saveState().");
 }
 
 function loadState() {
   log.debug("Entering loadState().");
+  var viaApi = null;
   try {
     VERIFIER_KEYS.forEach(function (id) {
       var stored = localStorage.getItem(id);
@@ -186,9 +469,12 @@ function loadState() {
         setVal(id, stored);
       }
     });
+    viaApi = localStorage.getItem(FETCH_VIA_API_ID);
   } catch (e) {
     log.debug("loadState(): no storage — " + e.message);
   }
+  initFetchViaApi(viaApi);
+  loadIdentity();
   log.debug("Leaving loadState().");
 }
 
@@ -372,7 +658,10 @@ async function probeApi() {
       return false;
     }
     setText("vpv_api_status", "The api at " + API_URL + " will host this " +
-      "request's request_uri and response_uri.", "vc-ok");
+      "request's request_uri and response_uri" + (limits &&
+      limits.publicBaseUrl ? ", handing wallets URLs under " +
+      limits.publicBaseUrl + " (oid4vpVerifierPublicBaseUrl)" : "") + ".",
+      "vc-ok");
     log.debug("Leaving probeApi(). Available.");
     return true;
   } catch (e) {
@@ -456,13 +745,20 @@ async function makeSigner(prefix, dnsName, caIssuersUrl) {
         "made (#463). The decentralized_identifier, verifier_attestation " +
         "and pre-registered prefixes need no certificate.");
     }
+    // The ROOT is the identity's, kept across runs; the leaf is this
+    // request's (#470, B4).
+    var held = await ensureIdentity(true);
     signer.identity = await verifier.makeVerifierIdentity({
-      dnsName: dnsName, caIssuersUrl: caIssuersUrl });
-    signer.trust = signer.identity.rootPem || "";
+      dnsName: dnsName, caIssuersUrl: caIssuersUrl, root: held.root });
+    signer.trust = "The Verifier's root CA, the same for every request " +
+      "while this identity is kept. A wallet that does not follow the " +
+      "leaf's Authority Information Access must be given it as a trust " +
+      "anchor:\n" + (signer.identity.rootPem || "");
   } else {
-    signer.identity = await verifier.makeRequestKey();
+    var keys = await ensureIdentity(false);
+    signer.identity = keys.requestKey;
     if (prefix === "verifier_attestation") {
-      signer.attester = await verifier.makeAttester();
+      signer.attester = keys.attester;
       signer.trust = "The attester's keys (trust these):\n" +
         JSON.stringify(signer.attester.jwks, null, 2);
     } else if (prefix === "pre-registered") {
@@ -477,8 +773,12 @@ async function makeSigner(prefix, dnsName, caIssuersUrl) {
 
 function clientIdOf(signer, redirectUri) {
   log.debug("Entering clientIdOf(). " + signer.prefix);
+  // verifier_attestation's value (the attestation's sub) is the api host:
+  // the request key it signs with names no host of its own.
   var id = verifier.clientIdFor(signer.prefix, signer.identity, {
     dnsName: signer.dnsName, redirectUri: redirectUri,
+    value: signer.prefix === "verifier_attestation" ? signer.dnsName
+                                                     : undefined,
     clientId: val("vpv_client_id_typed").trim() || undefined,
     didMethod: "jwk" });
   if (signer.prefix === "decentralized_identifier") {
@@ -554,9 +854,21 @@ async function createRequest() {
     if (redirectUri) {
       create.redirectUri = redirectUri;
     }
+    // The base a wallet reaches the api at, when the page's own is not one
+    // (#470, B5): the api checks it is an https URL and builds the three
+    // URLs from it. It serves on its own host whatever this says.
+    var publicBase = val("vpv_public_base_url").trim();
+    if (publicBase) {
+      create.publicBaseUrl = publicBase;
+    }
     var hosted = await apiJson("POST", "/oid4vp/verifier", create);
-    var signer = await makeSigner(prefix,
-      new URL(hosted.responseUri).hostname, hosted.caIssuersUrl);
+    var host = new URL(hosted.responseUri).hostname;
+    if (prefix === "x509_san_dns") {
+      // Refused before a certificate is made: an IP address is never a
+      // dNSName (clientIdFor() says why and what to use instead).
+      verifier.clientIdFor(prefix, null, { dnsName: host });
+    }
+    var signer = await makeSigner(prefix, host, hosted.caIssuersUrl);
     var encryption = mode === "direct_post.jwt"
       ? await verifier.responseEncryptionKey() : null;
     var clientId = clientIdOf(signer, hosted.responseUri);
@@ -745,6 +1057,23 @@ function sameDeviceNote() {
   log.debug("Leaving sameDeviceNote(). Missing.");
 }
 
+// A host a wallet on ANOTHER device usually cannot reach (#470, B5):
+// loopback, or a single-label name such as the compose service `api`.
+function unreachableHost(url) {
+  log.debug("Entering unreachableHost().");
+  var host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch (e) {
+    log.debug("Leaving unreachableHost(). Not a URL.");
+    return "";
+  }
+  var local = host === "localhost" || /^127\./.test(host) ||
+      host === "[::1]" || (host.indexOf(".") < 0 && host.indexOf(":") < 0);
+  log.debug("Leaving unreachableHost(). " + local);
+  return local ? host : "";
+}
+
 function showRequest(invocation, clientId, requestObject, claims) {
   log.debug("Entering showRequest().");
   setVal("vpv_invocation", invocation);
@@ -754,6 +1083,13 @@ function showRequest(invocation, clientId, requestObject, claims) {
     link.style.display = "inline";
   }
   showQr(invocation);
+  var far = unreachableHost(current.hosted.responseUri);
+  if (far) {
+    setText("vpv_qr_note", "The request_uri and response_uri are on " +
+      far + ", which a wallet on another device usually cannot reach. " +
+      "Set the public base URL in pane 2, or oid4vpVerifierPublicBaseUrl " +
+      "on the api, to an address it can.", "vc-pending");
+  }
   sameDeviceNote();
   setVal("vpv_client_id", clientId);
   setVal("vpv_request_uri", requestObject ? current.hosted.requestUri : "");
@@ -913,14 +1249,179 @@ async function poll() {
   log.debug("Leaving poll(). Still waiting.");
 }
 
-async function fetchJson(url) {
-  log.debug("Entering fetchJson(). " + url);
-  var response = await fetch(url, { headers: { Accept: "application/json" } });
+// ---------------------------------------------------------------------------
+// THE ISSUER-SIDE FETCHES (#470, B3): an issuer's SD-JWT VC metadata and its
+// JWKS, a did:web document, a Token Status List or a Bitstring Status List
+// credential. From the page, each is a cross-origin GET that the browser
+// lets the page read only if the server sends CORS headers — and SD-JWT VC
+// metadata and did:web hosts generally send none, while Token Status List
+// section 8.1 makes CORS only a SHOULD. So by default they go through the
+// api's guarded proxy, POST /oid4vp/call, which no browser policy applies to
+// and which carries the address policy, the timeouts and the size and
+// redirect caps of every other outbound call.
+//
+// THE DEFAULT IS ON WHERE THERE IS AN API AND OFF WHERE THERE IS NONE. A
+// Verifier that can only read issuers that happen to allow its origin
+// reports "could not fetch" for most of the world, which is the wrong
+// default wherever the api can do better. A static site has no api, so the
+// box is unticked and disabled there and the browser fetches directly. A
+// choice the reader made is remembered (an ordinary setting) and wins.
+//
+// Either way a fetch that fails throws an Error naming the URL, which the
+// engine reports as a SKIP ("could not fetch …"), never as a signature
+// FAIL: a key nobody could read is a check not performed.
+// ---------------------------------------------------------------------------
+function apiOffered() {
+  log.debug("Entering apiOffered().");
+  var on = BACKEND_AVAILABLE && !!API_URL;
+  log.debug("Leaving apiOffered(). " + on);
+  return on;
+}
+
+function fetchViaApi() {
+  log.debug("Entering fetchViaApi().");
+  var on = apiOffered() && !!val(FETCH_VIA_API_ID);
+  log.debug("Leaving fetchViaApi(). " + on);
+  return on;
+}
+
+// The ticked state on load: the reader's remembered choice, else the
+// default above. Disabled where there is no api to choose.
+function initFetchViaApi(stored) {
+  log.debug("Entering initFetchViaApi().");
+  var box = el(FETCH_VIA_API_ID);
+  if (!box) {
+    log.debug("Leaving initFetchViaApi(). No element.");
+    return;
+  }
+  if (!apiOffered()) {
+    box.checked = false;
+    box.disabled = true;
+    log.debug("Leaving initFetchViaApi(). No api.");
+    return;
+  }
+  box.disabled = false;
+  if (stored === null || stored === undefined) {
+    box.checked = true;
+  }
+  log.debug("Leaving initFetchViaApi(). " + box.checked);
+}
+
+function bytesOfBase64(text) {
+  log.debug("Entering bytesOfBase64().");
+  var binary = atob(String(text || ""));
+  var out = new Uint8Array(binary.length);
+  for (var i = 0; i < binary.length; i++) {
+    out[i] = binary.charCodeAt(i);
+  }
+  log.debug("Leaving bytesOfBase64(). " + out.length + " bytes.");
+  return out;
+}
+
+function headerOf(headers, name) {
+  log.debug("Entering headerOf(). " + name);
+  var wanted = String(name).toLowerCase();
+  var found = "";
+  Object.keys(headers || {}).forEach(function (key) {
+    if (key.toLowerCase() === wanted && !found) {
+      found = String(headers[key]);
+    }
+  });
+  log.debug("Leaving headerOf().");
+  return found;
+}
+
+// One GET through POST /oid4vp/call, the body as bytes (responseEncoding
+// base64, so a CWT status list arrives intact). A 400 is the api refusing
+// (the address policy, most often), a 502 the server unreachable, and a
+// non-2xx inside a 200 is what the server itself answered.
+async function apiGet(url, accept) {
+  log.debug("Entering apiGet(). " + url);
+  var response;
+  try {
+    response = await fetch(API_URL + "/oid4vp/call", {
+      method: "POST",
+      headers: { "Content-Type": "application/json",
+                 Accept: "application/json" },
+      body: JSON.stringify({ url: url, method: "GET",
+                             headers: { Accept: accept },
+                             responseEncoding: "base64" })
+    });
+  } catch (e) {
+    log.debug("Leaving apiGet(). The api did not answer.");
+    throw new Error("GET " + url + " through the api: the api at " +
+                    API_URL + " did not answer (" + e.message + ").");
+  }
+  var answer = null;
+  try {
+    answer = await response.json();
+  } catch (e) {
+    answer = null;
+  }
+  if (!response.ok || !answer) {
+    var why = (answer && answer.error) || ("HTTP " + response.status);
+    log.debug("Leaving apiGet(). The api answered " + response.status);
+    throw new Error("GET " + url + " through the api: " +
+      (response.status === 400 ? "the api refused it: " :
+       "it could not be reached: ") + why);
+  }
+  if (!answer.ok) {
+    log.debug("Leaving apiGet(). " + answer.status);
+    throw new Error("GET " + url + " answered " + answer.status +
+                    " (through the api).");
+  }
+  var body = answer.bodyEncoding === "base64" ? bytesOfBase64(answer.body)
+    : new TextEncoder().encode(String(answer.body || ""));
+  log.debug("Leaving apiGet(). " + body.length + " bytes.");
+  return { body: body,
+           contentType: headerOf(answer.headers, "content-type") };
+}
+
+// The browser's own GET. A server that sends no CORS headers makes fetch()
+// throw a bare TypeError ("Failed to fetch") with nothing in it about why,
+// so the URL and the likely reason are added.
+async function browserGet(url, accept) {
+  log.debug("Entering browserGet(). " + url);
+  var response;
+  try {
+    response = await fetch(url, { headers: { Accept: accept } });
+  } catch (e) {
+    log.debug("Leaving browserGet(). " + e.message);
+    throw new Error("GET " + url + " failed in the browser (" + e.message +
+      "). A server that sends no CORS headers cannot be read from a page; " +
+      (apiOffered() ? "tick \"through the api\" in pane 2."
+                    : "this deployment has no api to fetch it through."));
+  }
   if (!response.ok) {
-    log.debug("Leaving fetchJson(). " + response.status);
+    log.debug("Leaving browserGet(). " + response.status);
     throw new Error("GET " + url + " answered " + response.status);
   }
-  var json = await response.json();
+  var body = new Uint8Array(await response.arrayBuffer());
+  log.debug("Leaving browserGet(). " + body.length + " bytes.");
+  return { body: body,
+           contentType: response.headers.get("content-type") || "" };
+}
+
+async function getBytes(url, accept) {
+  log.debug("Entering getBytes(). " + url);
+  var got = fetchViaApi() ? await apiGet(url, accept)
+                          : await browserGet(url, accept);
+  log.debug("Leaving getBytes().");
+  return got;
+}
+
+async function fetchJson(url) {
+  log.debug("Entering fetchJson(). " + url);
+  var got = await getBytes(url, "application/json");
+  var json;
+  try {
+    json = JSON.parse(new TextDecoder().decode(got.body));
+  } catch (e) {
+    log.debug("Leaving fetchJson(). Not JSON.");
+    throw new Error("GET " + url + " did not answer JSON (" +
+                    (got.contentType || "no Content-Type") + "): " +
+                    e.message);
+  }
   log.debug("Leaving fetchJson().");
   return json;
 }
@@ -932,15 +1433,9 @@ async function fetchJson(url) {
 async function fetchText(url, opts) {
   log.debug("Entering fetchText(). " + url);
   var accept = (opts && opts.accept) || "*/*";
-  var response = await fetch(url, { headers: { Accept: accept } });
-  if (!response.ok) {
-    log.debug("Leaving fetchText(). " + response.status);
-    throw new Error("GET " + url + " answered " + response.status);
-  }
-  var body = new Uint8Array(await response.arrayBuffer());
-  log.debug("Leaving fetchText(). " + body.length + " bytes.");
-  return { body: body, contentType: response.headers.get("content-type") ||
-    "" };
+  var got = await getBytes(url, accept);
+  log.debug("Leaving fetchText(). " + got.body.length + " bytes.");
+  return got;
 }
 
 function clearVerdict() {
@@ -1120,6 +1615,7 @@ function onload() {
     regenerateDcql();
   }
   settingsChanged();
+  showIdentity();
   probeApi();
   log.debug("Leaving onload().");
 }
@@ -1137,6 +1633,10 @@ module.exports = {
   checkPasted: checkPasted,
   askThroughDcApi: askThroughDcApi,
   reset: reset,
+  saveIdentityChanged: saveIdentityChanged,
+  downloadIdentity: downloadIdentity,
+  importIdentity: importIdentity,
+  newIdentity: newIdentity,
   currentRequest: currentRequest,
   onload: onload
 };

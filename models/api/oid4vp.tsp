@@ -53,6 +53,11 @@ model CallRequest {
   @passthrough
   body?: unknown;
 
+  /** "text" (absent: the default) or "base64": how the far end's body
+   *  comes back. base64 is for bytes that are not text, a CWT status list. */
+  @checkedInCode("api/oid4vp_proxy.js: \"text\" or \"base64\"")
+  responseEncoding?: string | null;
+
   /** Only false or "false" turns off certificate verification. */
   @checkedInCode("api/oid4vp_proxy.js: only false or \"false\" turns verification off")
   sslValidate?: boolean | string | null;
@@ -76,6 +81,11 @@ model Answer {
   ok: boolean;
   headers: Record<unknown>;
   body: string;
+
+  /** "base64" when the call asked for responseEncoding base64: `body` is
+   *  then the bytes in base64 and `json` is null. Absent for text. */
+  bodyEncoding?: "base64";
+
   json: unknown;
   http_exchange?: HttpExchange;
 }
@@ -101,6 +111,7 @@ model Unreachable {
 /** What the OpenID4VP proxy will and will not do. */
 model Limits {
   methods: string[];
+  responseEncodings: string[];
   refusedHeaders: string[];
   maxRequestBytes: int64;
   statusRule: string;
@@ -155,6 +166,12 @@ model VerifierCreateRequest {
   /** Hold a Wallet's request_uri POST (section 5.10) for the page to sign
    *  a Request Object carrying its wallet_nonce. */
   liveSigning?: boolean | null;
+
+  /** The base the three URLs are built from, overriding
+   *  oid4vpVerifierPublicBaseUrl and the caller's own base: an address a
+   *  Wallet can reach. It only shapes the strings handed back. */
+  @checkedInCode("api/oid4vp_verifier.js: an absolute https URL, at most 2048 characters, with no credentials, query or fragment")
+  publicBaseUrl?: string | null;
 }
 
 /** The Request Object the page signed for ONE held Wallet. */
@@ -299,6 +316,10 @@ model VerifierLimits {
   maxSessionBytes: float64;
   liveSignWaitMs: float64;
   maxPendingSignings: float64;
+
+  /** oid4vpVerifierPublicBaseUrl, or "" when unset: the URLs then use the
+   *  base the page reached this service at. */
+  publicBaseUrl: string;
 
   /** How many sessions this process holds now. */
   held: int32;

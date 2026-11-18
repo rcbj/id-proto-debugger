@@ -37,8 +37,10 @@
 // (Appendix A); the four DCQL formats; the IETF Token Status List and the
 // W3C Bitstring Status List; and the Data Integrity cryptosuites bbs-2023,
 // ecdsa-rdfc-2019, ecdsa-jcs-2019, eddsa-rdfc-2022 and eddsa-jcs-2022.
-// What it does not verify (ecdsa-sd-2023, a CWT Status List Token) is a
-// "skip" that says so, never a pass.
+// Status List Tokens are read in both forms, the JWT and the CWT
+// (draft-ietf-oauth-status-list-21 sections 5.1 and 5.2). What it does not
+// verify (ecdsa-sd-2023, a status list behind a COSE_Mac0) is a "skip" that
+// says so, never a pass.
 //
 // No DOM: tests/vp_verifier_engine.js drives all of it in node.
 // ---------------------------------------------------------------------------
@@ -73,6 +75,7 @@ var joseJwe = require("./jose_jwe");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 var mdoc = require("./mdoc");
+var coseLib = require("./cose");
 var bbs2023 = require("./bbs2023");
 var didLib = require("./did");
 var jsonld = require("jsonld");
@@ -113,11 +116,31 @@ var DC_API_PROTOCOLS = {
 var ORIGIN_PREFIX = "origin:";
 var VERIFIER_ATTESTATION_TYP = "verifier-attestation+jwt";
 var STATUS_LIST_TYP = "statuslist+jwt";
-// draft-ietf-oauth-status-list-21 section 8.1 defines two media types. Only
-// the JWT form is verified here (the CWT form is recognised and reported),
-// so only the JWT form is asked for: advertising a form this Verifier
-// cannot check would invite a list it then cannot use.
-var STATUS_LIST_ACCEPT = "application/statuslist+jwt";
+// draft-ietf-oauth-status-list-21 section 5.2: the CWT form's protected
+// header type (16), RFC 9596.
+var STATUS_LIST_CWT_TYPE = "application/statuslist+cwt";
+// Section 8.1 defines two media types for content negotiation, and both
+// forms are verified here (#471, E5), so both are asked for.
+var STATUS_LIST_ACCEPT = "application/statuslist+jwt, " +
+    STATUS_LIST_CWT_TYPE;
+// The CWT Claims Set keys section 5.2 names (RFC 8392 section 4 and this
+// draft's section 14.3), and the COSE header labels a Status List Token's
+// key is named by (RFC 9052 section 3.1, RFC 9360 section 2).
+var CWT_ISS = 1;
+var CWT_SUB = 2;
+var CWT_EXP = 4;
+var CWT_NBF = 5;
+var CWT_IAT = 6;
+var CWT_STATUS_LIST = 65533;
+var CWT_TTL = 65534;
+var COSE_HDR_ALG = 1;
+var COSE_HDR_KID = 4;
+var COSE_HDR_TYP = 16;
+var COSE_HDR_X5CHAIN = 33;
+var COSE_HDR_X5T = 34;
+// RFC 9360's x5t is [hash alg, hash]; the two a JOSE header also has.
+var COSE_X5T_SHA256 = -16;
+var COSE_X5T_SHA1 = -14;
 // draft-ietf-oauth-status-list-21 section 7.1: the registered values.
 var TOKEN_STATUS_NAMES = { 0: "VALID", 1: "INVALID", 2: "SUSPENDED" };
 // Ibid.: "The Status Type value 0x03 and Status Type values in the range
@@ -472,13 +495,153 @@ function buildDcql(spec) {
 // x509_hash names, and its AIA caIssuers URL is where a wallet that anchors
 // by fetching (rcbj/oid4vc-wallet does) finds the root. x5c carries the LEAF
 // ONLY, so such a wallet has to fetch it.
+//
+// THE ROOT OUTLIVES THE REQUEST (#470, B4). A wallet that is CONFIGURED with
+// trust anchors, rather than fetching one from AIA, can only trust a root it
+// was given before the request arrived, so a root made per request is one
+// no such wallet ever trusts. makeVerifierRoot() makes it once; the page
+// keeps it (behind its save checkbox) and hands it to makeVerifierIdentity()
+// for every request. The LEAF stays per request: its SAN and its AIA URL
+// name the api host and the session, which change.
 // ---------------------------------------------------------------------------
+var ROOT_SUBJECT = "CN=Debugger Verifier Root,O=idptools";
+
+// The DER a P-256 SubjectPublicKeyInfo begins with (RFC 5480: the
+// id-ecPublicKey and secp256r1 OIDs, then a 66-byte BIT STRING header), so
+// the uncompressed point is the 65 bytes after it. The encoding is fixed,
+// which is what lets a certificate's key be compared with a JWK in pure JS.
+var P256_SPKI_PREFIX = "3059301306072a8648ce3d020106082a8648ce3d03010703" +
+    "4200";
+
 function x509HashOf(der) {
   log.debug("Entering x509HashOf().");
   log.debug("Leaving x509HashOf().");
   return bytes.bytesToB64u(nobleSha256(bytes.asBytes(der)));
 }
 
+// The uncompressed P-256 point in a certificate's SubjectPublicKeyInfo, or
+// null when the certificate's key is not P-256.
+function p256PointOfCertificate(der) {
+  log.debug("Entering p256PointOfCertificate().");
+  var hex = bytes.bytesToHex(bytes.asBytes(der));
+  var at = hex.indexOf(P256_SPKI_PREFIX);
+  if (at < 0 || at % 2 !== 0) {
+    log.debug("Leaving p256PointOfCertificate(). Not P-256.");
+    return null;
+  }
+  var from = at + P256_SPKI_PREFIX.length;
+  var point = bytes.hexToBytes(hex.slice(from, from + 130));
+  log.debug("Leaving p256PointOfCertificate().");
+  return point.length === 65 && point[0] === 4 ? point : null;
+}
+
+// A P-256 private JWK, checked (its x and y ARE its d's public key) and
+// returned with its public half, a kid (the RFC 7638 thumbprint), use sig
+// and alg ES256 — the shape makeRequestKey() returns.
+function p256KeyFromJwk(jwk, what) {
+  log.debug("Entering p256KeyFromJwk(). " + what);
+  if (!isPlainObject(jwk) || jwk.kty !== "EC" || jwk.crv !== "P-256" ||
+      !isNonEmptyString(jwk.d)) {
+    log.debug("Leaving p256KeyFromJwk(). Not a P-256 private JWK.");
+    throw new Error(what + " must be a P-256 private JWK (kty EC, crv " +
+                    "P-256, with d).");
+  }
+  var d = bytes.b64uToBytes(jwk.d);
+  var point;
+  try {
+    point = p256.getPublicKey(d, false);
+  } catch (e) {
+    log.debug("Leaving p256KeyFromJwk(). Bad d.");
+    throw new Error(what + "'s d is not a P-256 private key: " + e.message);
+  }
+  var x = bytes.bytesToB64u(point.slice(1, 33));
+  var y = bytes.bytesToB64u(point.slice(33, 65));
+  if ((jwk.x !== undefined && jwk.x !== x) ||
+      (jwk.y !== undefined && jwk.y !== y)) {
+    log.debug("Leaving p256KeyFromJwk(). x/y disagree with d.");
+    throw new Error(what + "'s x and y are not the public key of its d.");
+  }
+  var publicJwk = { kty: "EC", crv: "P-256", x: x, y: y };
+  publicJwk.kid = jwkThumbprint(publicJwk);
+  publicJwk.use = "sig";
+  publicJwk.alg = "ES256";
+  var privateJwk = Object.assign({}, publicJwk, { d: jwk.d });
+  log.debug("Leaving p256KeyFromJwk(). kid=" + publicJwk.kid);
+  return { privateJwk: privateJwk, publicJwk: publicJwk };
+}
+
+// The Verifier's root CA: a self-signed P-256 certificate and its key, the
+// key as a JWK (which pure JS can check against the certificate) and as the
+// PEM x509.issueCertificate() signs with. Web Crypto, like the leaf.
+async function makeVerifierRoot(opts) {
+  log.debug("Entering makeVerifierRoot().");
+  var o = opts || {};
+  var nowMs = nowSeconds(o.now) * 1000;
+  var desc = keyMaterial.keyAlg("ec-p256");
+  var rootKey = await keyMaterial.generateKeyPair("ec-p256");
+  var root = await x509.issueCertificate({
+    profile: "root-ca", subject: ROOT_SUBJECT,
+    subjectPublicKey: rootKey.publicPem,
+    issuerPrivateKey: rootKey.privatePem,
+    signatureAlg: "sha256-ecdsa",
+    notBefore: new Date(nowMs - 5 * 60 * 1000),
+    extensions: x509.defaultExtensions("root-ca", desc)
+  });
+  var jwk = await keyMaterial.privToJwk(rootKey.privatePem, desc, "ES256");
+  var key = p256KeyFromJwk(jwk, "the root's key");
+  log.debug("Leaving makeVerifierRoot().");
+  return { certificatePem: root.pem, certificateDer: bytes.asBytes(root.der),
+           privateJwk: key.privateJwk, privatePem: rootKey.privatePem };
+}
+
+// THE HOST AS A NAME OR AN ADDRESS (#470, B5). The leaf names the host of
+// response_uri, which is an IP address whenever the api is reached by one
+// (a phone on the LAN, `https://192.168.1.20:4000`). RFC 5280 section
+// 4.2.1.6 puts an address in an iPAddress general name, as its 4 or 16
+// octets, and a dNSName is a DNS name and never an address — so the leaf
+// carries an iPAddress SAN then, and x509_san_dns, which OpenID4VP 1.0
+// section 5.9.3 makes "a DNS name" matching "a dNSName ... entry", cannot be
+// used at all. The host's IPv6 brackets (URL.hostname keeps them) go.
+function ipHost(host) {
+  log.debug("Entering ipHost().");
+  var text = String(host || "").replace(/^\[(.*)\]$/, "$1");
+  if (!/^[0-9.]+$/.test(text) && text.indexOf(":") < 0) {
+    log.debug("Leaving ipHost(). A name.");
+    return null;
+  }
+  try {
+    x509.ipBytes(text);
+  } catch (e) {
+    log.debug("Leaving ipHost(). Not an address.");
+    return null;
+  }
+  log.debug("Leaving ipHost(). " + text);
+  return text;
+}
+
+// A root as makeVerifierRoot() or readVerifierIdentityFile() gives it, with
+// its signing PEM (made from the JWK when it is not there yet).
+async function rootForSigning(root) {
+  log.debug("Entering rootForSigning().");
+  if (!root || !isNonEmptyString(root.certificatePem) || !root.privateJwk) {
+    log.debug("Leaving rootForSigning(). Incomplete.");
+    throw new Error("a Verifier root needs certificatePem and privateJwk " +
+                    "(makeVerifierRoot()).");
+  }
+  if (!root.privatePem) {
+    root.privatePem = await keyMaterial.privToPem(
+      JSON.stringify(root.privateJwk), keyMaterial.keyAlg("ec-p256"));
+  }
+  if (!root.certificateDer) {
+    root.certificateDer = bytes.pemToDer(root.certificatePem);
+  }
+  log.debug("Leaving rootForSigning().");
+  return root;
+}
+
+// `opts.root` is the persistent root (makeVerifierRoot()); without one a
+// root is made for this identity alone, as before #470. The leaf is always
+// new.
 async function makeVerifierIdentity(opts) {
   log.debug("Entering makeVerifierIdentity().");
   var o = opts || {};
@@ -489,15 +652,9 @@ async function makeVerifierIdentity(opts) {
   var nowMs = nowSeconds(o.now) * 1000;
   var notBefore = new Date(nowMs - 5 * 60 * 1000);
   var desc = keyMaterial.keyAlg("ec-p256");
-  var rootKey = await keyMaterial.generateKeyPair("ec-p256");
+  var root = await rootForSigning(o.root ||
+                                  await makeVerifierRoot({ now: o.now }));
   var leafKey = await keyMaterial.generateKeyPair("ec-p256");
-  var root = await x509.issueCertificate({
-    profile: "root-ca", subject: "CN=Debugger Verifier Root,O=idptools",
-    subjectPublicKey: rootKey.publicPem,
-    issuerPrivateKey: rootKey.privatePem,
-    signatureAlg: "sha256-ecdsa", notBefore: notBefore,
-    extensions: x509.defaultExtensions("root-ca", desc)
-  });
   // The leaf's KeyUsage is read through its P-256 key (#468, M5). The
   // tls-server profile's list is RSA-shaped (digitalSignature,
   // keyEncipherment), and RFC 5480 section 3 permits an id-ecPublicKey
@@ -507,17 +664,20 @@ async function makeVerifierIdentity(opts) {
   // digitalSignature is all it asserts.
   var ext = x509.defaultExtensions("tls-server", desc);
   ext.keyUsage.usages = ["digitalSignature"];
+  var ip = ipHost(o.dnsName);
   ext.subjectAltName = { present: true, critical: false,
-    names: [{ kind: "dns", value: String(o.dnsName) }] };
+    names: [ip ? { kind: "ip", value: ip }
+               : { kind: "dns", value: String(o.dnsName) }] };
   if (o.caIssuersUrl) {
     ext.authorityInfoAccess = { present: true, critical: false,
       entries: [{ method: "caIssuers", url: String(o.caIssuersUrl) }] };
   }
   var leaf = await x509.issueCertificate({
-    profile: "tls-server", subject: "CN=" + o.dnsName + ",O=idptools",
+    profile: "tls-server",
+    subject: "CN=" + (ip || o.dnsName) + ",O=idptools",
     subjectPublicKey: leafKey.publicPem,
-    issuer: { certificatePem: root.pem, privateKeyPem: rootKey.privatePem,
-              keyAlg: "ec-p256" },
+    issuer: { certificatePem: root.certificatePem,
+              privateKeyPem: root.privatePem, keyAlg: "ec-p256" },
     signatureAlg: "sha256-ecdsa", notBefore: notBefore, extensions: ext
   });
   var privateJwk = await keyMaterial.privToJwk(leafKey.privatePem, desc,
@@ -527,13 +687,119 @@ async function makeVerifierIdentity(opts) {
   var leafDer = bytes.asBytes(leaf.der);
   log.debug("Leaving makeVerifierIdentity(). dns=" + o.dnsName);
   return {
-    rootPem: root.pem, rootDer: bytes.asBytes(root.der),
+    rootPem: root.certificatePem, rootDer: bytes.asBytes(root.certificateDer),
+    root: root,
     leafPem: leaf.pem, leafDer: leafDer,
     privateJwk: privateJwk, publicJwk: publicJwk,
     x5c: [bytes.bytesToB64(leafDer)],
     x509Hash: x509HashOf(leafDer),
-    dnsName: String(o.dnsName), caIssuersUrl: o.caIssuersUrl || ""
+    // dnsName is the host as given (an x509_san_dns Client Identifier is
+    // built from it, and refused when it is an address); ipAddress is set
+    // when the SAN is an iPAddress.
+    dnsName: String(o.dnsName), ipAddress: ip || "",
+    caIssuersUrl: o.caIssuersUrl || ""
   };
+}
+
+// ---------------------------------------------------------------------------
+// THE IDENTITY FILE (#470, B4): what the page keeps across runs, and what
+// its Download button writes and its import field reads. Every part is
+// optional, because each is made when a prefix first needs it:
+//
+//   root         { certificatePem, privateJwk }: x509_hash, x509_san_dns
+//   attester     { iss, privateJwk }: verifier_attestation
+//   requestKey   { privateJwk }: decentralized_identifier (its DID) and a
+//                pre-registered client_id (the JWKS a wallet registered),
+//                and the key a Verifier Attestation's cnf names
+//
+// THE RESPONSE ENCRYPTION KEY IS NOT IN IT, on purpose: nothing about it is
+// anchored anywhere (a request carries it in client_metadata), so keeping
+// it buys no trust and only lets one leaked key read every later answer.
+//
+// Private keys are JWKs, so a file can be checked in pure JS: each JWK's x
+// and y must be its d's public key, and the root's must be the key in its
+// certificate.
+// ---------------------------------------------------------------------------
+var IDENTITY_FILE_TYPE = "oid4vp-verifier-identity";
+
+function verifierIdentityFile(parts) {
+  log.debug("Entering verifierIdentityFile().");
+  var p = parts || {};
+  var out = { type: IDENTITY_FILE_TYPE, version: 1,
+              note: "The debugger's OpenID4VP Verifier identity. It holds " +
+                "PRIVATE KEYS: whoever has this file can sign as this " +
+                "Verifier." };
+  if (p.root) {
+    out.root = { certificatePem: p.root.certificatePem,
+                 privateJwk: p.root.privateJwk };
+  }
+  if (p.attester) {
+    out.attester = { iss: p.attester.iss,
+                     privateJwk: p.attester.privateJwk };
+  }
+  if (p.requestKey) {
+    out.requestKey = { privateJwk: p.requestKey.privateJwk };
+  }
+  log.debug("Leaving verifierIdentityFile().");
+  return out;
+}
+
+function readVerifierIdentityFile(input) {
+  log.debug("Entering readVerifierIdentityFile().");
+  var doc = input;
+  if (typeof input === "string") {
+    try {
+      doc = JSON.parse(input);
+    } catch (e) {
+      log.debug("Leaving readVerifierIdentityFile(). Not JSON.");
+      throw new Error("a Verifier identity file is JSON: " + e.message);
+    }
+  }
+  if (!isPlainObject(doc) || doc.type !== IDENTITY_FILE_TYPE) {
+    log.debug("Leaving readVerifierIdentityFile(). Wrong type.");
+    throw new Error('this is not a Verifier identity file (its "type" ' +
+                    'must be "' + IDENTITY_FILE_TYPE + '").');
+  }
+  if (doc.version !== 1) {
+    log.debug("Leaving readVerifierIdentityFile(). Version.");
+    throw new Error("this Verifier identity file is version " +
+                    JSON.stringify(doc.version) + "; this page reads 1.");
+  }
+  var out = {};
+  if (doc.root !== undefined) {
+    var r = doc.root;
+    if (!isPlainObject(r) || !/-----BEGIN CERTIFICATE-----/.test(
+        String(r.certificatePem || ""))) {
+      log.debug("Leaving readVerifierIdentityFile(). Bad root.");
+      throw new Error("root.certificatePem must be a PEM certificate.");
+    }
+    var rootKey = p256KeyFromJwk(r.privateJwk, "root.privateJwk");
+    var der = bytes.pemToDer(r.certificatePem);
+    var point = p256PointOfCertificate(der);
+    var mine = bytes.concatBytes(new Uint8Array([4]),
+      bytes.b64uToBytes(rootKey.publicJwk.x),
+      bytes.b64uToBytes(rootKey.publicJwk.y));
+    if (!point || !bytes.bytesEqual(point, mine)) {
+      log.debug("Leaving readVerifierIdentityFile(). Key mismatch.");
+      throw new Error("root.privateJwk is not the key in " +
+                      "root.certificatePem.");
+    }
+    out.root = { certificatePem: String(r.certificatePem).trim() + "\n",
+                 certificateDer: der, privateJwk: rootKey.privateJwk };
+  }
+  if (doc.attester !== undefined) {
+    var a = isPlainObject(doc.attester) ? doc.attester : {};
+    var attesterKey = p256KeyFromJwk(a.privateJwk, "attester.privateJwk");
+    out.attester = makeAttester({ key: attesterKey,
+      iss: isNonEmptyString(a.iss) ? a.iss : undefined });
+  }
+  if (doc.requestKey !== undefined) {
+    out.requestKey = p256KeyFromJwk(isPlainObject(doc.requestKey) ?
+      doc.requestKey.privateJwk : null, "requestKey.privateJwk");
+  }
+  log.debug("Leaving readVerifierIdentityFile(). " +
+            Object.keys(out).join(", "));
+  return out;
 }
 
 // A key pair a Request Object is signed with when no certificate is
@@ -631,6 +897,16 @@ function clientIdFor(prefix, identity, opts) {
       log.debug("Leaving clientIdFor(). No DNS name.");
       throw new Error("x509_san_dns needs a dnsName.");
     }
+    if (ipHost(dns)) {
+      log.debug("Leaving clientIdFor(). An IP address.");
+      throw new Error("x509_san_dns cannot name " + dns + ": it is an IP " +
+        "address, and OpenID4VP 1.0 section 5.9.3 makes the Client " +
+        "Identifier \"a DNS name\" matching a dNSName SAN, which an " +
+        "address never is (RFC 5280 section 4.2.1.6 puts it in an " +
+        "iPAddress name). Use x509_hash, whose leaf carries the address " +
+        "as an iPAddress SAN, or reach the api by a host name " +
+        "(oid4vpVerifierPublicBaseUrl, or the page's public base URL).");
+    }
     log.debug("Leaving clientIdFor().");
     return "x509_san_dns:" + dns;
   }
@@ -712,10 +988,12 @@ function preRegisteredJwks(identity) {
 // The party that vouches for a Verifier under verifier_attestation (section
 // 12). Its iss is the did:jwk of its own key, so a wallet can be told to
 // trust exactly that key: `jwks` is what to give it.
+// `opts.key` is a key the attester already has (the identity file's), in
+// makeRequestKey()'s shape; without one it gets a new key.
 function makeAttester(opts) {
   log.debug("Entering makeAttester().");
   var o = opts || {};
-  var key = makeRequestKey();
+  var key = o.key || makeRequestKey();
   var iss = o.iss || didForKey(key.publicJwk, "jwk");
   log.debug("Leaving makeAttester(). iss=" + iss.slice(0, 40));
   return { iss: iss, privateJwk: key.privateJwk, publicJwk: key.publicJwk,
@@ -1461,27 +1739,38 @@ function keyCandidates(found, header) {
 // set by keyCandidates(), trying each candidate until one verifies.
 function verifyFound(compact, found, header) {
   log.debug("Entering verifyFound().");
+  log.debug("Leaving verifyFound().");
+  return verifyFoundBy(function (key) {
+    return verifyCompact(compact, key);
+  }, found, header);
+}
+
+// The same, for any signed thing: `verifyOne(key)` answers { valid, reason }
+// for one key (a PEM certificate or { jwk }), so a CWT Status List Token is
+// held to exactly the key choice a JWT one is (#471, E5).
+function verifyFoundBy(verifyOne, found, header) {
+  log.debug("Entering verifyFoundBy().");
   if (typeof found.key === "string" || (found.key && found.key.jwk &&
       !found.candidates)) {
-    log.debug("Leaving verifyFound(). One key.");
-    return verifyCompact(compact, found.key);
+    log.debug("Leaving verifyFoundBy(). One key.");
+    return verifyOne(found.key);
   }
   var picked = keyCandidates(found, header);
   if (picked.error) {
-    log.debug("Leaving verifyFound(). No candidate.");
+    log.debug("Leaving verifyFoundBy(). No candidate.");
     return { valid: false, reason: picked.error };
   }
   var reasons = [];
   for (var i = 0; i < picked.list.length; i++) {
-    var v = verifyCompact(compact, { jwk: picked.list[i].jwk });
+    var v = verifyOne({ jwk: picked.list[i].jwk });
     if (v.valid) {
-      log.debug("Leaving verifyFound(). Candidate " + i + ".");
+      log.debug("Leaving verifyFoundBy(). Candidate " + i + ".");
       return { valid: true, reason: "", used: picked.list[i].ids[0] || "",
                tried: picked.list.length };
     }
     reasons.push(v.reason);
   }
-  log.debug("Leaving verifyFound(). None verifies.");
+  log.debug("Leaving verifyFoundBy(). None verifies.");
   return { valid: false, reason: picked.list.length > 1 ? "none of the " +
            picked.list.length + " candidate keys verifies it" +
            (header && header.kid ? "" : " (the header has no kid, so each " +
@@ -2425,7 +2714,10 @@ function statusBody(fetched) {
 // A COSE_Sign1 found by DECODING the bytes, not by guessing from the first
 // one: RFC 9052 section 4.2's four-element array [protected bstr,
 // unprotected map, payload, signature bstr], tagged 18 or not, and RFC 8392
-// section 6's CWT tag 61 around it. Null when the bytes are not that.
+// section 6's CWT tag 61 around it — or a COSE_Mac0 (section 6.2, tag 17),
+// the same shape with a tag in place of the signature, which
+// draft-ietf-oauth-status-list-21 section 5.2 also allows. Null when the
+// bytes are not that. `parts` is the four elements, `mac` says which.
 function coseSign1Of(raw) {
   log.debug("Entering coseSign1Of().");
   if (!raw || !raw.length) {
@@ -2448,14 +2740,15 @@ function coseSign1Of(raw) {
       v[1] instanceof Map && v[3] instanceof Uint8Array &&
       (v[2] === null || v[2] instanceof Uint8Array);
   var tagsOk = tags.every(function (t) {
-    return t === 18 || t === 61;
+    return t === 17 || t === 18 || t === 61;
   });
-  if (!shaped || !tagsOk) {
+  var mac = tags.indexOf(17) !== -1;
+  if (!shaped || !tagsOk || (mac && tags.indexOf(18) !== -1)) {
     log.debug("Leaving coseSign1Of(). Not a COSE_Sign1.");
     return null;
   }
   log.debug("Leaving coseSign1Of(). Tags " + tags.join(","));
-  return { tags: tags };
+  return { tags: tags, parts: v, mac: mac };
 }
 
 // What a body that is not a compact JWS actually is, said plainly: a
@@ -2469,8 +2762,9 @@ function describeStatusBody(body) {
       (body.text !== null ? new TextEncoder().encode(body.text) : null);
   var cose = coseSign1Of(raw);
   if (cose) {
-    log.debug("Leaving describeStatusBody(). COSE_Sign1.");
-    return { kind: "cose", detail: "a COSE_Sign1 (CBOR" +
+    log.debug("Leaving describeStatusBody(). COSE.");
+    return { kind: "cose", cose: cose, type: type, detail: "a " +
+      (cose.mac ? "COSE_Mac0" : "COSE_Sign1") + " (CBOR" +
       (cose.tags.indexOf(61) !== -1 ? ", in CWT tag 61" : "") + ")" +
       served };
   }
@@ -2671,7 +2965,10 @@ function credentialIssuerKey(issuer) {
 //      not verify (an https iss with no jwt-vc-issuer metadata), unless the
 //      token carries an x5c, which names exactly one key.
 // `how` says which verified: "credential" or "own".
-async function statusListSignature(compact, h, p, issuer) {
+//
+// `verifyOne(key)` checks the token's own signature with one key: a JWS's
+// or a COSE_Sign1's (#471, E5), so both forms take the same keys.
+async function statusListSignature(verifyOne, h, p, issuer) {
   log.debug("Entering statusListSignature().");
   var ctx = issuer.ctx;
   var own = (isArray(h.x5c) && h.x5c.length > 0) ||
@@ -2705,8 +3002,9 @@ async function statusListSignature(compact, h, p, issuer) {
       credentialSigningKey(found.key, issuer.header || {});
     // The credential's key is named by the CREDENTIAL's kid, the list's
     // own by the list's.
-    var v = signing ? verifyCompact(compact, signing) :
-      verifyFound(compact, found, how === "own" ? h : issuer.header || {});
+    var v = signing ? verifyOne(signing) :
+      verifyFoundBy(verifyOne, found, how === "own" ? h :
+                    issuer.header || {});
     if (v.valid) {
       var why = how === "own" ? "" : ref ? ", which the list references " +
         "by " + ref : !own ? " (the list names no key of its own)" :
@@ -2759,7 +3057,7 @@ function credentialSigningKey(key, ih) {
 // usage" (section 10's id-kp-oauthStatusSigning). Anything else is NOT
 // linked, and says so as a SKIP: a signature that verifies with a key
 // nobody tied to the issuer is not a PASS.
-async function statusSignerLink(compact, h, p, issuer, sig) {
+async function statusSignerLink(verifyOne, h, p, issuer, sig) {
   log.debug("Entering statusSignerLink().");
   if (!sig.valid) {
     log.debug("Leaving statusSignerLink(). No signature.");
@@ -2775,7 +3073,7 @@ async function statusSignerLink(compact, h, p, issuer, sig) {
   }
   var single = credKey ? credentialSigningKey(credKey.key,
                                               issuer.header || {}) : null;
-  if (single && verifyCompact(compact, single).valid) {
+  if (single && verifyOne(single).valid) {
     log.debug("Leaving statusSignerLink(). Same key.");
     return { status: PASS, detail: "the same key: the list is signed with " +
       "the key the credential was signed with" + (sig.ref ?
@@ -2858,6 +3156,226 @@ function tokenStatusName(value) {
   return name;
 }
 
+// ---------------------------------------------------------------------------
+// The two forms of a Status List Token, read into the one shape the checks
+// in checkTokenStatus() share: { form, header, payload, statusList: { bits,
+// lst, aggregationUri }, lstBytes(), verify(key), problems, notes, summary }.
+// `header` is JOSE-shaped for both (alg, kid, x5c, x5t, x5t#S256), so the
+// key choice and the signer link (section 11.3) are one implementation;
+// `verify(key)` checks the token's own signature with one key.
+// ---------------------------------------------------------------------------
+
+// Section 5.1. Throws when the compact JWS will not decode.
+function readJwtStatusToken(compact) {
+  log.debug("Entering readJwtStatusToken().");
+  var list = decodeJwt(compact);
+  var h = list.header || {};
+  var p = list.payload || {};
+  var problems = [];
+  var notes = [];
+  if (mediaTypeOfTyp(h.typ) !== mediaTypeOfTyp(STATUS_LIST_TYP)) {
+    problems.push("typ is " + JSON.stringify(h.typ) + ', not "' +
+                  STATUS_LIST_TYP + '" (or "application/' +
+                  STATUS_LIST_TYP + '", RFC 7515 section 4.1.9)');
+  } else if (h.typ !== STATUS_LIST_TYP) {
+    notes.push("typ " + JSON.stringify(h.typ) + " is " + STATUS_LIST_TYP +
+               " by RFC 7515 section 4.1.9's comparison");
+  }
+  var sl = isPlainObject(p.status_list) ? p.status_list : {};
+  log.debug("Leaving readJwtStatusToken().");
+  return {
+    form: "JWT", mediaType: "application/" + STATUS_LIST_TYP, header: h,
+    payload: p, problems: problems, notes: notes,
+    statusList: { bits: sl.bits, lst: typeof sl.lst === "string" ?
+      sl.lst : null, aggregationUri: sl.aggregation_uri },
+    lstBytes: function lstBytes() {
+      log.debug("Entering lstBytes(). JWT.");
+      log.debug("Leaving lstBytes().");
+      return bytes.b64uToBytes(sl.lst);
+    },
+    verify: function verify(key) {
+      log.debug("Entering verify(). JWT.");
+      log.debug("Leaving verify().");
+      return verifyCompact(compact, key);
+    },
+    unreadable: "status_list must carry bits (1, 2, 4 or 8) and lst; it " +
+      "has bits " + JSON.stringify(sl.bits),
+    summary: "typ " + STATUS_LIST_TYP + ", sub is the credential's uri, " +
+      "signed (" + h.alg + ")"
+  };
+}
+
+// A COSE header parameter, from the protected bucket first (RFC 9052
+// section 3: a label appears in one bucket only).
+function coseHeaderParam(prot, unprot, label) {
+  log.debug("Entering coseHeaderParam(). " + label);
+  log.debug("Leaving coseHeaderParam().");
+  return prot.has(label) ? prot.get(label) :
+    unprot instanceof Map ? unprot.get(label) : undefined;
+}
+
+// A COSE kid (a byte string) as the text a JOSE kid would be, or its hex
+// when it is not UTF-8.
+function coseKidText(kid) {
+  log.debug("Entering coseKidText().");
+  if (typeof kid === "string") {
+    log.debug("Leaving coseKidText(). Text.");
+    return kid;
+  }
+  var b = bytes.asBytes(kid);
+  try {
+    var text = new TextDecoder("utf-8", { fatal: true }).decode(b);
+    log.debug("Leaving coseKidText(). UTF-8.");
+    return text;
+  } catch (e) {
+    log.debug("Leaving coseKidText(). Hex.");
+    return Array.prototype.map.call(b, function (x) {
+      return (x < 16 ? "0" : "") + x.toString(16);
+    }).join("");
+  }
+}
+
+// Section 5.2: a CWT (RFC 8392) in a COSE_Sign1_Tagged (18), never in the
+// CWT tag (61); type (16) application/statuslist+cwt in the protected
+// header; the Claims Set's 2 (subject), 6 (issued at), 4 (expiration),
+// 65534 (time to live) and 65533 (the section 4.3 StatusList map, whose lst
+// is a byte string). The key is named by RFC 9052's kid (4) or RFC 9360's
+// x5chain (33) and x5t (34), which section 11.3 lists for COSE. Throws when
+// the structure cannot be read at all.
+function readCwtStatusToken(cose) {
+  log.debug("Entering readCwtStatusToken().");
+  var parts = cose.parts;
+  var problems = [];
+  var notes = [];
+  if (cose.tags.indexOf(18) === -1) {
+    problems.push("it is not tagged COSE_Sign1_Tagged (18), which section " +
+                  "5.2 requires");
+  }
+  if (cose.tags.indexOf(61) !== -1) {
+    problems.push("it is tagged with RFC 8392's CWT tag (61), which " +
+                  "section 5.2 says it MUST NOT be");
+  }
+  var prot;
+  try {
+    prot = parts[0].length ? cbor.decode(parts[0]) : new Map();
+  } catch (e) {
+    log.debug("Leaving readCwtStatusToken(). Bad protected header.");
+    throw new Error("its protected header is not CBOR: " + e.message);
+  }
+  if (!(prot instanceof Map)) {
+    log.debug("Leaving readCwtStatusToken(). Protected not a map.");
+    throw new Error("its protected header is not a CBOR map.");
+  }
+  var unprot = parts[1];
+  var typ = prot.get(COSE_HDR_TYP);
+  if (typ === undefined) {
+    problems.push(unprot.has(COSE_HDR_TYP) ? "its type (16) is in the " +
+      "unprotected header, and section 5.2 puts it in the protected one" :
+      "its protected header carries no type (16); section 5.2 requires " +
+      STATUS_LIST_CWT_TYPE);
+  } else if (typeof typ === "number") {
+    notes.push("type (16) is the CoAP Content-Format " + typ + ", and " +
+               "section 14.8's number is still TBD, so it is reported and " +
+               "not judged");
+  } else if (String(typ).trim().toLowerCase() !== STATUS_LIST_CWT_TYPE) {
+    problems.push("type (16) is " + JSON.stringify(typ) + ', not "' +
+                  STATUS_LIST_CWT_TYPE + '"');
+  } else if (typ !== STATUS_LIST_CWT_TYPE) {
+    notes.push("type " + JSON.stringify(typ) + " is " +
+               STATUS_LIST_CWT_TYPE + " compared as a media type");
+  }
+  var alg = coseHeaderParam(prot, unprot, COSE_HDR_ALG);
+  if (alg !== undefined && !prot.has(COSE_HDR_ALG)) {
+    notes.push("alg (1) is in the unprotected header (RFC 9052 section " +
+               "3.1 asks for the protected one)");
+  }
+  var h = { alg: cose.mac ? "MAC" : coseAlgName(alg) };
+  var kid = coseHeaderParam(prot, unprot, COSE_HDR_KID);
+  if (kid instanceof Uint8Array || typeof kid === "string") {
+    h.kid = coseKidText(kid);
+  }
+  var chain = coseHeaderParam(prot, unprot, COSE_HDR_X5CHAIN);
+  chain = chain instanceof Uint8Array ? [chain] : isArray(chain) ? chain : [];
+  if (chain.length && chain.every(function (c) {
+    return c instanceof Uint8Array;
+  })) {
+    h.x5c = chain.map(function (c) {
+      return bytes.bytesToB64(c);
+    });
+  }
+  var x5t = coseHeaderParam(prot, unprot, COSE_HDR_X5T);
+  if (isArray(x5t) && x5t[1] instanceof Uint8Array) {
+    if (x5t[0] === COSE_X5T_SHA256) {
+      h["x5t#S256"] = bytes.bytesToB64u(x5t[1]);
+    } else if (x5t[0] === COSE_X5T_SHA1) {
+      h.x5t = bytes.bytesToB64u(x5t[1]);
+    } else {
+      notes.push("its x5t (34) uses hash " + JSON.stringify(x5t[0]) +
+                 ", which this debugger does not match against a " +
+                 "certificate");
+    }
+  }
+  if (!(parts[2] instanceof Uint8Array)) {
+    log.debug("Leaving readCwtStatusToken(). Detached payload.");
+    throw new Error("its payload is detached (null), and a CWT carries " +
+                    "its Claims Set as the payload (RFC 8392 section 7.1).");
+  }
+  var claims;
+  try {
+    claims = cbor.decode(parts[2]);
+  } catch (e) {
+    log.debug("Leaving readCwtStatusToken(). Bad Claims Set.");
+    throw new Error("its payload is not CBOR: " + e.message);
+  }
+  if (!(claims instanceof Map)) {
+    log.debug("Leaving readCwtStatusToken(). Claims Set not a map.");
+    throw new Error("its payload is not a CWT Claims Set (a CBOR map).");
+  }
+  var p = {};
+  [["iss", CWT_ISS], ["sub", CWT_SUB], ["exp", CWT_EXP], ["nbf", CWT_NBF],
+   ["iat", CWT_IAT], ["ttl", CWT_TTL]].forEach(function (pair) {
+    if (claims.has(pair[1])) p[pair[0]] = claims.get(pair[1]);
+  });
+  var sl = claims.get(CWT_STATUS_LIST);
+  sl = sl instanceof Map ? sl : new Map();
+  var lst = sl.get("lst") instanceof Uint8Array ? sl.get("lst") : null;
+  var name = cose.mac ? "COSE_Mac0" : "COSE_Sign1";
+  log.debug("Leaving readCwtStatusToken().");
+  return {
+    form: "CWT", mediaType: STATUS_LIST_CWT_TYPE, header: h, payload: p,
+    problems: problems, notes: notes,
+    statusList: { bits: sl.get("bits"), lst: lst,
+                  aggregationUri: sl.get("aggregation_uri") },
+    lstBytes: function lstBytes() {
+      log.debug("Entering lstBytes(). CWT.");
+      log.debug("Leaving lstBytes().");
+      return lst;
+    },
+    verify: function verify(key) {
+      log.debug("Entering verify(). CWT.");
+      var v = mdoc.verifyCoseSignature(alg, key,
+        mdoc.sigStructure(parts[0], parts[2]), parts[3]);
+      log.debug("Leaving verify(). " + v.ok);
+      return { valid: v.ok, reason: v.reason };
+    },
+    unreadable: "the status list (65533) must be a map carrying bits (1, " +
+      "2, 4 or 8) and lst as a byte string (section 4.3); it has bits " +
+      JSON.stringify(sl.get("bits")) + (lst ? "" : " and no byte string lst"),
+    summary: "a CWT (" + name + (cose.tags.indexOf(18) !== -1 ?
+      "_Tagged" : "") + ", type " + (typeof typ === "string" ? typ :
+      JSON.stringify(typ)) + "), sub (2) is the credential's uri, signed (" +
+      h.alg + ", COSE " + alg + ")"
+  };
+}
+
+// The COSE algorithm's name, or the number when it has none here.
+function coseAlgName(alg) {
+  log.debug("Entering coseAlgName().");
+  var a = coseLib.algorithm(alg);
+  log.debug("Leaving coseAlgName().");
+  return a ? a.name : "COSE " + JSON.stringify(alg);
+}
+
 async function checkTokenStatus(s, key, ref, issuer) {
   log.debug("Entering checkTokenStatus().");
   var ctx = issuer.ctx;
@@ -2878,7 +3396,11 @@ async function checkTokenStatus(s, key, ref, issuer) {
   try {
     fetched = await fetchStatusText(ctx, uri, STATUS_LIST_ACCEPT);
   } catch (e) {
-    s.add(key + ".list", listLabel, FAIL, "fetching " + uri + " failed: " +
+    // A list that could not be FETCHED is a check not performed, not a
+    // defect in the credential (#470 B3): the fetch may have failed for a
+    // reason that is this debugger's (CORS, a proxy, the network). A list
+    // that arrives and is wrong is a FAIL, below.
+    s.add(key + ".list", listLabel, SKIP, "could not fetch " + uri + ": " +
           e.message);
     s.add(key, label, SKIP, "the status list could not be read (idx " +
           idx + ").");
@@ -2887,49 +3409,56 @@ async function checkTokenStatus(s, key, ref, issuer) {
   }
   var body = statusBody(fetched);
   var compact = body.text !== null ? body.text.trim() : "";
-  if (!COMPACT_JWS.test(compact)) {
-    var what = describeStatusBody(body);
-    if (what.kind === "cose") {
-      s.add(key + ".list", listLabel, SKIP, uri + " answered " +
-            what.detail + ": a Status List Token in CWT form " +
-            "(draft-ietf-oauth-status-list-21 section 5.2), which this " +
-            "debugger recognises but does not verify. It asked for " +
-            STATUS_LIST_ACCEPT + " only.");
-    } else {
-      s.add(key + ".list", listLabel, FAIL, uri + " did not answer with " +
-            "a Status List Token: it answered " + what.detail + ". " +
-            "draft-ietf-oauth-status-list-21 section 8.2: the body is the " +
-            "JWS Compact Serialization of the token (or a CWT).");
-    }
-    s.add(key, label, SKIP, "the status list was not read (idx " + idx +
-          ").");
-    log.debug("Leaving checkTokenStatus(). Not a JWT: " + what.kind);
-    return;
-  }
-  var list;
+  var tok;
   try {
-    list = decodeJwt(compact);
+    if (COMPACT_JWS.test(compact)) {
+      tok = readJwtStatusToken(compact);
+    } else {
+      var what = describeStatusBody(body);
+      if (what.kind !== "cose") {
+        s.add(key + ".list", listLabel, FAIL, uri + " did not answer " +
+              "with a Status List Token: it answered " + what.detail +
+              ". draft-ietf-oauth-status-list-21 section 8.2: the body " +
+              "is the JWS Compact Serialization of the token, or the " +
+              "binary CWT.");
+        s.add(key, label, SKIP, "the status list was not read (idx " + idx +
+              ").");
+        log.debug("Leaving checkTokenStatus(). Neither form: " + what.kind);
+        return;
+      }
+      if (what.cose.mac) {
+        s.add(key + ".list", listLabel, SKIP, uri + " answered " +
+              what.detail + ": a CWT Status List Token secured with a MAC " +
+              "(draft-ietf-oauth-status-list-21 section 5.2 allows " +
+              "COSE_Mac0_Tagged), which needs a key the Status Issuer " +
+              "shares with its Relying Parties. This Verifier holds none, " +
+              "so the list is not verified.");
+        s.add(key, label, SKIP, "the status list was not verified (idx " +
+              idx + ").");
+        log.debug("Leaving checkTokenStatus(). COSE_Mac0.");
+        return;
+      }
+      tok = readCwtStatusToken(what.cose);
+    }
   } catch (e) {
     s.add(key + ".list", listLabel, FAIL, "unreadable: " + e.message);
     s.add(key, label, SKIP, "the status list was not read.");
     log.debug("Leaving checkTokenStatus(). Unreadable.");
     return;
   }
-  var h = list.header || {};
-  var p = list.payload || {};
-  var problems = [];
-  var notes = [];
-  if (mediaTypeOfTyp(h.typ) !== mediaTypeOfTyp(STATUS_LIST_TYP)) {
-    problems.push("typ is " + JSON.stringify(h.typ) + ', not "' +
-                  STATUS_LIST_TYP + '" (or "application/' +
-                  STATUS_LIST_TYP + '", RFC 7515 section 4.1.9)');
-  } else if (h.typ !== STATUS_LIST_TYP) {
-    notes.push("typ " + JSON.stringify(h.typ) + " is " + STATUS_LIST_TYP +
-               " by RFC 7515 section 4.1.9's comparison");
+  var h = tok.header;
+  var p = tok.payload;
+  var problems = tok.problems.slice();
+  var notes = tok.notes.slice();
+  var served = body.contentType.split(";")[0].trim().toLowerCase();
+  if (served && served !== tok.mediaType) {
+    notes.push("it was served as " + served + ", not " + tok.mediaType +
+               " (section 8.2)");
   }
+  var subName = tok.form === "CWT" ? "sub (2)" : "sub";
   if (p.sub !== uri) {
-    problems.push("sub is " + JSON.stringify(p.sub) + ", not the uri the " +
-                  "credential names (" + uri + ")");
+    problems.push(subName + " is " + JSON.stringify(p.sub) + ", not the " +
+                  "uri the credential names (" + uri + ")");
   }
   if (typeof p.iat !== "number") problems.push("there is no numeric iat");
   if (typeof p.exp === "number") {
@@ -2939,18 +3468,27 @@ async function checkTokenStatus(s, key, ref, issuer) {
       notes.push("valid until " + isoOf(p.exp));
     }
   }
-  if (typeof p.ttl === "number") {
-    notes.push("ttl " + p.ttl + "s, so a fresh copy is due by " +
-               isoOf((typeof p.iat === "number" ? p.iat : ctx.now) + p.ttl));
+  if (typeof p.nbf === "number" && ctx.now + SKEW_SECONDS < p.nbf) {
+    problems.push("it is not valid before " + isoOf(p.nbf));
   }
-  var sl = isPlainObject(p.status_list) ? p.status_list : {};
-  var readable = [1, 2, 4, 8].indexOf(sl.bits) !== -1 &&
-      typeof sl.lst === "string";
-  if (!readable) {
-    problems.push("status_list must carry bits (1, 2, 4 or 8) and lst; it " +
-                  "has bits " + JSON.stringify(sl.bits));
+  if (p.ttl !== undefined) {
+    if (typeof p.ttl !== "number" || !(p.ttl > 0)) {
+      problems.push("ttl is " + JSON.stringify(p.ttl) + ", and sections " +
+                    "5.1 and 5.2 make it a positive number");
+    } else {
+      notes.push("ttl " + p.ttl + "s, so a fresh copy is due by " +
+                 isoOf((typeof p.iat === "number" ? p.iat : ctx.now) +
+                       p.ttl));
+    }
   }
-  var sig = await statusListSignature(compact, h, p, issuer);
+  var sl = tok.statusList;
+  if (typeof sl.aggregationUri === "string" && sl.aggregationUri) {
+    notes.push("its aggregation_uri is " + sl.aggregationUri +
+               " (section 9)");
+  }
+  var readable = [1, 2, 4, 8].indexOf(sl.bits) !== -1 && sl.lst !== null;
+  if (!readable) problems.push(tok.unreadable);
+  var sig = await statusListSignature(tok.verify, h, p, issuer);
   if (!sig.valid) {
     problems.push("the signature does NOT verify with " + sig.from);
   }
@@ -2960,11 +3498,11 @@ async function checkTokenStatus(s, key, ref, issuer) {
                credIss);
   }
   s.add(key + ".list", listLabel, problems.length ? FAIL : PASS,
-        problems.length ? problems.join("; ") + "." : "typ " +
-        STATUS_LIST_TYP + ", sub is the credential's uri, signed (" + h.alg +
-        ") with " + sig.from +
-        (notes.length ? "; " + notes.join("; ") : "") + ".");
-  var link = await statusSignerLink(compact, h, p, issuer, sig);
+        problems.length ? (tok.form === "CWT" ? "the CWT Status List " +
+        "Token: " : "") + problems.join("; ") + "." : tok.summary +
+        " with " + sig.from + (notes.length ? "; " + notes.join("; ") : "") +
+        ".");
+  var link = await statusSignerLink(tok.verify, h, p, issuer, sig);
   s.add(key + ".signer", signerLabel, link.status, link.detail);
   if (!readable) {
     s.add(key, label, SKIP, "the list itself could not be read.");
@@ -2973,10 +3511,10 @@ async function checkTokenStatus(s, key, ref, issuer) {
   }
   var raw;
   try {
-    raw = await inflate(bytes.b64uToBytes(sl.lst), "deflate");
+    raw = await inflate(tok.lstBytes(), "deflate");
   } catch (e) {
-    s.add(key, label, FAIL, "status_list.lst does not decompress as zlib " +
-          "DEFLATE: " + e.message);
+    s.add(key, label, FAIL, "the status list's lst does not decompress " +
+          "as zlib DEFLATE: " + e.message);
     log.debug("Leaving checkTokenStatus(). Not DEFLATE.");
     return;
   }
@@ -3171,8 +3709,18 @@ async function checkBitstringEntry(s, key, entry, issuer) {
           JSON.stringify(messages)) + ".");
   }
   var read;
+  var text;
   try {
-    var text = await fetchStatusText(ctx, url, BITSTRING_ACCEPT);
+    text = await fetchStatusText(ctx, url, BITSTRING_ACCEPT);
+  } catch (e) {
+    // Not fetched is not performed, as in checkTokenStatus() (#470 B3).
+    s.add(key + ".list", listLabel, SKIP, "could not fetch " + url + ": " +
+          e.message);
+    s.add(key, label, SKIP, "the status list could not be read.");
+    log.debug("Leaving checkBitstringEntry(). Not fetched.");
+    return;
+  }
+  try {
     read = await readStatusListCredential(text, ctx);
   } catch (e) {
     s.add(key + ".list", listLabel, FAIL, "reading " + url + " failed: " +
@@ -3550,6 +4098,27 @@ function audMatches(aud, clientId) {
   return isArray(aud) ? aud.indexOf(clientId) !== -1 : aud === clientId;
 }
 
+// Why an audience that is the DC API's origin: audience plus a "/" is not
+// it (#471, E6). OpenID4VP 1.0 Appendix A.4 and section 5.9.3 illustrate
+// the audience as "origin:https://verifier.example.com/", but that is an
+// example, and the Origin it prefixes is defined without one (section 2,
+// "Origin": "The web origin is https://verify.example.com"; Appendix
+// B.2.6.2 hashes "https://example.com"). "" when that is not the mismatch.
+function originSlashHint(got, audience) {
+  log.debug("Entering originSlashHint().");
+  var values = isArray(got) ? got : [got];
+  var slashed = !!audience && audience.indexOf(ORIGIN_PREFIX) === 0 &&
+      values.indexOf(audience + "/") !== -1;
+  log.debug("Leaving originSlashHint(). " + slashed);
+  return slashed ? " It is the origin with a trailing slash, which is a " +
+    "URL and not an Origin: OpenID4VP 1.0 section 2 defines the Origin " +
+    "as scheme, host and port (\"The web origin is " +
+    "https://verify.example.com\"), the HTML Standard's serialization of " +
+    "an origin (window.location.origin) has no slash, and the slash in " +
+    "Appendix A.4's \"for example, origin:https://verifier.example.com/\" " +
+    "is that example's alone." : "";
+}
+
 // ---------------------------------------------------------------------------
 // SD-JWT VC (dc+sd-jwt).
 // ---------------------------------------------------------------------------
@@ -3922,7 +4491,8 @@ async function verifyKbJwt(s, query, parsed, ctx) {
   s.add("kb.aud", labels["kb.aud"], audOk ? PASS : FAIL, audOk ?
         "aud is " + ctx.audience + "." : "aud is " +
         JSON.stringify(p.aud) + ", not " + (ctx.audience ||
-        "known: the request's origin was not given") + ".");
+        "known: the request's origin was not given") + "." +
+        originSlashHint(p.aud, ctx.audience));
   var fresh = freshness(p.iat, ctx.now, { required: true,
     maxAge: ctx.maxAgeSeconds, what: "RFC 9901 section 4.3" });
   s.add("kb.iat", labels["kb.iat"], fresh.status, fresh.detail);
@@ -4377,7 +4947,8 @@ async function checkVpJwt(s, query, presentation, vp, vcs, ctx) {
   s.add("vp.aud", "The VP JWT's aud is this Verifier's Client Identifier",
         audOk ? PASS : FAIL, "aud is " + JSON.stringify(p.aud) +
         (audOk ? "." : ", not " + (ctx.audience || "known: the request's " +
-        "origin was not given") + "."));
+        "origin was not given") + "." + originSlashHint(p.aud,
+                                                         ctx.audience)));
   var fresh = freshness(p.iat, ctx.now, { required: false,
     maxAge: ctx.maxAgeSeconds,
     what: "OpenID4VP 1.0 Appendix B.1.3.1.5 (nonce and aud only)" });
@@ -4755,7 +5326,7 @@ async function verifyLdpVc(s, query, presentation, ctx) {
           "Identifier", domainOk ? PASS : FAIL, "domain is " +
           JSON.stringify(proof.domain) + (domainOk ? "." : ", not " +
           (ctx.audience || "known: the request's origin was not given") +
-          "."));
+          "." + originSlashHint(proof.domain, ctx.audience)));
   } else {
     s.add("vp.proof", "The VP's holder proof verifies",
           requiresBinding(query) ? FAIL : SKIP, requiresBinding(query) ?
@@ -5264,9 +5835,31 @@ async function verifyResponse(opts) {
   }
   var audience = session.clientId;
   if (dc) {
-    audience = session.origin ? ORIGIN_PREFIX + session.origin : "";
+    // The Origin is used AS GIVEN, and is window.location.origin on the
+    // page: the HTML Standard's ASCII serialization of an origin, scheme
+    // "://" host [":" port], with no trailing slash (#471, E6). That is the
+    // Origin OpenID4VP 1.0 means: section 2 defines it as "the combination
+    // of a scheme/protocol, host, and port" ("The web origin is
+    // https://verify.example.com"), Appendix A.2's expected_origins example
+    // is "https://origin1.example.com", and Appendix B.2.6.2's worked
+    // SessionTranscript hashes "https://example.com" — the bytes
+    // tests/vp_verifier_engine.js reproduces. Only the illustrative
+    // "origin:https://verifier.example.com/" of section 5.9.3 and Appendix
+    // A.4 has a slash. The W3C Digital Credentials API records the
+    // top-level document's origin, an origin and not a URL (its section
+    // 6.7), and A.2 leaves how the wallet receives it to the platform. So
+    // the KB-JWT aud is "origin:" + this, and the mdoc DC handover's
+    // origin is this, unprefixed (B.2.6.2: "It MUST NOT be prefixed with
+    // origin:"). A session origin with a path is a URL, not an Origin.
+    var origin = String(session.origin || "");
+    var pathed = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]+[/?#]/i.test(origin);
+    audience = origin ? ORIGIN_PREFIX + origin : "";
     addCheck(report, "response.origin", g, "The audience is this page's " +
-             "origin (DC API)", audience ? PASS : FAIL, audience ?
+             "origin (DC API)", audience && !pathed ? PASS : FAIL,
+             pathed ? "session.origin is " + JSON.stringify(origin) +
+             ", a URL with a path, not an Origin (scheme, host and port, " +
+             "OpenID4VP 1.0 section 2; window.location.origin has no " +
+             "trailing slash)." : audience ?
              "over the Digital Credentials API every presentation's " +
              "audience is " + audience + ", signed request or not " +
              "(Appendix A.4)." : "session.origin was not given, so there is " +
@@ -5314,6 +5907,10 @@ module.exports = {
   randomToken: randomToken,
   buildDcql: buildDcql,
   makeVerifierIdentity: makeVerifierIdentity,
+  makeVerifierRoot: makeVerifierRoot,
+  verifierIdentityFile: verifierIdentityFile,
+  readVerifierIdentityFile: readVerifierIdentityFile,
+  p256PointOfCertificate: p256PointOfCertificate,
   makeRequestKey: makeRequestKey,
   makeAttester: makeAttester,
   verifierAttestation: verifierAttestation,
