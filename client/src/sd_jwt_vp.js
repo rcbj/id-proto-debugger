@@ -784,6 +784,128 @@ function sdHash(prefix, sdAlg) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// transaction_data (OpenID4VP 1.0 section 8.4; Appendix B.3.3.1 for
+// SD-JWT VC). A Verifier may attach `transaction_data` — an array of
+// base64url JSON objects, each { type, credential_ids, ... } — describing
+// what the presentation authorizes. The wallet "MUST include a
+// representation or reference to the data in the respective Credential
+// presentation"; the SD-JWT VC profile is `transaction_data_hashes` in the
+// KB-JWT, each the hash of the base64url STRING as received (NOT decoded
+// first), by sha-256 unless the entry listed transaction_data_hashes_alg, in
+// which case the KB-JWT names the one it used. This mirrors what
+// vp_verifier.js checks on the answer.
+// ---------------------------------------------------------------------------
+// The digest this wallet computes for each Named Information registry name,
+// keyed exactly as the Verifier's own TD_HASHES set.
+var TD_HASH_NAMES = { "sha-256": "SHA-256", "sha-384": "SHA-384",
+  "sha-512": "SHA-512", "sha3-256": "SHA3-256", "sha3-384": "SHA3-384",
+  "sha3-512": "SHA3-512" };
+// The wallet's preference when the Verifier offers a choice of algorithms.
+var TD_ALG_PREFERENCE = ["sha-256", "sha-384", "sha-512", "sha3-256",
+  "sha3-384", "sha3-512"];
+
+function isArray(x) {
+  return Object.prototype.toString.call(x) === "[object Array]";
+}
+
+// The request's transaction_data strings (base64url) that name `queryId`,
+// each with its decoded object { type, credential_ids, ... }. An entry that
+// names no queryId applies to every query (there is only one credential
+// query in this wallet's requests), so a request with transaction_data and a
+// query id of "" still binds.
+function transactionDataFor(params, queryId) {
+  log.debug("Entering transactionDataFor().");
+  var raw = requestObjectValue(params, "transaction_data");
+  var list = isArray(raw) ? raw : [];
+  var out = [];
+  list.forEach(function (str) {
+    if (typeof str !== "string" || !str) {
+      return;
+    }
+    var td = null;
+    try {
+      td = JSON.parse(bytes.b64uToStr(str));
+    } catch (e) {
+      td = null;
+    }
+    if (td && isArray(td.credential_ids) &&
+        (!queryId || td.credential_ids.indexOf(queryId) !== -1)) {
+      out.push({ str: str, td: td });
+    }
+  });
+  log.debug("Leaving transactionDataFor(). " + out.length);
+  return out;
+}
+
+// The hash algorithm the KB-JWT will name, and whether it must name one at
+// all. Appendix B.3.3.1: an entry that listed transaction_data_hashes_alg
+// forces the KB-JWT to name the one used and to use one of that entry's; an
+// entry that listed none accepts sha-256 only — so if any entry lists none
+// the choice is sha-256.
+function chooseTransactionDataAlg(entries) {
+  log.debug("Entering chooseTransactionDataAlg().");
+  var anyWithout = false;
+  var offered = [];
+  entries.forEach(function (one) {
+    var list = isArray(one.td.transaction_data_hashes_alg) ?
+        one.td.transaction_data_hashes_alg : null;
+    if (list) {
+      offered.push(list);
+    } else {
+      anyWithout = true;
+    }
+  });
+  var candidates = TD_ALG_PREFERENCE.filter(function (a) {
+    if (anyWithout && a !== "sha-256") {
+      return false;
+    }
+    return offered.every(function (list) {
+      return list.indexOf(a) !== -1;
+    });
+  });
+  var alg = candidates[0] || "sha-256";
+  log.debug("Leaving chooseTransactionDataAlg(). " + alg);
+  return { alg: alg, includeAlg: offered.length > 0 };
+}
+
+// The transaction_data_hashes for `queryId`, with the algorithm name the
+// KB-JWT must carry (null when sha-256 is implied). Resolves to null when the
+// request carries no transaction_data for this query, so the KB-JWT is left
+// exactly as it was.
+function transactionDataHashes(params, queryId) {
+  log.debug("Entering transactionDataHashes().");
+  var entries = transactionDataFor(params || {}, queryId);
+  if (!entries.length) {
+    log.debug("Leaving transactionDataHashes(). None.");
+    return Promise.resolve(null);
+  }
+  var choice = chooseTransactionDataAlg(entries);
+  var hashName = TD_HASH_NAMES[choice.alg];
+  if (!hashName) {
+    log.debug("Leaving transactionDataHashes(). Unsupported alg.");
+    return Promise.reject(new Error("this wallet cannot compute the " +
+      'transaction_data hash algorithm "' + choice.alg + '" the Verifier ' +
+      "requires (section 8.4)."));
+  }
+  log.debug("Leaving transactionDataHashes().");
+  return Promise.all(entries.map(function (one) {
+    // The base64url STRING as received, US-ASCII — NOT the decoded object.
+    var b = new Uint8Array(one.str.length);
+    for (var i = 0; i < one.str.length; i++) {
+      b[i] = one.str.charCodeAt(i) & 0xff;
+    }
+    return Promise.resolve(provider.digest(hashName, b))
+      .then(function (buf) {
+        return metadataClient.bytesToB64u(buf);
+      });
+  })).then(function (hashes) {
+    log.debug("Leaving transactionDataHashes(). " + hashes.length);
+    return { hashes: hashes, alg: choice.includeAlg ? choice.alg : null,
+             entries: entries };
+  });
+}
+
 // The Key Binding JWT (RFC 9901 section 4.3): typ kb+jwt, and a payload of
 // exactly iat, aud, nonce and sd_hash. OID4VP fixes the first two of those: the
 // nonce is the request's nonce, and the aud is the verifier's Client
@@ -813,6 +935,17 @@ function signKbJwt(opts) {
     nonce: opts.nonce,
     sd_hash: opts.sdHash
   };
+  // transaction_data_hashes (section 8.4, Appendix B.3.3.1): the hashes of
+  // the transaction_data strings this presentation authorizes, and the
+  // algorithm name when the Verifier offered a choice. Both are extension
+  // members of the KB-JWT, placed after sd_hash.
+  if (isArray(opts.transactionDataHashes) &&
+      opts.transactionDataHashes.length) {
+    payload.transaction_data_hashes = opts.transactionDataHashes;
+    if (opts.transactionDataHashesAlg) {
+      payload.transaction_data_hashes_alg = opts.transactionDataHashesAlg;
+    }
+  }
   log.debug("Leaving signKbJwt().");
   // VERBATIM header: a Key Binding JWT's `typ` is `kb+jwt` and the SD-JWT VC
   // specification fixes the rest, so the bytes are not this module's to
@@ -846,16 +979,24 @@ function buildPresentation(opts) {
         log.debug("Leaving buildPresentation(). No key binding required.");
         return { presentation: prefix, prefix: prefix, sdHash: hash, kb: null };
       }
-      return signKbJwt({
-        holderPrivateJwk: opts.holderPrivateJwk,
-        aud: opts.aud,
-        nonce: opts.nonce,
-        sdHash: hash
-      }).then(function (kb) {
-        log.debug("Leaving buildPresentation(). Signed a KB-JWT.");
-        return { presentation: prefix + kb.jwt, prefix: prefix, sdHash: hash,
-                kb: kb };
-      });
+      // transaction_data (section 8.4): when the request carries any for the
+      // credential query being presented, the KB-JWT carries their hashes.
+      return transactionDataHashes(opts.params, opts.credentialQueryId)
+        .then(function (td) {
+          return signKbJwt({
+            holderPrivateJwk: opts.holderPrivateJwk,
+            acceptedAlgs: opts.acceptedAlgs,
+            aud: opts.aud,
+            nonce: opts.nonce,
+            sdHash: hash,
+            transactionDataHashes: td ? td.hashes : null,
+            transactionDataHashesAlg: td ? td.alg : null
+          });
+        }).then(function (kb) {
+          log.debug("Leaving buildPresentation(). Signed a KB-JWT.");
+          return { presentation: prefix + kb.jwt, prefix: prefix,
+                   sdHash: hash, kb: kb };
+        });
     });
 }
 
@@ -1211,6 +1352,8 @@ module.exports = {
   requiresKeyBinding: requiresKeyBinding,
   presentedPrefix: presentedPrefix,
   sdHash: sdHash,
+  transactionDataFor: transactionDataFor,
+  transactionDataHashes: transactionDataHashes,
   signKbJwt: signKbJwt,
   holderJws: holderJws,
   buildPresentation: buildPresentation,
