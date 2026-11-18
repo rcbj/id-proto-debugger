@@ -437,7 +437,7 @@ COPY client/src/mdoc.js client/src/vp_protocols.js ./
 # holder's VP through data_integrity.js; data_integrity_rdfc.js is what
 # registers RDFC-1.0 with it, and requires bbs_bls_2020.js (which needs
 # bbs_plus_2020.js) so the BbsBlsSignature2020 suites register too.
-COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js client/src/bbs_bls_2020.js client/src/bbs_plus_2020.js client/src/ecdsa_sd_2023.js client/src/vc_jose_cose.js client/src/jwp.js client/src/sd_cwt.js client/src/anoncreds.js client/src/anoncreds_wallet.js client/src/anoncreds_revocation.js client/src/anoncreds_w3c.js client/src/msgpack.js client/src/amcl_bn254.js client/src/client_auth.js client/src/vc_client_auth_pane.js client/src/cborld.js client/src/vc_barcodes.js client/src/gordian_envelope.js client/src/acdc.js ./
+COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js client/src/bbs_bls_2020.js client/src/bbs_plus_2020.js client/src/ecdsa_sd_2023.js client/src/vc_jose_cose.js client/src/jwp.js client/src/sd_cwt.js client/src/anoncreds.js client/src/anoncreds_wallet.js client/src/anoncreds_revocation.js client/src/anoncreds_w3c.js client/src/msgpack.js client/src/amcl_bn254.js client/src/client_auth.js client/src/vc_client_auth_pane.js client/src/cborld.js client/src/vc_barcodes.js client/src/pdf417.js client/src/gordian_envelope.js client/src/acdc.js ./
 # The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
 # and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
 # directory is flat and the last COPY wins, so a test of that name would
