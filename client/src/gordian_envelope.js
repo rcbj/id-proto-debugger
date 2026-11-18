@@ -44,8 +44,15 @@
 var nobleSecp = require("@noble/curves/secp256k1");
 var nobleEd = require("@noble/curves/ed25519");
 var nobleSha256 = require("@noble/hashes/sha256").sha256;
+var nobleSha2 = require("@noble/hashes/sha512");
+var nobleSha384 = nobleSha2.sha384;
+var nobleSha512 = nobleSha2.sha512;
+var nobleP256 = require("@noble/curves/p256");
+var nobleP384 = require("@noble/curves/p384");
 var nobleHkdf = require("@noble/hashes/hkdf").hkdf;
+var nobleMldsa = require("@noble/post-quantum/ml-dsa.js");
 var cbytes = require("./crypto_bytes");
+var bcur = require("./bc_ur");
 
 // The log level comes from the same configuration everything else here
 // reads. A caller without one still has to be able to load this module,
@@ -69,14 +76,26 @@ var TAG = {
   KNOWN_VALUE: 40000, DIGEST: 40001, ENCRYPTED: 40002, COMPRESSED: 40003,
   ARID: 40012, NONCE: 40014, PRIVATE_KEY_BASE: 40016, PUBLIC_KEYS: 40017,
   SALT: 40018, SIGNATURE: 40020, SIGNING_PRIVATE_KEY: 40021,
-  SIGNING_PUBLIC_KEY: 40022, XID: 40024
+  SIGNING_PUBLIC_KEY: 40022, XID: 40024, X25519_PRIVATE_KEY: 40010,
+  X25519_PUBLIC_KEY: 40011, PRIVATE_KEYS: 40013, SEALED_MESSAGE: 40019,
+  SYMMETRIC_KEY: 40023, ENCRYPTED_KEY: 40027, MLKEM_PRIVATE_KEY: 40100,
+  MLKEM_PUBLIC_KEY: 40101, MLKEM_CIPHERTEXT: 40102, MLDSA_PRIVATE_KEY: 40103,
+  MLDSA_PUBLIC_KEY: 40104, MLDSA_SIGNATURE: 40105, SEED: 40300,
+  SSKR_SHARE: 40309, SSKR_SHARE_V1: 309, SSH_PRIVATE_KEY: 40800,
+  SSH_PUBLIC_KEY: 40801, SSH_SIGNATURE: 40802
 };
 var TAG_NAMES = {
   1: "Date", 32: "URI", 37: "UUID", 40000: "known-value", 40001: "Digest",
   40002: "ENCRYPTED", 40003: "COMPRESSED", 40012: "ARID", 40014: "Nonce",
   40016: "PrivateKeyBase", 40017: "PublicKeys", 40018: "Salt",
   40020: "Signature", 40021: "SigningPrivateKey", 40022: "SigningPublicKey",
-  40024: "XID"
+  40024: "XID", 40010: "X25519PrivateKey", 40011: "X25519PublicKey",
+  40013: "PrivateKeys", 40019: "SealedMessage", 40023: "SymmetricKey",
+  40027: "EncryptedKey", 40100: "MLKEMPrivateKey", 40101: "MLKEMPublicKey",
+  40102: "MLKEMCiphertext", 40103: "MLDSAPrivateKey",
+  40104: "MLDSAPublicKey", 40105: "MLDSASignature", 40300: "Seed",
+  40309: "SSKRShare", 309: "SSKRShare", 40800: "SSHPrivateKey",
+  40801: "SSHPublicKey", 40802: "SSHSignature"
 };
 
 // known-values 0.15.5's registry. 25 (value) is defined there and left out
@@ -677,106 +696,44 @@ function fromBytes(bytes) {
 }
 
 // ---------------------------------------------------------------------------
-// UR (BCR-2020-005): ur:<type>/<bytewords minimal of body + CRC-32>.
+// UR (BCR-2020-005): ur:<type>/<bytewords minimal of body + CRC-32>, and
+// the multi-part form, in bc_ur.js.
 // ---------------------------------------------------------------------------
-
-var BYTEWORDS = (
-  "able acid also apex aqua arch atom aunt away axis back bald barn belt " +
-  "beta bias blue body brag brew bulb buzz calm cash cats chef city claw " +
-  "code cola cook cost crux curl cusp cyan dark data days deli dice diet " +
-  "door down draw drop drum dull duty each easy echo edge epic even exam " +
-  "exit eyes fact fair fern figs film fish fizz flap flew flux foxy free " +
-  "frog fuel fund gala game gear gems gift girl glow good gray grim guru " +
-  "gush gyro half hang hard hawk heat help high hill holy hope horn huts " +
-  "iced idea idle inch inky into iris iron item jade jazz join jolt jowl " +
-  "judo jugs jump junk jury keep keno kept keys kick kiln king kite kiwi " +
-  "knob lamb lava lazy leaf legs liar limp lion list logo loud love luau " +
-  "luck lung main many math maze memo menu meow mild mint miss monk nail " +
-  "navy need news next noon note numb obey oboe omit onyx open oval owls " +
-  "paid part peck play plus poem pool pose puff puma purr quad quiz race " +
-  "ramp real redo rich road rock roof ruby ruin runs rust safe saga scar " +
-  "sets silk skew slot soap solo song stub surf swan taco task taxi tent " +
-  "tied time tiny toil tomb toys trip tuna twin ugly undo unit urge user " +
-  "vast very veto vial vibe view visa void vows wall wand warm wasp wave " +
-  "waxy webs what when whiz wolf work yank yawn yell yoga yurt zaps zero " +
-  "zest zinc zone zoom").split(" ");
-var MINIMAL = BYTEWORDS.map(function (w) {
-  return w.charAt(0) + w.charAt(3);
-});
-
-var CRC_TABLE = (function () {
-  var t = [];
-  for (var n = 0; n < 256; n++) {
-    var c = n;
-    for (var k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    t.push(c >>> 0);
-  }
-  return t;
-})();
 
 function crc32(bytes) {
   log.debug("Entering crc32().");
-  var c = 0xffffffff;
-  for (var i = 0; i < bytes.length; i++) {
-    c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
-  }
   log.debug("Leaving crc32().");
-  return (c ^ 0xffffffff) >>> 0;
+  return bcur.crc32(bytes);
 }
 
 function urEncode(type, body) {
   log.debug("Entering urEncode(). " + type);
-  var crc = crc32(body);
-  var all = cbytes.concatBytes(body, new Uint8Array([crc >>> 24,
-    (crc >>> 16) & 0xff, (crc >>> 8) & 0xff, crc & 0xff]));
-  var words = "";
-  for (var i = 0; i < all.length; i++) words += MINIMAL[all[i]];
   log.debug("Leaving urEncode().");
-  return "ur:" + type + "/" + words;
+  return bcur.urEncode(type, body);
 }
 
+// One UR, or every part of a multi-part one (whitespace between them).
 function urDecode(text) {
   log.debug("Entering urDecode().");
-  var s = String(text || "").trim().toLowerCase();
-  var m = /^ur:([a-z0-9-]+)\/([a-z]+)$/.exec(s);
-  if (!m) {
-    log.debug("Leaving urDecode(). Not a single-part UR.");
-    throw new Error("not a single-part UR (ur:<type>/<bytewords>); " +
-                    "multi-part URs are not read here.");
-  }
-  if (m[2].length % 2) {
-    log.debug("Leaving urDecode(). Odd length.");
-    throw new Error("UR bytewords of odd length.");
-  }
-  var out = [];
-  for (var i = 0; i < m[2].length; i += 2) {
-    var b = MINIMAL.indexOf(m[2].slice(i, i + 2));
-    if (b === -1) {
-      log.debug("Leaving urDecode(). Not a byteword.");
-      throw new Error(JSON.stringify(m[2].slice(i, i + 2)) + " is not a " +
-                      "minimal byteword.");
-    }
-    out.push(b);
-  }
-  if (out.length < 5) {
-    log.debug("Leaving urDecode(). Too short.");
-    throw new Error("a UR too short to carry its checksum.");
-  }
-  var body = new Uint8Array(out.slice(0, -4));
-  var crc = ((out[out.length - 4] << 24) | (out[out.length - 3] << 16) |
-             (out[out.length - 2] << 8) | out[out.length - 1]) >>> 0;
-  if (crc !== crc32(body)) {
-    log.debug("Leaving urDecode(). Bad CRC.");
-    throw new Error("the UR's CRC-32 does not match its body.");
-  }
-  log.debug("Leaving urDecode().");
-  return { type: m[1], body: body };
+  var d = bcur.decodeAny(text);
+  log.debug("Leaving urDecode(). " + d.parts + " part(s).");
+  return { type: d.type, body: d.body, parts: d.parts,
+           fragments: d.fragments };
 }
 
 function toUr(e) {
   log.debug("Entering toUr().");
   log.debug("Leaving toUr().");
   return urEncode("envelope", encode(toCbor(e)));
+}
+
+// The multi-part form: `count` parts (default one per fragment) of at most
+// maxFragmentLength bytes each, fountain parts after the fragments.
+function toUrParts(e, maxFragmentLength, count) {
+  log.debug("Entering toUrParts().");
+  log.debug("Leaving toUrParts().");
+  return bcur.encodeParts("envelope", encode(toCbor(e)),
+                          maxFragmentLength || 200, count);
 }
 
 // ur:envelope/…, hex of the tagged CBOR (d8c8…), or bytes.
@@ -809,7 +766,48 @@ function read(input) {
 // Keys and signatures.
 // ---------------------------------------------------------------------------
 
-var SCHEMES = ["schnorr", "ecdsa", "ed25519"];
+var SCHEMES = ["schnorr", "ecdsa", "ed25519", "mldsa44", "mldsa65",
+               "mldsa87", "ssh-ed25519", "ecdsa-sha2-nistp256",
+               "ecdsa-sha2-nistp384"];
+
+// FIPS 204 ML-DSA, as bc-components carries it: [level, bytes] under its
+// own tag, the level 2, 3 or 5. The keys are FIPS 204's encodings (the
+// secret key the expanded one pqcrypto writes), and the signature is the
+// pure, empty-context one over the subject digest's 32 bytes.
+var MLDSA = {
+  mldsa44: { level: 2, impl: nobleMldsa.ml_dsa44 },
+  mldsa65: { level: 3, impl: nobleMldsa.ml_dsa65 },
+  mldsa87: { level: 5, impl: nobleMldsa.ml_dsa87 }
+};
+
+function mldsaScheme(level) {
+  log.debug("Entering mldsaScheme(). " + level);
+  var name = Object.keys(MLDSA).filter(function (k) {
+    return MLDSA[k].level === level;
+  })[0];
+  log.debug("Leaving mldsaScheme(). " + name);
+  return name || null;
+}
+
+function isMldsa(scheme) {
+  log.debug("Entering isMldsa().");
+  log.debug("Leaving isMldsa().");
+  return Object.prototype.hasOwnProperty.call(MLDSA, scheme);
+}
+
+// A new ML-DSA key pair: { scheme, privateKey, publicKey }. `seed` (32
+// bytes) makes it reproducible.
+function mldsaKeyPair(scheme, seed) {
+  log.debug("Entering mldsaKeyPair(). " + scheme);
+  if (!isMldsa(scheme)) {
+    log.debug("Leaving mldsaKeyPair(). Not ML-DSA.");
+    throw new Error(scheme + " is not mldsa44, mldsa65 or mldsa87.");
+  }
+  var kp = MLDSA[scheme].impl.keygen(seed ? cbytes.asBytes(seed) :
+                                     cbytes.randomBytes(32));
+  log.debug("Leaving mldsaKeyPair().");
+  return { scheme: scheme, privateKey: kp.secretKey, publicKey: kp.publicKey };
+}
 
 // bc-components PrivateKeyBase: one 32-byte signing key from a seed.
 function signingKeyFromSeed(seed) {
@@ -822,6 +820,23 @@ function signingKeyFromSeed(seed) {
 // { scheme, privateKey (32 bytes) } -> { scheme, publicKey }.
 function publicKeyOf(key) {
   log.debug("Entering publicKeyOf(). " + key.scheme);
+  if (isMldsa(key.scheme)) {
+    if (!key.publicKey) {
+      log.debug("Leaving publicKeyOf(). No ML-DSA public key.");
+      throw new Error("an ML-DSA private key does not give its public key " +
+                      "here; keep the pair (ur:crypto-prvkeys does not " +
+                      "carry it either).");
+    }
+    log.debug("Leaving publicKeyOf(). ML-DSA.");
+    return { scheme: key.scheme, publicKey: key.publicKey };
+  }
+  if (SSH_ALGS[key.scheme]) {
+    var a = SSH_ALGS[key.scheme];
+    log.debug("Leaving publicKeyOf(). SSH.");
+    return { scheme: key.scheme, publicKey: key.publicKey ||
+             (a && a.curve ? a.impl.getPublicKey(key.privateKey, false) :
+              nobleEd.ed25519.getPublicKey(key.privateKey)) };
+  }
   var sk = key.privateKey;
   var pk = key.scheme === "schnorr" ? nobleSecp.schnorr.getPublicKey(sk) :
       key.scheme === "ecdsa" ? nobleSecp.secp256k1.getPublicKey(sk, true) :
@@ -833,6 +848,10 @@ function publicKeyOf(key) {
 function publicKeyCbor(pub) {
   log.debug("Entering publicKeyCbor().");
   var inner = pub.scheme === "schnorr" ? pub.publicKey :
+      SSH_ALGS[pub.scheme] ? new Tagged(TAG.SSH_PUBLIC_KEY,
+                                        sshPublicKeyText(pub)) :
+      isMldsa(pub.scheme) ? new Tagged(TAG.MLDSA_PUBLIC_KEY,
+        [MLDSA[pub.scheme].level, pub.publicKey]) :
       [pub.scheme === "ecdsa" ? 1 : 2, pub.publicKey];
   log.debug("Leaving publicKeyCbor().");
   return new Tagged(TAG.SIGNING_PUBLIC_KEY, inner);
@@ -851,6 +870,10 @@ function readPublicKey(input) {
   log.debug("Entering readPublicKey().");
   var s = String(input || "").trim();
   var inner;
+  if (/^ssh-|^ecdsa-sha2-/.test(s)) {
+    log.debug("Leaving readPublicKey(). OpenSSH text.");
+    return sshPublicKey(s);
+  }
   if (/^ur:/i.test(s)) {
     var ur = urDecode(s);
     var v = decode(ur.body);
@@ -874,12 +897,324 @@ function readPublicKey(input) {
   } else if (Array.isArray(inner) && inner[0] === 2 &&
              inner[1] instanceof Uint8Array && inner[1].length === 32) {
     out = { scheme: "ed25519", publicKey: inner[1] };
+  } else if (inner instanceof Tagged && inner.tag === TAG.MLDSA_PUBLIC_KEY &&
+             Array.isArray(inner.value) && mldsaScheme(inner.value[0]) &&
+             inner.value[1] instanceof Uint8Array) {
+    out = { scheme: mldsaScheme(inner.value[0]), publicKey: inner.value[1] };
+  } else if (inner instanceof Tagged && inner.tag === TAG.SSH_PUBLIC_KEY &&
+             typeof inner.value === "string") {
+    out = sshPublicKey(inner.value);
   } else {
     log.debug("Leaving readPublicKey(). Unknown form.");
-    throw new Error("not a Schnorr, ECDSA or Ed25519 signing public key.");
+    throw new Error("not a Schnorr, ECDSA, Ed25519, ML-DSA or SSH signing " +
+                    "public key.");
   }
   log.debug("Leaving readPublicKey(). " + out.scheme);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// SSH signatures (bc-components' SSH variant): an SSHSIG (OpenSSH's
+// PROTOCOL.sshsig) over the subject digest's 32 bytes, carried as its
+// armored text under tag 40802, the key as OpenSSH text under 40801 (public)
+// and 40800 (an unencrypted openssh-key-v1 private key). Ed25519 and ECDSA
+// P-256 / P-384; ssh-dsa and RSA are refused by name. The namespace is
+// bc-envelope-cli's default, "envelope", and the message hash SHA-256.
+// ---------------------------------------------------------------------------
+
+var SSH_ALGS = {
+  "ssh-ed25519": { label: "SshEd25519" },
+  "ecdsa-sha2-nistp256": { label: "SshEcdsaP256", curve: "nistp256",
+                           impl: nobleP256.p256, hash: nobleSha256 },
+  "ecdsa-sha2-nistp384": { label: "SshEcdsaP384", curve: "nistp384",
+                           impl: nobleP384.p384, hash: nobleSha384 }
+};
+var SSH_NAMESPACE = "envelope";
+
+function sshString(bytes) {
+  log.debug("Entering sshString().");
+  var b = typeof bytes === "string" ? cbytes.strBytes(bytes) : bytes;
+  var n = b.length;
+  log.debug("Leaving sshString().");
+  return cbytes.concatBytes(new Uint8Array([n >>> 24, (n >>> 16) & 0xff,
+                                            (n >>> 8) & 0xff, n & 0xff]), b);
+}
+
+function sshMpint(bytes) {
+  log.debug("Entering sshMpint().");
+  var b = cbytes.asBytes(bytes);
+  var i = 0;
+  while (i < b.length - 1 && b[i] === 0) i++;
+  b = b.subarray(i);
+  if (b.length && b[0] & 0x80) b = cbytes.concatBytes(new Uint8Array([0]), b);
+  log.debug("Leaving sshMpint().");
+  return sshString(b);
+}
+
+function SshReader(bytes) {
+  log.debug("Entering SshReader().");
+  this.b = bytes;
+  this.i = 0;
+  log.debug("Leaving SshReader().");
+}
+
+SshReader.prototype.u32 = function () {
+  log.debug("Entering SshReader.u32().");
+  if (this.i + 4 > this.b.length) {
+    log.debug("Leaving SshReader.u32(). Short.");
+    throw new Error("SSH: the data ends inside a number.");
+  }
+  var b = this.b;
+  var v = ((b[this.i] << 24) | (b[this.i + 1] << 16) | (b[this.i + 2] << 8) |
+           b[this.i + 3]) >>> 0;
+  this.i += 4;
+  log.debug("Leaving SshReader.u32().");
+  return v;
+};
+
+SshReader.prototype.bytes = function () {
+  log.debug("Entering SshReader.bytes().");
+  var n = this.u32();
+  if (this.i + n > this.b.length) {
+    log.debug("Leaving SshReader.bytes(). Short.");
+    throw new Error("SSH: the data ends inside a string.");
+  }
+  var out = this.b.slice(this.i, this.i + n);
+  this.i += n;
+  log.debug("Leaving SshReader.bytes().");
+  return out;
+};
+
+SshReader.prototype.text = function () {
+  log.debug("Entering SshReader.text().");
+  log.debug("Leaving SshReader.text().");
+  return cbytes.bytesToStr(this.bytes());
+};
+
+// A public key's wire form -> { scheme, publicKey }.
+function sshPublicKeyFromWire(wire) {
+  log.debug("Entering sshPublicKeyFromWire().");
+  var r = new SshReader(wire);
+  var alg = r.text();
+  var out;
+  if (alg === "ssh-ed25519") {
+    out = { scheme: alg, publicKey: r.bytes() };
+  } else if (SSH_ALGS[alg] && SSH_ALGS[alg].curve) {
+    if (r.text() !== SSH_ALGS[alg].curve) {
+      log.debug("Leaving sshPublicKeyFromWire(). Curve.");
+      throw new Error("SSH: an " + alg + " key on another curve.");
+    }
+    out = { scheme: alg, publicKey: r.bytes() };
+  } else {
+    log.debug("Leaving sshPublicKeyFromWire(). Unsupported.");
+    throw new Error("SSH key type " + JSON.stringify(alg) + " is not " +
+                    "supported here (ssh-ed25519, ecdsa-sha2-nistp256 and " +
+                    "ecdsa-sha2-nistp384 are).");
+  }
+  log.debug("Leaving sshPublicKeyFromWire(). " + alg);
+  return out;
+}
+
+function sshPublicKeyWire(pub) {
+  log.debug("Entering sshPublicKeyWire().");
+  var a = SSH_ALGS[pub.scheme];
+  log.debug("Leaving sshPublicKeyWire().");
+  return a.curve ? cbytes.concatBytes(sshString(pub.scheme),
+                                      sshString(a.curve),
+                                      sshString(pub.publicKey)) :
+    cbytes.concatBytes(sshString(pub.scheme), sshString(pub.publicKey));
+}
+
+// "ssh-ed25519 AAAA… comment" -> { scheme, publicKey }.
+function sshPublicKey(text) {
+  log.debug("Entering sshPublicKey().");
+  var parts = String(text).trim().split(/\s+/);
+  var key = sshPublicKeyFromWire(cbytes.b64ToBytes(parts[1] || ""));
+  if (key.scheme !== parts[0]) {
+    log.debug("Leaving sshPublicKey(). Label disagrees.");
+    throw new Error("SSH: the key is labelled " + parts[0] + " and is " +
+                    key.scheme + ".");
+  }
+  log.debug("Leaving sshPublicKey().");
+  return key;
+}
+
+function sshPublicKeyText(pub) {
+  log.debug("Entering sshPublicKeyText().");
+  log.debug("Leaving sshPublicKeyText().");
+  return pub.scheme + " " + cbytes.bytesToB64(sshPublicKeyWire(pub));
+}
+
+function armor(label, bytes) {
+  log.debug("Entering armor().");
+  var b64 = cbytes.bytesToB64(bytes);
+  var lines = [];
+  for (var i = 0; i < b64.length; i += 70) lines.push(b64.slice(i, i + 70));
+  log.debug("Leaving armor().");
+  return "-----BEGIN " + label + "-----\n" + lines.join("\n") +
+    "\n-----END " + label + "-----\n";
+}
+
+function dearmor(label, text) {
+  log.debug("Entering dearmor().");
+  var m = new RegExp("-----BEGIN " + label + "-----([\\s\\S]*?)-----END " +
+                     label + "-----").exec(String(text));
+  if (!m) {
+    log.debug("Leaving dearmor(). Not armored.");
+    throw new Error("SSH: not a " + label + ".");
+  }
+  log.debug("Leaving dearmor().");
+  return cbytes.b64ToBytes(m[1].replace(/\s+/g, ""));
+}
+
+// The bytes an SSHSIG signs: SHA-256 (or -512) of the message, framed.
+function sshSignedData(namespace, hashAlg, message) {
+  log.debug("Entering sshSignedData().");
+  var h = hashAlg === "sha512" ? nobleSha512(message) : nobleSha256(message);
+  log.debug("Leaving sshSignedData().");
+  return cbytes.concatBytes(cbytes.strBytes("SSHSIG"), sshString(namespace),
+                            sshString(new Uint8Array(0)), sshString(hashAlg),
+                            sshString(h));
+}
+
+// The armored SSHSIG over `message` by key { scheme, privateKey,
+// publicKey }.
+function sshSign(key, message) {
+  log.debug("Entering sshSign(). " + key.scheme);
+  var a = SSH_ALGS[key.scheme];
+  if (!a) {
+    log.debug("Leaving sshSign(). Unsupported.");
+    throw new Error("SSH signing with " + key.scheme + " is not supported " +
+                    "here.");
+  }
+  var data = sshSignedData(SSH_NAMESPACE, "sha256", message);
+  var blob;
+  if (a.curve) {
+    var sig = a.impl.sign(a.hash(data), key.privateKey);
+    var n = a.impl.CURVE.nByteLength;
+    blob = cbytes.concatBytes(sshMpint(cbytes.bigToBytes(sig.r, n)),
+                              sshMpint(cbytes.bigToBytes(sig.s, n)));
+  } else {
+    blob = nobleEd.ed25519.sign(data, key.privateKey);
+  }
+  var pub = { scheme: key.scheme, publicKey: key.publicKey ||
+              publicKeyOf(key).publicKey };
+  var out = cbytes.concatBytes(cbytes.strBytes("SSHSIG"),
+    new Uint8Array([0, 0, 0, 1]), sshString(sshPublicKeyWire(pub)),
+    sshString(SSH_NAMESPACE), sshString(new Uint8Array(0)),
+    sshString("sha256"), sshString(cbytes.concatBytes(sshString(key.scheme),
+                                                      sshString(blob))));
+  log.debug("Leaving sshSign().");
+  return armor("SSH SIGNATURE", out);
+}
+
+// Armored SSHSIG -> { scheme, signature, ssh: { publicKey, namespace,
+// hashAlg, blob } }.
+function sshReadSignature(text) {
+  log.debug("Entering sshReadSignature().");
+  var b = dearmor("SSH SIGNATURE", text);
+  if (cbytes.bytesToStr(b.subarray(0, 6)) !== "SSHSIG") {
+    log.debug("Leaving sshReadSignature(). Magic.");
+    throw new Error("SSH: not an SSHSIG.");
+  }
+  var r = new SshReader(b.subarray(6));
+  if (r.u32() !== 1) {
+    log.debug("Leaving sshReadSignature(). Version.");
+    throw new Error("SSH: an SSHSIG version other than 1.");
+  }
+  var pub = sshPublicKeyFromWire(r.bytes());
+  var namespace = r.text();
+  r.bytes();
+  var hashAlg = r.text();
+  var sr = new SshReader(r.bytes());
+  var alg = sr.text();
+  var blob = sr.bytes();
+  log.debug("Leaving sshReadSignature(). " + alg);
+  return { scheme: alg, signature: blob,
+           ssh: { publicKey: pub, namespace: namespace, hashAlg: hashAlg } };
+}
+
+function sshVerify(pub, sig, message) {
+  log.debug("Entering sshVerify(). " + sig.scheme);
+  var a = SSH_ALGS[sig.scheme];
+  if (!a || !sig.ssh || !cbytes.bytesEqual(sig.ssh.publicKey.publicKey,
+                                           pub.publicKey)) {
+    log.debug("Leaving sshVerify(). Not this key.");
+    return false;
+  }
+  var data = sshSignedData(sig.ssh.namespace, sig.ssh.hashAlg, message);
+  var ok;
+  if (a.curve) {
+    var r = new SshReader(sig.signature);
+    var rr = cbytes.bytesToBig(r.bytes());
+    var ss = cbytes.bytesToBig(r.bytes());
+    // OpenSSH does not normalise S, so a high-S signature is valid here.
+    ok = a.impl.verify(new a.impl.Signature(rr, ss), a.hash(data),
+                       pub.publicKey, { lowS: false });
+  } else {
+    ok = nobleEd.ed25519.verify(sig.signature, data, pub.publicKey);
+  }
+  log.debug("Leaving sshVerify(). " + ok);
+  return ok;
+}
+
+// An unencrypted OpenSSH private key -> { scheme, privateKey, publicKey }.
+function sshPrivateKey(text) {
+  log.debug("Entering sshPrivateKey().");
+  var b = dearmor("OPENSSH PRIVATE KEY", text);
+  var magic = "openssh-key-v1\u0000";
+  if (cbytes.bytesToStr(b.subarray(0, magic.length)) !== magic) {
+    log.debug("Leaving sshPrivateKey(). Magic.");
+    throw new Error("SSH: not an openssh-key-v1 private key.");
+  }
+  var r = new SshReader(b.subarray(magic.length));
+  if (r.text() !== "none" || r.text() !== "none") {
+    log.debug("Leaving sshPrivateKey(). Encrypted.");
+    throw new Error("SSH: an encrypted private key (only unencrypted ones " +
+                    "are read).");
+  }
+  r.bytes();
+  if (r.u32() !== 1) {
+    log.debug("Leaving sshPrivateKey(). Count.");
+    throw new Error("SSH: a private key file holding more than one key.");
+  }
+  r.bytes();
+  var p = new SshReader(r.bytes());
+  if (p.u32() !== p.u32()) {
+    log.debug("Leaving sshPrivateKey(). Check words.");
+    throw new Error("SSH: the private key's check words differ.");
+  }
+  var alg = p.text();
+  var out;
+  if (alg === "ssh-ed25519") {
+    var pk = p.bytes();
+    out = { scheme: alg, privateKey: p.bytes().slice(0, 32), publicKey: pk };
+  } else if (SSH_ALGS[alg] && SSH_ALGS[alg].curve) {
+    p.text();
+    var q = p.bytes();
+    var d = cbytes.bytesToBig(p.bytes());
+    out = { scheme: alg, publicKey: q,
+            privateKey: cbytes.bigToBytes(d,
+              SSH_ALGS[alg].impl.CURVE.nByteLength) };
+  } else {
+    log.debug("Leaving sshPrivateKey(). Unsupported.");
+    throw new Error("SSH key type " + JSON.stringify(alg) + " is not " +
+                    "supported here.");
+  }
+  log.debug("Leaving sshPrivateKey(). " + alg);
+  return out;
+}
+
+// An Ed25519 SSH key from a seed as bc-components derives one: its 32 bytes
+// the first page of bc-components' HKDFRng, HKDF-SHA-256(seed, salt
+// "ssh-ed25519-0").
+function sshEd25519FromSeed(seed) {
+  log.debug("Entering sshEd25519FromSeed().");
+  var sk = nobleHkdf(nobleSha256, cbytes.asBytes(seed),
+                     cbytes.strBytes("ssh-ed25519-0"), new Uint8Array(0), 32);
+  log.debug("Leaving sshEd25519FromSeed().");
+  return { scheme: "ssh-ed25519", privateKey: sk,
+           publicKey: nobleEd.ed25519.getPublicKey(sk) };
 }
 
 function signDigest(key, digest, aux) {
@@ -893,6 +1228,15 @@ function signDigest(key, digest, aux) {
       .toCompactRawBytes();
   } else if (key.scheme === "ed25519") {
     sig = nobleEd.ed25519.sign(digest, key.privateKey);
+  } else if (isMldsa(key.scheme)) {
+    sig = MLDSA[key.scheme].impl.sign(key.privateKey, digest);
+    log.debug("Leaving signDigest(). ML-DSA.");
+    return new Tagged(TAG.SIGNATURE, new Tagged(TAG.MLDSA_SIGNATURE,
+      [MLDSA[key.scheme].level, sig]));
+  } else if (SSH_ALGS[key.scheme]) {
+    log.debug("Leaving signDigest(). SSH.");
+    return new Tagged(TAG.SIGNATURE, new Tagged(TAG.SSH_SIGNATURE,
+      sshSign(key, digest)));
   } else {
     log.debug("Leaving signDigest(). Unknown scheme.");
     throw new Error("signature scheme " + key.scheme + " is not one of " +
@@ -912,7 +1256,18 @@ function readSignature(v) {
   }
   var x = v.value;
   var out = null;
-  if (x instanceof Uint8Array && x.length === 64) {
+  if (x instanceof Tagged && x.tag === TAG.MLDSA_SIGNATURE &&
+      Array.isArray(x.value) && mldsaScheme(x.value[0]) &&
+      x.value[1] instanceof Uint8Array) {
+    out = { scheme: mldsaScheme(x.value[0]), signature: x.value[1] };
+  } else if (x instanceof Tagged && x.tag === TAG.SSH_SIGNATURE &&
+             typeof x.value === "string") {
+    try {
+      out = sshReadSignature(x.value);
+    } catch (e) {
+      out = null;
+    }
+  } else if (x instanceof Uint8Array && x.length === 64) {
     out = { scheme: "schnorr", signature: x };
   } else if (Array.isArray(x) && x.length === 2 &&
              x[1] instanceof Uint8Array && x[1].length === 64) {
@@ -939,6 +1294,11 @@ function verifyDigest(pub, sig, digest) {
     } else if (sig.scheme === "ecdsa") {
       ok = nobleSecp.secp256k1.verify(sig.signature, sha256(sha256(digest)),
                                       pub.publicKey);
+    } else if (isMldsa(sig.scheme)) {
+      ok = MLDSA[sig.scheme].impl.verify(pub.publicKey, digest,
+                                         sig.signature);
+    } else if (SSH_ALGS[sig.scheme]) {
+      ok = sshVerify(pub, sig, digest);
     } else {
       ok = nobleEd.ed25519.verify(sig.signature, digest, pub.publicKey);
     }
@@ -1179,6 +1539,8 @@ function valueLabel(v) {
       var s = readSignature(v);
       out = "Signature" + (s && s.scheme !== "schnorr" ? "(" + s.scheme +
                            ")" : "");
+    } else if (v.tag === TAG.SSKR_SHARE || v.tag === TAG.SSKR_SHARE_V1) {
+      out = "SSKRShare";
     } else if (v.tag === TAG.SALT) {
       out = "Salt";
     } else if (v.tag === TAG.URI) {
@@ -1349,8 +1711,16 @@ module.exports = {
   urDecode: urDecode,
   crc32: crc32,
   toUr: toUr,
+  toUrParts: toUrParts,
   read: read,
   signingKeyFromSeed: signingKeyFromSeed,
+  isMldsa: isMldsa,
+  mldsaKeyPair: mldsaKeyPair,
+  sshPublicKey: sshPublicKey,
+  sshPublicKeyText: sshPublicKeyText,
+  sshPrivateKey: sshPrivateKey,
+  sshEd25519FromSeed: sshEd25519FromSeed,
+  publicKeyCbor: publicKeyCbor,
   publicKeyOf: publicKeyOf,
   publicKeyUr: publicKeyUr,
   readPublicKey: readPublicKey,
