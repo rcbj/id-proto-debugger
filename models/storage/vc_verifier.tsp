@@ -122,4 +122,13 @@ model VcVerifierKeys {
   // transaction_data objects, a JSON array (section 8.4; #471, E3).
   @storageKey(#{ area: "local", class: "ordinary" })
   vpv_transaction_data: unknown;
+
+  // "1": sign a DC API request again as a second Client Identifier
+  // (openid4vp-v1-multisigned; #471, E3).
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_dc_multisigned: unknown;
+
+  // The second signer's Client Identifier prefix.
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_dc_second_prefix: unknown;
 }

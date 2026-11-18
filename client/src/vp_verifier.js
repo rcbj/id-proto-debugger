@@ -1382,10 +1382,17 @@ async function signRequestObject(opts) {
   } else if (who.prefix === "") {
     header.kid = preRegisteredJwks(identity).keys[0].kid;
   }
+  // A multisigned request (Appendix A.3.2.2) signs ONE payload under
+  // several headers: o.payload is that shared payload, and o.header adds
+  // what must be in this signature's protected header only (client_id,
+  // verifier_info).
+  Object.keys(o.header || {}).forEach(function (k) {
+    header[k] = o.header[k];
+  });
   var signed = await jws.signJwsAsync({
     algId: alg.algId,
     protectedHeader: header,
-    payload: claims,
+    payload: o.payload || claims,
     privateKey: { jwk: identity.privateJwk },
     backend: "js"
   });
@@ -1670,8 +1677,15 @@ async function encryptRequestObject(jwsCompact, plan) {
 //               data: { request: <compact JWS> } }
 //             `origin`, when given, must be one of expected_origins.
 //
-// openid4vp-v1-multisigned (a JWS JSON serialization with one signature per
-// Client Identifier) is refused: this debugger is one Verifier.
+//   multisigned  { protocol: "openid4vp-v1-multisigned",
+//               data: { request: <JWS JSON Serialization> } }
+//             (Appendix A.3.2.2): one payload, one signature per Client
+//             Identifier. `o.signers` is [{ identity, clientId, attester?,
+//             verifierInfo? }], at least two. client_id, verifier_info and
+//             iss (which names the client_id for an x509 prefix) are in
+//             each signature's protected header only: "MUST be present
+//             only in the protected header of the respective signature
+//             object"; everything else is in the payload.
 async function dcApiRequest(opts) {
   log.debug("Entering dcApiRequest().");
   var o = opts || {};
@@ -1682,17 +1696,17 @@ async function dcApiRequest(opts) {
                     "dc_api or dc_api.jwt, not " +
                     JSON.stringify(claims.response_mode) + ".");
   }
-  if (o.multisigned) {
-    log.debug("Leaving dcApiRequest(). Multisigned.");
-    throw new Error(DC_API_PROTOCOLS.multisigned + " is not built by this " +
-                    "debugger: it signs as one Verifier.");
+  if (o.multisigned && (!isArray(o.signers) || o.signers.length < 2)) {
+    log.debug("Leaving dcApiRequest(). Multisigned with too few signers.");
+    throw new Error(DC_API_PROTOCOLS.multisigned + " needs at least two " +
+                    "signers, one per Client Identifier (Appendix A.3.2.2).");
   }
   if (o.origin && !/^[a-z][a-z0-9+.-]*:\/\/[^/?#]+$/i.test(o.origin)) {
     log.debug("Leaving dcApiRequest(). Bad origin.");
     throw new Error(JSON.stringify(o.origin) + " is not an origin " +
                     "(scheme://host[:port], no path).");
   }
-  if (!o.signed) {
+  if (!o.signed && !o.multisigned) {
     var data = Object.assign({}, claims);
     ["client_id", "iss", "aud", "expected_origins", "iat", "exp",
      "response_uri", "state"].forEach(function (k) {
@@ -1711,6 +1725,51 @@ async function dcApiRequest(opts) {
     throw new Error("this page's origin " + o.origin + " is not in " +
                     "expected_origins (" + origins.join(", ") + "), so " +
                     "every wallet would refuse the request.");
+  }
+  if (o.multisigned) {
+    var payload = Object.assign({}, claims);
+    ["client_id", "iss", "verifier_info"].forEach(function (k) {
+      delete payload[k];
+    });
+    var seen = {};
+    var signatures = [];
+    for (var i = 0; i < o.signers.length; i++) {
+      var one = o.signers[i];
+      if (!one.clientId || seen[one.clientId]) {
+        log.debug("Leaving dcApiRequest(). Bad or repeated client_id.");
+        throw new Error("each signer of a multisigned request names its " +
+                        "own client_id; got " + JSON.stringify(one.clientId) +
+                        ".");
+      }
+      seen[one.clientId] = true;
+      var own = { client_id: one.clientId };
+      if (one.verifierInfo !== undefined) {
+        own.verifier_info = checkedVerifierInfo(one.verifierInfo,
+                                                claims.dcql_query);
+      }
+      var c = await signRequestObject({
+        claims: Object.assign({}, payload, { client_id: one.clientId }),
+        identity: one.identity, attester: one.attester,
+        attestation: one.attestation, kid: one.kid, now: o.now,
+        payload: payload, header: own });
+      var parts = c.split(".");
+      signatures.push({ protected: parts[0], signature: parts[2],
+                        payloadB64: parts[1] });
+    }
+    var shared = signatures[0].payloadB64;
+    if (signatures.some(function (sig) {
+      return sig.payloadB64 !== shared;
+    })) {
+      log.debug("Leaving dcApiRequest(). Payloads differ.");
+      throw new Error("the signers' payloads came out different; a JWS " +
+                      "JSON Serialization has one payload.");
+    }
+    log.debug("Leaving dcApiRequest(). Multisigned, " + signatures.length +
+              " signatures.");
+    return { protocol: DC_API_PROTOCOLS.multisigned, data: { request: {
+      payload: shared, signatures: signatures.map(function (sig) {
+        return { protected: sig.protected, signature: sig.signature };
+      }) } } };
   }
   var compact = await signRequestObject({ claims: claims,
     identity: o.identity, attester: o.attester, attestation: o.attestation,

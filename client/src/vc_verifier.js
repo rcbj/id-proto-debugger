@@ -54,7 +54,8 @@ var VERIFIER_KEYS = [
   "vpv_trust_anchors", "vpv_fetch_via_api", "vpv_save_identity",
   "vpv_public_base_url", "vpv_issuer_bindings", "vpv_trusted_authorities",
   "vpv_profile", "vpv_claim_sets", "vpv_intent_to_retain", "vpv_request_key",
-  "vpv_scope", "vpv_verifier_info", "vpv_transaction_data"
+  "vpv_scope", "vpv_verifier_info", "vpv_transaction_data",
+  "vpv_dc_multisigned", "vpv_dc_second_prefix"
 ];
 
 // Whether issuer metadata, DID documents and status lists are fetched
@@ -1125,11 +1126,18 @@ async function askThroughDcApi() {
     if (mode !== "dc_api" && mode !== "dc_api.jwt") {
       mode = "dc_api";
     }
-    var signed = !!val("vpv_dc_signed");
+    var multisigned = !!val("vpv_dc_multisigned");
+    var signed = !!val("vpv_dc_signed") || multisigned;
+    var secondPrefix = val("vpv_dc_second_prefix") ||
+      "decentralized_identifier";
     var origin = window.location.origin;
     var dcql = dcqlFromPage();
     haipGate({ dcApi: true, signed: signed, responseMode: mode, dcql: dcql,
                prefix: val("vpv_client_prefix") || "x509_hash" });
+    if (multisigned) {
+      haipGate({ dcApi: true, signed: true, responseMode: mode, dcql: dcql,
+                 prefix: secondPrefix });
+    }
     var encryption = mode === "dc_api.jwt"
       ? await verifier.responseEncryptionKey() : null;
     var nonce = verifier.randomToken(16);
@@ -1153,7 +1161,24 @@ async function askThroughDcApi() {
       nonce: nonce, dcql: dcql, transactionData: transactionData,
       encryptionJwk: encryption ? encryption.publicJwk : undefined,
       expectedOrigins: signed ? [origin] : undefined });
+    var second = null;
+    if (multisigned) {
+      // A second prefix that yields the same client_id as the first (the
+      // same kept request key under decentralized_identifier) is refused by
+      // dcApiRequest(), naming it.
+      second = await makeSigner(secondPrefix, window.location.hostname,
+                                undefined);
+    }
+    var verifierInfo = verifierInfoFromPage();
     var request = await verifier.dcApiRequest({
+      multisigned: multisigned,
+      signers: multisigned ? [
+        { identity: signer.identity, clientId: clientId,
+          attester: signer.attester || undefined,
+          verifierInfo: verifierInfo },
+        { identity: second.identity, clientId: clientIdOf(second, undefined),
+          attester: second.attester || undefined,
+          verifierInfo: verifierInfo }] : undefined,
       signed: signed, claims: claims,
       identity: signer ? signer.identity : undefined, origin: origin,
       attester: signer && signer.attester ? signer.attester : undefined });
