@@ -81,6 +81,9 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
+// node's own crypto module (OpenSSL). `crypto` alone is the global Web
+// Crypto object here, which has no ECDSA DER and no SEC 1 import.
+const nodeCrypto = require("crypto");
 const { Command, Option } = require("commander");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -529,6 +532,79 @@ async function compositeCertificatesNeedBothHalves() {
   }
   log.info("Checked " + composites.length + " composite algorithms.");
   log.debug("Leaving compositeCertificatesNeedBothHalves().");
+}
+
+// ---------------------------------------------------------------------------
+// 6b. The ECDSA half of a composite is DER that OpenSSL agrees with (#351).
+//
+// No released OpenSSL implements the composite drafts, so the checks above
+// only ever hold this module against itself — and an ECDSA half that is
+// self-consistent and not DER passes them. That is exactly what @noble/curves
+// 1.4.0 produces for P-521: its DER writer emits a short-form length, so the
+// 139-byte SEQUENCE comes out as `30 88 ...` where DER needs `30 81 87 ...`,
+// and its reader refuses the correct form. So each EC composite's
+// traditional half is handed to OpenSSL (through node's crypto) both ways:
+// OpenSSL must verify the half this module wrote, and this module must accept
+// a composite whose half OpenSSL wrote.
+// ---------------------------------------------------------------------------
+const NODE_HASH = { "SHA-256": "sha256", "SHA-384": "sha384",
+                    "SHA-512": "sha512" };
+
+// The traditional public half (an uncompressed SEC 1 point) as a node key.
+function nodeEcPublicKey(curve, point) {
+  log.debug("Entering nodeEcPublicKey(). curve=" + curve);
+  const bytes = Buffer.from(point);
+  const size = (bytes.length - 1) / 2;
+  const key = nodeCrypto.createPublicKey({ format: "jwk", key: {
+    kty: "EC", crv: curve,
+    x: bytes.subarray(1, 1 + size).toString("base64url"),
+    y: bytes.subarray(1 + size).toString("base64url") } });
+  log.debug("Leaving nodeEcPublicKey().");
+  return key;
+}
+
+async function compositeEcdsaHalfIsDer() {
+  log.debug("Entering compositeEcdsaHalfIsDer().");
+  const ecComposites = postQuantumAlgIds().filter(function (id) {
+    return familyOf(id) === "Composite ML-DSA" &&
+      pqx.alg(id).composite.trad.kind === "ec";
+  });
+  assert.ok(ecComposites.some(function (id) {
+    return pqx.alg(id).composite.trad.curve === "P-521";
+  }), "no ECDSA P-521 composite was found to check");
+  for (const algId of ecComposites) {
+    const cfg = pqx.alg(algId).composite;
+    const hash = NODE_HASH[cfg.trad.sigHash];
+    const key = await keyFor(algId);
+    const pub = pqx.decodeSpki(pemBytes(key.publicPem)).pub;
+    const priv = pqx.decodePkcs8(pemBytes(key.privatePem)).priv;
+    const message = Buffer.from("composite ECDSA half, " + algId);
+    const mPrime = Buffer.from(pqx.compositeMessage(cfg, message));
+    const nodePub = nodeEcPublicKey(cfg.trad.curve,
+        pqx.splitCompositePublic(cfg, pub).trad);
+
+    // 1. OpenSSL verifies the half this module wrote, as DER.
+    const signature = await pqx.sign(algId, message, priv);
+    const ours = Buffer.from(pqx.splitCompositeSignature(cfg, signature).trad);
+    assert.ok(nodeCrypto.verify(hash, mPrime,
+        { key: nodePub, dsaEncoding: "der" }, ours),
+      algId + ": OpenSSL refuses the ECDSA half this module wrote (first " +
+      "bytes " + ours.subarray(0, 3).toString("hex") + "); it is not DER");
+
+    // 2. This module accepts a composite whose ECDSA half OpenSSL wrote.
+    const nodePriv = nodeCrypto.createPrivateKey({ format: "der", type: "sec1",
+      key: Buffer.from(pqx.splitCompositePrivate(cfg, priv).trad) });
+    const theirs = nodeCrypto.sign(hash, mPrime,
+        { key: nodePriv, dsaEncoding: "der" });
+    const mldsaHalf = pqx.splitCompositeSignature(cfg, signature).mldsa;
+    const assembled = Buffer.concat([Buffer.from(mldsaHalf), theirs]);
+    assert.ok(await pqx.verify(algId, assembled, message, pub),
+      algId + ": a composite whose ECDSA half OpenSSL wrote (first bytes " +
+      theirs.subarray(0, 3).toString("hex") + ") does not verify here");
+  }
+  log.info("Checked the ECDSA half of " + ecComposites.length +
+           " composite algorithms against OpenSSL, both ways.");
+  log.debug("Leaving compositeEcdsaHalfIsDer().");
 }
 
 // The same key material presented as another composite algorithm, where the
@@ -1130,6 +1206,7 @@ async function test() {
   await hybridCertificatesCarryTwoSignatures();
   await theSlowParameterSetsVerifyWhatOpensslSigns();
   await compositeCertificatesNeedBothHalves();
+  await compositeEcdsaHalfIsDer();
   await mixedChainsVerifyEndToEnd();
   await pureCertificatesVerifyAgainstOpenssl();
   log.info("Cross-checked " + crossChecks + " facts against OpenSSL " +
