@@ -85,6 +85,14 @@ const API_URL = String(process.env.API_URL || "").replace(/\/+$/, "");
 // account somebody made for the purpose, named here.
 const HOLDER_USERNAME = String(process.env.VC_GUIDE_HOLDER_USERNAME || "");
 const HOLDER_PASSWORD = String(process.env.VC_GUIDE_HOLDER_PASSWORD || "");
+// The account's authenticator-app secret (base32), for an authorization
+// server whose policy asks for a second factor. Environment only.
+const HOLDER_TOTP_SECRET = String(process.env.VC_GUIDE_HOLDER_TOTP_SECRET ||
+                                  "").replace(/\s+/g, "").toUpperCase();
+// The 30-second TOTP window last spent, so no two sign-ins reuse one code
+// (RFC 6238 section 5.2). Module-scoped because the sign-ins are in
+// different functions across the run.
+let lastTotpWindow = -1;
 // A DOCUMENTATION RUN against an issuer this job does not own registers
 // nothing there (VC_GUIDE_NO_PROVISION=1). The suite's run declares the
 // wallet in the issuer's registry first, as every other wallet job does.
@@ -160,11 +168,21 @@ async function openPage(driver, name) {
 // An offer made on the issuer's own website for a person signed in there.
 async function offerFor(driver, configuration, mode, label) {
   log.debug("Entering offerFor(). " + configuration + " " + mode);
-  const screen = await common.offerFromThePortalWallet(driver, {
-    By: By, until: until, stsBase: ISSUER,
-    username: holder.username || usernameFor(label || "guide"),
-    password: holder.password || undefined, mode: mode,
-    configuration: configuration, wait: WAIT, consentScreen: consentScreen });
+  let screen;
+  try {
+    screen = await common.offerFromThePortalWallet(driver, {
+      By: By, until: until, stsBase: ISSUER,
+      username: holder.username || usernameFor(label || "guide"),
+      password: holder.password || undefined, mode: mode,
+      configuration: configuration, wait: WAIT, consentScreen: consentScreen,
+      afterLogin: answerOneTimeCode });
+  } catch (e) {
+    var at = await driver.getCurrentUrl();
+    var body = await driver.executeScript("return document.body ? " +
+      "document.body.innerText.slice(0, 500) : '';");
+    throw new Error(e.message + " — at " + at + ": " +
+      String(body).replace(/\s+/g, " "));
+  }
   assert.ok(/credential_offer(_uri)?=/.test(screen.offerUri),
     "the issuer's offer page should show a Credential Offer: " +
     screen.offerUri);
@@ -394,11 +412,17 @@ async function setUpTheIssuer() {
                  "authorization_code", "refresh_token"],
     redirectUris: [BASE + "/callback"], scopes: scopes,
     why: "the wallet the user guide's tutorials collect credentials with" });
-  await registry.ensurePerson(registry.stsBaseFor(ISSUER), holder.username,
-                              holder.password);
+  // An account whose password this run was given already exists and is
+  // somebody's: it is used as it is, never created or reset.
+  if (!HOLDER_PASSWORD) {
+    await registry.ensurePerson(registry.stsBaseFor(ISSUER), holder.username,
+                                holder.password);
+  }
   log.info("Provisioned at " + ISSUER + ": the public client " +
-           GUIDE_CLIENT_ID + " (redirect URI " + BASE + "/callback) and " +
-           "the account " + holder.username + ".");
+           GUIDE_CLIENT_ID + " (redirect URI " + BASE + "/callback)" +
+           (HOLDER_PASSWORD ? "; the existing account " + holder.username +
+            " is used as it is." : " and the account " + holder.username +
+            "."));
   log.debug("Leaving setUpTheIssuer().");
 }
 
@@ -416,6 +440,127 @@ async function useTheWalletClient(driver) {
     GUIDE_CLIENT_ID);
   await driver.sleep(500);
   log.debug("Leaving useTheWalletClient().");
+}
+
+// RFC 6238 (HMAC-SHA1, 6 digits, 30 seconds) from a base32 secret: the
+// code an authenticator app shows.
+function totpCode(secret, when) {
+  log.debug("Entering totpCode().");
+  var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  var bits = "";
+  secret.replace(/=+$/, "").split("").forEach(function (c) {
+    bits += ("00000" + alphabet.indexOf(c).toString(2)).slice(-5);
+  });
+  var key = Buffer.alloc(Math.floor(bits.length / 8));
+  for (var i = 0; i < key.length; i++) {
+    key[i] = parseInt(bits.slice(i * 8, i * 8 + 8), 2);
+  }
+  var counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor((when || Date.now()) / 30000)));
+  var mac = nodeCrypto.createHmac("sha1", key).update(counter).digest();
+  var off = mac[mac.length - 1] & 0x0f;
+  var n = (mac.readUInt32BE(off) & 0x7fffffff) % 1000000;
+  log.debug("Leaving totpCode().");
+  return ("000000" + n).slice(-6);
+}
+
+// A sign-in that asks for a second factor: when a one-time-code field
+// appears and this run has the account's authenticator secret, the code is
+// computed and submitted. A sign-in that asks for none returns at once.
+async function answerOneTimeCode(driver) {
+  log.debug("Entering answerOneTimeCode().");
+  var field = null;
+  var css = "input[autocomplete='one-time-code'], input[name*='otp' i], " +
+    "input[name*='totp' i], input[id*='totp' i], input[name='code']";
+  try {
+    await driver.wait(async function () {
+      var found = await driver.findElements(By.css(css));
+      for (var i = 0; i < found.length; i++) {
+        if (await found[i].isDisplayed()) {
+          field = found[i];
+          return true;
+        }
+      }
+      return !/\/authn\//.test(await driver.getCurrentUrl());
+    }, WAIT);
+  } catch (e) {
+    log.debug("Leaving answerOneTimeCode(). Neither came.");
+    return;
+  }
+  if (!field) {
+    log.debug("Leaving answerOneTimeCode(). No second factor asked for.");
+    return;
+  }
+  assert.ok(HOLDER_TOTP_SECRET, "the authorization server asks for a " +
+            "one-time code: set VC_GUIDE_HOLDER_TOTP_SECRET to the " +
+            "account's authenticator secret");
+  // A TOTP code is single-use (RFC 6238 section 5.2), and this run signs in
+  // several times. Two sign-ins in one 30-second window present the same
+  // code, and the second is refused. So a window is never used twice: if
+  // the last code came from the window now current, wait for the next one.
+  var counter = Math.floor(Date.now() / 30000);
+  if (counter === lastTotpWindow) {
+    await driver.sleep(30000 - (Date.now() % 30000) + 750);
+    counter = Math.floor(Date.now() / 30000);
+  }
+  lastTotpWindow = counter;
+  await field.sendKeys(totpCode(HOLDER_TOTP_SECRET));
+  // The field may auto-submit on the sixth digit; a submit button is clicked
+  // only when it did not.
+  if (/\/authn\//.test(await driver.getCurrentUrl())) {
+    var submit = await driver.executeScript("var f = arguments[0].form; " +
+      "return f ? f.querySelector('button[type=submit], " +
+      "input[type=submit]') : null;", field);
+    if (submit) {
+      try {
+        await submit.click();
+      } catch (e) {
+        log.debug("answerOneTimeCode(): submit click: " + e.message);
+      }
+    }
+  }
+  log.info("Answered the authorization server's one-time-code step.");
+  log.debug("Leaving answerOneTimeCode().");
+}
+
+// The authorization server's sign-in: the field is waited for until it is
+// visible, and a page that redraws once after loading (so a field found a
+// moment ago is stale) is simply read again.
+async function signInAtTheAuthorizationServer(driver) {
+  log.debug("Entering signInAtTheAuthorizationServer().");
+  for (var attempt = 1; attempt <= 3; attempt++) {
+    try {
+      var user = await driver.wait(until.elementLocated(By.id("username")),
+                                   WAIT);
+      await driver.wait(until.elementIsVisible(user), WAIT);
+      await user.clear();
+      await user.sendKeys(holder.username);
+      var pass = await driver.findElement(By.id("password"));
+      await pass.clear();
+      await pass.sendKeys(holder.password);
+      // The password's own form's submit button: the page has other forms
+      // (the language selector) whose submit comes first and is hidden.
+      var button = await driver.executeScript("var f = arguments[0].form; " +
+        "return f ? f.querySelector('#kc-login, button[type=submit], " +
+        "input[type=submit]') : null;", pass);
+      assert.ok(button, "the sign-in form has no submit button");
+      await button.click();
+      await answerOneTimeCode(driver);
+      log.debug("Leaving signInAtTheAuthorizationServer(). Submitted.");
+      return;
+    } catch (e) {
+      if (e.name !== "StaleElementReferenceError" || attempt === 3) {
+        log.debug("Leaving signInAtTheAuthorizationServer(). " + e.name);
+        throw e;
+      }
+      log.info("The sign-in page redrew while it was being filled in; " +
+               "reading it again (attempt " + (attempt + 1) + ").");
+      log.info("  at " + await driver.getCurrentUrl() + " — " +
+        await driver.executeScript("var f = document.querySelectorAll(" +
+          "'form'); return f.length + ' form(s); ' + (document.body ? " +
+          "document.body.innerText.slice(0, 200) : '');"));
+    }
+  }
 }
 
 async function waitForStatusText(driver, id, re, why) {
@@ -445,14 +590,37 @@ async function authorizationCode(driver) {
   await driver.sleep(1000);
   await snap(driver, "01-authorize-issuance", ["pane_handoff"]);
   await clickId(driver, "start_issuance_button");
-  await driver.wait(until.elementLocated(By.id("username")), WAIT,
-    "Start Issuance should reach the authorization server's sign-in");
-  await driver.findElement(By.id("username")).sendKeys(holder.username);
-  await driver.findElement(By.id("password")).sendKeys(holder.password);
-  await driver.findElement(By.id("kc-login")).click();
+  try {
+    await driver.wait(until.elementLocated(By.id("username")), WAIT,
+      "Start Issuance should reach the authorization server's sign-in");
+  } catch (e) {
+    // Where it went instead, so the failure names the page and its words.
+    var where = await driver.getCurrentUrl();
+    var said = await driver.executeScript("return document.body ? " +
+      "document.body.innerText.slice(0, 600) : '';");
+    throw new Error(e.message + " — at " + where + ": " + said);
+  }
+  await signInAtTheAuthorizationServer(driver);
   await consentScreen.passInBrowser(driver, By);
-  await driver.wait(until.urlContains("vc-issuance-2.html"), WAIT,
-    "the code should be exchanged and step 2 opened");
+  try {
+    await driver.wait(until.urlContains("vc-issuance-2.html"), WAIT,
+      "the code should be exchanged and step 2 opened");
+  } catch (e) {
+    var at = await driver.getCurrentUrl();
+    var box = await driver.executeScript("var e = document.getElementById(" +
+      "'vc_token_status') || document.getElementById('token_error') || " +
+      "document.getElementById('error'); return e ? e.textContent : '';");
+    var logs = [];
+    try {
+      logs = (await driver.manage().logs().get("browser")).map(function (l) {
+        return l.level.name + " " + l.message;
+      }).slice(-12);
+    } catch (le) {
+      logs = ["(no console: " + le.message + ")"];
+    }
+    throw new Error(e.message + " — at " + at + ": status=" + box +
+      " | console: " + logs.join(" / ").slice(0, 1400));
+  }
   await waitForContent.waitForPageBundle(driver,
     "vc-issuance-2.html should load", WAIT);
   await driver.wait(async function () {
@@ -836,6 +1004,13 @@ async function test() {
   options.addArguments("--headless=new", "--no-sandbox",
                        "--disable-dev-shm-usage");
   browserFlags.addBrowserAccessFlags(options, BASE);
+  // Sign in to a PRODUCT-MODE issuer as the browser this is, not as the
+  // headless client its User-Agent would otherwise announce: a product-mode
+  // iya-sts scores the sign-in for risk, and a HeadlessChrome User-Agent is
+  // the automated-client signal that makes a first sign-in HIGH and refused
+  // (browser_flags.js addDesktopUserAgent, which iya-sts's own suite uses).
+  // A development issuer refuses nothing, so this costs it nothing.
+  browserFlags.addDesktopUserAgent(options);
   if (IGNORE_CORS) {
     log.warn("VC_GUIDE_IGNORE_CORS=1: Chrome runs with " +
              "--disable-web-security (a documentation run only).");
