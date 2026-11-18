@@ -194,7 +194,9 @@ protocol workflows (Kerberos, LDAP, SPIFFE and more).
 Because the hosted site runs entirely in your browser, the server must be
 reachable **from the browser**:
 
-- a public **HTTPS** origin with a **browser-trusted certificate**;
+- an **HTTPS** origin the browser trusts — here, `https://localhost:8081` on
+  the loopback, whose self-signed certificate you accept once (a public
+  deployment would use a CA-issued certificate on its own domain);
 - **CORS** headers naming `https://idptools.com`;
 - for the Authorization Code flow, a client whose redirect URI is
   `https://idptools.com/callback`.
@@ -202,24 +204,22 @@ reachable **from the browser**:
 ### 1. Run iya-sts out of the box
 
 The published image serves the OpenID4VCI issuer and the OpenID4VP verifier on
-one HTTPS port (8081 inside the container). Its default service hostnames
-include **`sts.example.com`**, used as the domain throughout; point that name
-at the host with a trusted certificate, or substitute your own domain.
+one HTTPS port. Run it locally on **`https://localhost:8081`** — its default
+service hostnames include `localhost`, used throughout this walkthrough:
 
 ```bash
-docker run -d --name iya-sts -p 443:8081 \
+docker run -d --name iya-sts -p 8081:8081 \
   -e STS_MODE=product \
   -e ADMIN_API_CLIENT_SECRET="<choose a strong secret>" \
-  -e STS_TLS_CERT_FILE=/tls/fullchain.pem \
-  -e STS_TLS_KEY_FILE=/tls/privkey.pem \
-  -v /path/to/tls:/tls:ro \
   ghcr.io/rcbj/iya-sts:<version>
 ```
 
-(TLS files are optional — the image self-signs when they are unset — but a
-public, browser-reachable instance needs a trusted certificate.) Out of the
-box it runs in **product mode** (it serves only clients and people registered
-ahead of time) and advertises five **spec** credential configurations:
+The image **self-signs** a certificate for `localhost`, so the first time you
+open `https://localhost:8081` the browser asks you to trust it — accept it
+once, and the hosted wallet (served over HTTPS at `https://idptools.com`) can
+then reach your local issuer over the loopback. Out of the box it runs in
+**product mode** (it serves only clients and people registered ahead of time)
+and advertises five **spec** credential configurations:
 
 | Configuration id | Format | Scope |
 |---|---|---|
@@ -234,7 +234,7 @@ below, or the equivalent `/admin` console pages):
 
 ```text
 POST /admin-api/config/set  { "key": "global.publicBaseUrl",
-                              "value": "https://sts.example.com" }
+                              "value": "https://localhost:8081" }
 POST /admin-api/config/set  { "key": "global.corsOrigins",
                               "value": ["https://idptools.com"] }
 ```
@@ -247,11 +247,11 @@ authentication-policy change in step 3 needs it (a Security Administrator
 privilege, above ordinary admin read/write):
 
 ```bash
-curl -s https://sts.example.com/oauth2/token \
+curl -s https://localhost:8081/oauth2/token \
   -u 'sts-api-client:<the ADMIN_API_CLIENT_SECRET you set>' \
   -d grant_type=client_credentials \
   -d 'scope=admin:read admin:write admin:security' \
-  -d resource=https://sts.example.com/admin-api
+  -d resource=https://localhost:8081/admin-api
 ```
 
 Send the returned token as `Authorization: Bearer <token>` on every call
@@ -351,7 +351,7 @@ Portal**, then redeem it in the wallet. This is the pre-authorized flow, which
 is how the default iya-sts issues.
 
 1. On iya-sts, open the **User Portal** at
-   `https://sts.example.com/portal/wallet` and sign in as `demo-holder`. The
+   `https://localhost:8081/portal/wallet` and sign in as `demo-holder`. The
    page is headed **"Add a credential to your wallet."**
 2. Under **"Which credential"**, choose **IdentityCredential** — an SD-JWT VC
    (`dc+sd-jwt`), the default iya-sts configuration. Under **"When it is
@@ -378,7 +378,7 @@ the answer server-side; on the hosted site use iya-sts or the browser's Digital
 Credentials API.)
 
 1. As the verifier operator, open the admin console's VC page at
-   `https://sts.example.com/admin/vc`. Under **"Start a verification"**, press
+   `https://localhost:8081/admin/vc`. Under **"Start a verification"**, press
    **Start**. It asks for the default claims of `IdentityCredential` and shows
    an `openid4vp://` request — *by value*, `response_mode=direct_post` — as a
    link and QR code. (The same request comes from
