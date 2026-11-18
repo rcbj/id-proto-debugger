@@ -286,15 +286,18 @@ async function test() {
       pub(jwk(attester)), { kid: "job-attester", use: "sig" })] }) });
   assert.ok(trust && trust.ok, "iya-sts would not trust this job's " +
             "attester: " + JSON.stringify(trust).slice(0, 300));
-
-  var options = new chrome.Options();
-  if (headless) options.addArguments("--headless=new");
-  options.addArguments("--no-sandbox", "--disable-dev-shm-usage",
-                       "--window-size=1500,1300");
-  browserFlags.addBrowserAccessFlags(options, baseUrl);
-  var driver = await new Builder().forBrowser("chrome")
-      .setChromeOptions(options).build();
+  // From here the shared iya-sts holds this job's attester, so EVERYTHING
+  // after this line — the browser's start included — is inside the try
+  // whose finally puts the setting back, whether the job passes or fails.
+  var driver = null;
   try {
+    var options = new chrome.Options();
+    if (headless) options.addArguments("--headless=new");
+    options.addArguments("--no-sandbox", "--disable-dev-shm-usage",
+                         "--window-size=1500,1300");
+    browserFlags.addBrowserAccessFlags(options, baseUrl);
+    driver = await new Builder().forBrowser("chrome")
+        .setChromeOptions(options).build();
     await redeem(driver, await offer(driver), "client_secret_basic", {},
                  SECRET, /Authorization: Basic base64\(.*:<client_secret>\)/,
                  true);
@@ -312,11 +315,32 @@ async function test() {
       /OAuth-Client-Attestation-PoP: eyJ/, true);
     log.info("vc_issuance_client_auth: all checks passed.");
   } finally {
-    await driver.quit();
-    await registry.adminPost(base, "/config/set", { key: ATTESTATION_KEY,
-      value: previous === undefined || previous === null ? "" :
-        (typeof previous === "string" ? previous : JSON.stringify(previous))
-    });
+    if (driver) {
+      try {
+        await driver.quit();
+      } catch (e) {
+        log.warn("driver.quit() failed: " + e.message);
+      }
+    }
+    // Restored even when the job failed; a failed restore is said out loud
+    // rather than masking the job's own error.
+    try {
+      var restored = await registry.adminPost(base, "/config/set", {
+        key: ATTESTATION_KEY,
+        value: previous === undefined || previous === null ? "" :
+          (typeof previous === "string" ? previous :
+           JSON.stringify(previous)) });
+      if (!restored || !restored.ok) {
+        log.error("RESTORE FAILED: " + ATTESTATION_KEY + " on " + base +
+                  " still holds this job's attester: " +
+                  JSON.stringify(restored).slice(0, 300));
+      } else {
+        log.info("Restored " + ATTESTATION_KEY + " on " + base + ".");
+      }
+    } catch (e) {
+      log.error("RESTORE FAILED: " + ATTESTATION_KEY + " on " + base + ": " +
+                e.message);
+    }
   }
   log.debug("Leaving test().");
 }
