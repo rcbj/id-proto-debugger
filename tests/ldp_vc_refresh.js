@@ -494,19 +494,40 @@ async function test() {
 
   // WHAT MAY DIFFER, now that the proof is W3C bbs-2023. Its base proof
   // carries the HMAC key that relabels its blank nodes, "locally generated"
-  // for each base proof (vc-di-bbs, bbs-2023 base proof), so the PROOF of two
-  // issuances normally differs within one second: the old "BBS Sign draws
-  // no randomness" premise was the pre-W3C envelope's and is gone. The
-  // CREDENTIAL around it is
-  // another matter: only members that exist to be per-issuance may differ,
-  // its status entry and its own `id` (VC Data Model 2.0 section 4.4), plus
-  // the timestamps when the two straddled a second. Anything else differing
-  // is named here, so it is added on purpose.
-  const sameSecond = aDoc.proof.created === bDoc.proof.created;
+  // for each base proof (vc-di-bbs, bbs-2023 base proof), so the PROOF of
+  // two issuances normally differs within one second: the old "BBS Sign
+  // draws no randomness" premise was the pre-W3C envelope's and is gone.
+  // The CREDENTIAL around it is another matter: only members that exist to
+  // be per-issuance may differ, its status entry and its own `id` (VC Data
+  // Model 2.0 section 4.4), plus its timestamps when the two straddled a
+  // second. Anything else differing is named here, so it is added on
+  // purpose.
+  //
+  // THE TIMESTAMPS ARE JUDGED BY THEMSELVES, not by proof.created, which a
+  // W3C bbs-2023 proof need not carry and which can agree while validFrom
+  // has ticked over (a run on 2026-11-18 had 02:03:37 against 02:03:38).
+  // They may differ only by ONE shared delta of 1 to 5 seconds, every one
+  // moved by it: two issuances moments apart, the same validity period.
+  const STAMPS = ["validFrom", "validUntil", "issuanceDate",
+                  "expirationDate"];
+  const stampDelta = function stampDelta() {
+    log.debug("Entering stampDelta().");
+    const deltas = STAMPS.filter(function (k) {
+      return aDoc[k] !== bDoc[k];
+    }).map(function (k) {
+      return (Date.parse(bDoc[k]) - Date.parse(aDoc[k])) / 1000;
+    });
+    log.debug("Leaving stampDelta(). " + deltas.join(","));
+    return deltas;
+  };
+  const deltas = stampDelta();
+  const sameSecond = deltas.length === 0;
+  const oneShift = deltas.every(function (d) {
+    return d === deltas[0] && d >= 1 && d <= 5;
+  });
   const perIssuance = ["credentialStatus", "proof", "id"];
-  if (!sameSecond) {
-    perIssuance.push("validFrom", "validUntil", "issuanceDate",
-                     "expirationDate");
+  if (!sameSecond && oneShift) {
+    perIssuance.push.apply(perIssuance, STAMPS);
   }
   const differing = Array.from(new Set(Object.keys(aDoc)
     .concat(Object.keys(bDoc)))).filter(function (k) {
