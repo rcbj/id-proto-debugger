@@ -17,6 +17,10 @@ verifier — against your own systems, with nothing to install. Every feature
 in this report is defined by a **published specification**; nothing here is
 proprietary to one product, and emerging drafts are labelled as drafts.
 
+> **Standards at a glance:** OpenID4VCI 1.0 · OpenID4VP 1.0 · HAIP 1.0 ·
+> SIOPv2 · SD-JWT VC · ISO mdoc · W3C VC Data Model 2.0 · AnonCreds · DPoP ·
+> DCQL · Presentation Exchange · Token & Bitstring Status Lists.
+
 ---
 
 ## How the hosted site works — and what it will and will not do
@@ -173,6 +177,145 @@ acting as a **hosted OpenID4VP Verifier** (serving the `request_uri` and
 receiving a wallet's `direct_post` answer, with every check shown one row at a
 time), server-side proxying to parties without CORS, and the non-browser
 protocol workflows (Kerberos, LDAP, SPIFFE and more).
+
+---
+
+## Appendix — a reference setup with iya-sts
+
+> **iya-sts is one example, not a requirement.** idptools.com works with
+> **any** OpenID4VCI issuer and OpenID4VP verifier. iya-sts is the open
+> reference server the debugger is tested against; the steps below stand one
+> up and point the hosted wallet at it. Every feature configured is
+> spec-defined. Written against iya-sts **1.1.0**; its
+> `GET /admin-api/openapi.json` is the authority for another release.
+
+### What idptools.com needs from the server
+
+Because the hosted site runs entirely in your browser, the server must be
+reachable **from the browser**:
+
+- a public **HTTPS** origin with a **browser-trusted certificate**;
+- **CORS** headers naming `https://idptools.com`;
+- for the Authorization Code flow, a client whose redirect URI is
+  `https://idptools.com/callback`.
+
+### 1. Run iya-sts out of the box
+
+The published image serves the OpenID4VCI issuer and the OpenID4VP verifier on
+one HTTPS port (8081 inside the container). Its default service hostnames
+include **`sts.example.com`**, used as the domain throughout; point that name
+at the host with a trusted certificate, or substitute your own domain.
+
+```bash
+docker run -d --name iya-sts -p 443:8081 \
+  -e STS_MODE=product \
+  -e ADMIN_API_CLIENT_SECRET="<choose a strong secret>" \
+  -e STS_TLS_CERT_FILE=/tls/fullchain.pem \
+  -e STS_TLS_KEY_FILE=/tls/privkey.pem \
+  -v /path/to/tls:/tls:ro \
+  ghcr.io/rcbj/iya-sts:<version>
+```
+
+(TLS files are optional — the image self-signs when they are unset — but a
+public, browser-reachable instance needs a trusted certificate.) Out of the
+box it runs in **product mode** (it serves only clients and people registered
+ahead of time) and advertises five **spec** credential configurations:
+
+| Configuration id | Format | Scope |
+|---|---|---|
+| `IdentityCredential` | `dc+sd-jwt` (SD-JWT VC) | `identity_credential` |
+| `IdentityCredentialJwtVcJson` | `jwt_vc_json` | `identity_credential_jwt` |
+| `IdentityCredentialLdpVc` | `ldp_vc` | `identity_credential_ldp` |
+| `IdentityCredentialDid` | `dc+sd-jwt`, issuer `did:web` | `identity_credential_did` |
+| `IdentityCredentialLdpVcDid` | `ldp_vc`, issuer `did:web` | `identity_credential_ldp_did` |
+
+Set the public origin and allow the hosted site (through the management API,
+below, or the equivalent `/admin` console pages):
+
+```text
+POST /admin-api/config/set  { "key": "global.publicBaseUrl",
+                              "value": "https://sts.example.com" }
+POST /admin-api/config/set  { "key": "global.corsOrigins",
+                              "value": ["https://idptools.com"] }
+```
+
+### 2. A management-API token
+
+`/admin-api` takes an OAuth 2.0 access token from the seeded `sts-api-client`
+by `client_credentials`:
+
+```bash
+curl -s https://sts.example.com/oauth2/token \
+  -u 'sts-api-client:<the ADMIN_API_CLIENT_SECRET you set>' \
+  -d grant_type=client_credentials \
+  -d 'scope=admin:read admin:write' \
+  -d resource=https://sts.example.com/admin-api
+```
+
+Send the returned token as `Authorization: Bearer <token>` on every call
+below. Keep the secret out of files, pages and screenshots.
+
+### 3. A holder account
+
+```text
+POST /admin-api/users/create
+{ "username": "demo-holder", "invent": false, "credential": "password",
+  "password": "<meets the realm's policy>",
+  "attributes": { "cn": "Demo Holder", "givenName": "Demo",
+                  "sn": "Holder", "mail": "demo-holder@example.test" } }
+```
+
+The claims the issuer puts in a credential come from these directory
+attributes; `GET /admin-api/users/new` lists the ones it accepts.
+
+### 4. A wallet client for idptools.com
+
+A public client whose redirect URI is the hosted site's `/callback`:
+
+```text
+POST /admin-api/applications/create
+{ "identifier": "idptools-wallet",
+  "protocols": ["oauth2", "oidc", "oid4vci"],
+  "fields": {
+    "oauthClientId": "idptools-wallet",
+    "oauthGrantType": ["authorization_code", "refresh_token",
+      "urn:ietf:params:oauth:grant-type:pre-authorized_code"],
+    "oauthRedirectUri": ["https://idptools.com/callback"],
+    "oauthResponseType": ["code"],
+    "oauthTokenEndpointAuthMethod": "none",
+    "oauthAllowedScope": ["openid", "offline_access",
+      "identity_credential", "identity_credential_jwt",
+      "identity_credential_ldp", "identity_credential_did",
+      "identity_credential_ldp_did"] } }
+```
+
+`oidc` is declared because an `openid` scope has the issuer mint an ID token;
+`oauthAllowedScope` lists the credential scopes from the issuer metadata.
+
+### 5. Point idptools.com at it
+
+**VC Issuance.** On step 1, set the **Credential Issuer Metadata URL** to
+`https://sts.example.com/.well-known/openid-credential-issuer` and **client_id**
+to `idptools-wallet`. Choose a configuration (e.g. `IdentityCredential`) and
+**Start Issuance** for the Authorization Code flow; or make a **pre-authorized**
+offer at `https://sts.example.com/portal/wallet` signed in as `demo-holder`,
+and paste it into step 1.
+
+**VC Presentation.** Present to iya-sts's verifier, or in-browser through the
+**Digital Credentials API**. The hosted site cannot run the debugger's **own**
+hosted Verifier — that would store a presented credential server-side — so use
+the self-hosted build for that role.
+
+### 6. Remove it again
+
+```text
+POST /admin-api/users/delete         { "user": "demo-holder" }
+POST /admin-api/applications/forget  { "application": "idptools-wallet" }
+POST /admin-api/config/reset         { "key": "global.corsOrigins" }
+POST /admin-api/config/reset         { "key": "global.publicBaseUrl" }
+```
+
+---
 
 *Every capability in this report is defined by a published specification.
 Reviewed 2026-11-18.*
