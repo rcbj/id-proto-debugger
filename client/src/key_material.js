@@ -70,6 +70,12 @@ var log = bunyan.createLogger({
   }
 })();
 
+// Keys are generated, read and written by crypto_provider.js (#463): pure
+// JS, so the key pane works on a plain-HTTP page. PKI.js above keeps its Web
+// Crypto engine for the keystore formats (PKCS#12 and friends), which do
+// their own cryptography through it.
+var provider = require("./crypto_provider");
+
 var derToPem = jose.derToPem;
 var pemToDer = jose.pemToDer;
 var bytesToB64u = jose.bytesToB64u;
@@ -231,22 +237,23 @@ async function generateKeyPair(spec) {
              publicPem: pqx.publicPem(desc.pqc, pqPair.pub),
              alg: desc.id || desc.pqc.toLowerCase(), kind: 'pqc' };
   }
-  var params;
+  var pair;
   if (desc.kind === 'rsa') {
-    params = { name: 'RSASSA-PKCS1-v1_5',
-               modulusLength: desc.bits || 2048,
-               publicExponent: new Uint8Array([1, 0, 1]),
-               hash: desc.hash || 'SHA-256' };
+    // Synchronous JavaScript, so give the page a turn to draw first.
+    await new Promise(function (resolve) {
+      setTimeout(resolve, 0);
+    });
+    pair = provider.generateKeyPair('rsa', { bits: desc.bits || 2048 });
   } else if (desc.kind === 'okp') {
-    params = { name: desc.name || 'Ed25519' };
+    pair = provider.generateKeyPair(String(desc.name || 'Ed25519')
+      .toLowerCase());
   } else {
-    params = { name: 'ECDSA', namedCurve: desc.curve || 'P-256' };
+    pair = provider.generateKeyPair({ 'P-256': 'ec-p256',
+      'P-384': 'ec-p384', 'P-521': 'ec-p521',
+      'secp256k1': 'ec-secp256k1' }[desc.curve || 'P-256']);
   }
-  var pair = await crypto.subtle.generateKey(params, true, ['sign', 'verify']);
-  var privatePem = derToPem(await crypto.subtle.exportKey('pkcs8',
-      pair.privateKey), 'PRIVATE KEY');
-  var publicPem = derToPem(await crypto.subtle.exportKey('spki',
-      pair.publicKey), 'PUBLIC KEY');
+  var privatePem = provider.exportKey(pair, 'pkcs8-pem');
+  var publicPem = provider.exportKey(provider.publicKeyOf(pair), 'spki-pem');
   log.debug("Leaving generateKeyPair().");
   return { privatePem: privatePem, publicPem: publicPem,
            alg: desc.id || null, kind: desc.kind };
@@ -382,11 +389,7 @@ async function privToJwk(pem, desc, jwtAlg, use) {
     log.debug("Leaving privToJwk(). AKP.");
     return pqcPrivateJwk(pem, use);
   }
-  var key = await crypto.subtle.importKey('pkcs8', pemToDer(pem),
-      convParams(desc), true, ['sign']);
-  var jwk = await crypto.subtle.exportKey('jwk', key);
-  delete jwk.key_ops;
-  delete jwk.ext;
+  var jwk = provider.exportKey(provider.importKey(String(pem)), 'jwk');
   if (jwtAlg) jwk.alg = jwtAlg;
   if (use) jwk.use = use;
   log.debug("Leaving privToJwk().");
@@ -399,11 +402,8 @@ async function pubToJwk(pem, desc, jwtAlg, use) {
     log.debug("Leaving pubToJwk(). AKP.");
     return pqcPublicJwk(pem, use);
   }
-  var key = await crypto.subtle.importKey('spki', pemToDer(pem),
-      convParams(desc), true, ['verify']);
-  var jwk = await crypto.subtle.exportKey('jwk', key);
-  delete jwk.key_ops;
-  delete jwk.ext;
+  var jwk = provider.exportKey(provider.publicKeyOf(
+    provider.importKey(String(pem))), 'jwk');
   if (jwtAlg) jwk.alg = jwtAlg;
   if (use) jwk.use = use;
   log.debug("Leaving pubToJwk().");
@@ -417,10 +417,9 @@ async function privToPem(jwkText, desc) {
     log.debug("Leaving privToPem(). AKP.");
     return pqcPemFromJwk(jwk, 'private');
   }
-  var key = await crypto.subtle.importKey('jwk', stripJwkForImport(jwk),
-      convParams(desc), true, ['sign']);
   log.debug("Leaving privToPem().");
-  return derToPem(await crypto.subtle.exportKey('pkcs8', key), 'PRIVATE KEY');
+  return provider.exportKey(provider.importKey(stripJwkForImport(jwk)),
+                            'pkcs8-pem');
 }
 
 async function pubToPem(jwkText, desc) {
@@ -430,10 +429,9 @@ async function pubToPem(jwkText, desc) {
     log.debug("Leaving pubToPem(). AKP.");
     return pqcPemFromJwk(jwk, 'public');
   }
-  var key = await crypto.subtle.importKey('jwk', stripJwkForImport(jwk),
-      convParams(desc), true, ['verify']);
   log.debug("Leaving pubToPem().");
-  return derToPem(await crypto.subtle.exportKey('spki', key), 'PUBLIC KEY');
+  return provider.exportKey(provider.publicKeyOf(
+    provider.importKey(stripJwkForImport(jwk))), 'spki-pem');
 }
 
 // Both halves of a pair as JWKs, which is what a JWK-set export needs.
@@ -503,20 +501,6 @@ function signingParams(desc) {
   return { name: 'ECDSA', namedCurve: desc.curve || 'P-256' };
 }
 
-function importPrivateKey(privPem, desc, extractable) {
-  log.debug("Entering importPrivateKey().");
-  log.debug("Leaving importPrivateKey().");
-  return crypto.subtle.importKey('pkcs8', pemToDer(privPem),
-      signingParams(desc), extractable === true, ['sign']);
-}
-
-function importPublicKey(pubPem, desc) {
-  log.debug("Entering importPublicKey().");
-  log.debug("Leaving importPublicKey().");
-  return crypto.subtle.importKey('spki', pemToDer(pubPem), signingParams(desc),
-      true, ['verify']);
-}
-
 // What algorithm family a PEM public key holds, read from the SPKI itself
 // rather than from whatever the caller remembers. A stored key pair carries its
 // algorithm id, but a PASTED one does not — and importing an EC key as RSA
@@ -534,28 +518,28 @@ async function describePublicPem(pubPem) {
              family: pqcRead.entry.family, use: pqcRead.entry.use,
              oid: pqcRead.entry.oid };
   }
-  var candidates = [
-    { kind: 'rsa', hash: 'SHA-256' },
-    { kind: 'ec', curve: 'P-256' },
-    { kind: 'ec', curve: 'P-384' },
-    { kind: 'ec', curve: 'P-521' },
-    { kind: 'okp', name: 'Ed25519' }
-  ];
-  for (var i = 0; i < candidates.length; i++) {
-    try {
-      var key = await importPublicKey(pubPem, candidates[i]);
-      var jwk = await crypto.subtle.exportKey('jwk', key);
-      var out = Object.assign({}, candidates[i]);
-      if (out.kind === 'rsa' && jwk.n) {
-        out.bits = Math.round(jose.b64uToBytes(jwk.n).length * 8);
-      }
-      log.debug("Leaving describePublicPem(). kind=" + out.kind);
-      return out;
-    } catch (e) {
-      log.debug("describePublicPem(): not " + candidates[i].kind + '/' +
-                (candidates[i].curve || candidates[i].name || '') + ': ' +
-                e.message);
-    }
+  // Read by crypto_provider.js (#463), which knows the key type from the
+  // SPKI's own algorithm OID rather than by trying imports.
+  var key;
+  try {
+    key = provider.importKey(String(pubPem));
+  } catch (e) {
+    log.debug("describePublicPem(): unreadable: " + e.message);
+    key = null;
+  }
+  if (key && key.type === 'rsa') {
+    log.debug("Leaving describePublicPem(). kind=rsa");
+    return { kind: 'rsa', hash: 'SHA-256', bits: key.bits };
+  }
+  if (key && key.type === 'ec' &&
+      ['P-256', 'P-384', 'P-521'].indexOf(key.curve) !== -1) {
+    log.debug("Leaving describePublicPem(). kind=ec");
+    return { kind: 'ec', curve: key.curve };
+  }
+  if (key && key.type === 'okp' &&
+      (key.curve === 'Ed25519' || key.curve === 'Ed448')) {
+    log.debug("Leaving describePublicPem(). kind=okp");
+    return { kind: 'okp', name: key.curve };
   }
   log.debug("Leaving describePublicPem(). Unrecognised.");
   return null;
@@ -925,8 +909,6 @@ module.exports = {
   asPublicPem: asPublicPem,
   describePublicPem: describePublicPem,
   // key import for certificate work
-  importPrivateKey: importPrivateKey,
-  importPublicKey: importPublicKey,
   asCertificate: asCertificate,
   // keystores
   KEYSTORE_FORMATS: KEYSTORE_FORMATS,

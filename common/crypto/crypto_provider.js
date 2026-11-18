@@ -618,7 +618,11 @@ function sign(alg, key, data, opts) {
   var msg = asBytes(data);
   if (signer.family === "ecdsa") {
     var c = keys.ecCurve(signer.curve);
-    var sig = c.noble.sign(digest(signer.hash, msg), key.privateKey);
+    // opts.hash: X.509's ecdsa-with-SHA* pair any curve with any hash (a
+    // P-384 key may sign SHA-256), so the curve's usual hash can be
+    // overridden. JOSE and COSE never pass it.
+    var sig = c.noble.sign(digest(o.hash || signer.hash, msg),
+                           key.privateKey);
     var raw = concatBytes(bytes.bigToBytes(sig.r, c.size),
                           bytes.bigToBytes(sig.s, c.size));
     log.debug("Leaving sign(). ECDSA.");
@@ -698,7 +702,8 @@ function verifyInner(alg, signer, key, msg, sigBytes, o) {
     // as DER would be read as something else.
     var rs = { r: bytes.bytesToBig(raw.slice(0, c.size)),
                s: bytes.bytesToBig(raw.slice(c.size)) };
-    var good = c.noble.verify(rs, digest(signer.hash, msg), key.publicKey,
+    var good = c.noble.verify(rs, digest(o.hash || signer.hash, msg),
+                              key.publicKey,
                               { lowS: false });
     log.debug("Leaving verifyInner(). ECDSA.");
     return good;
