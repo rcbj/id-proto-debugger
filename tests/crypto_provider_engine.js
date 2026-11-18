@@ -1049,6 +1049,45 @@ function checkTableAndBackends() {
 }
 
 // ---------------------------------------------------------------------------
+// RSA private-key signing on OpenSSL in node (#463 step 3, issue #302),
+// with no algorithm lost: every RSA SignatureMethod hash, both paddings.
+// PKCS#1 v1.5 is deterministic, so the OpenSSL path and the forge path
+// (opts.forceJs) must give the SAME BYTES; PSS is randomized, so each must
+// verify under the provider and under node.
+function checkRsaSigningPaths() {
+  log.debug("Entering checkRsaSigningPaths().");
+  ok(P.rsaSignBackend() === "node", "in node, RSA signs on OpenSSL; got " +
+     P.rsaSignBackend());
+  const pair = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const key = P.importKey(pair.privateKey.export({ format: "jwk" }));
+  const pub = P.publicKeyOf(key);
+  const msg = new TextEncoder().encode("the octets a SignedInfo becomes");
+  ["sha1", "sha256", "sha384", "sha512"].forEach(function (h) {
+    const alg = "rsa-pkcs1-" + h;
+    const viaNode = P.sign(alg, key, msg);
+    const viaForge = P.sign(alg, key, msg, { forceJs: true });
+    ok(Buffer.from(viaNode).equals(Buffer.from(viaForge)), alg +
+       ": OpenSSL and forge give the same PKCS#1 v1.5 bytes");
+    ok(crypto.verify(h, msg, pair.publicKey, Buffer.from(viaNode)),
+       alg + ": node verifies it");
+  });
+  ["sha256", "sha384", "sha512"].forEach(function (h) {
+    const alg = "rsa-pss-" + h;
+    const salt = { sha256: 32, sha384: 48, sha512: 64 }[h];
+    [P.sign(alg, key, msg), P.sign(alg, key, msg, { forceJs: true })]
+      .forEach(function (sig, i) {
+        const which = i === 0 ? "OpenSSL" : "forge";
+        ok(P.verify(alg, pub, msg, sig), alg + " (" + which + "): the " +
+           "provider verifies it");
+        ok(crypto.verify(h, msg, { key: pair.publicKey,
+             padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+             saltLength: salt }, Buffer.from(sig)),
+           alg + " (" + which + "): node verifies it, salt " + salt);
+      });
+  });
+  log.debug("Leaving checkRsaSigningPaths().");
+}
+
 function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. common/crypto/crypto_provider.js against " +
@@ -1058,6 +1097,7 @@ function test() {
   section("node keys -> import", checkNodeKeysImported);
   section("raw forms", checkRawForms);
   section("signatures", checkSignatures);
+  section("RSA signing paths", checkRsaSigningPaths);
   section("key agreement", checkEcdh);
   section("digests / MACs / KDFs", checkDigestsAndKdfs);
   section("symmetric / key wrap", checkSymmetric);

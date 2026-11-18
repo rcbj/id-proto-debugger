@@ -123,6 +123,10 @@ COPY common/data.js .
 # package instead, which made this application's THIRD implementation of XML
 # Signature. Requires @xmldom/xmldom, which is already a dependency here.
 COPY common/xmldsig.js .
+# The central crypto module (#463), flat beside xmldsig.js, which requires
+# ./crypto_provider for its RSA signatures (OpenSSL here, issue #302) and its
+# verification. Its @noble packages are dependencies of this service.
+COPY common/crypto/ .
 # The SPIFFE ID grammar and the trust-bundle reader. WORKDIR is /usr/src/app, so
 # this lands where `require('../common/spiffe/spiffe_id.js')` resolves it — the
 # same relative path that works in a bare checkout, which is what keeps this

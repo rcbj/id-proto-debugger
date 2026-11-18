@@ -12,8 +12,9 @@
 // reading specific DOM element ids, so they are not tied to the SAML page.
 //
 // node-forge does the crypto (RSA keygen, block ciphers, RSA key wrap) —
-// except the RSA SIGNATURE under node, which is node's OpenSSL (see
-// rsaSign(), issue #302); in a browser bundle that is forge too. Only
+// except the RSA signature and its verification, which are
+// common/crypto/crypto_provider.js's (#463 step 3): OpenSSL under node
+// (issue #302), forge in a browser bundle. Only
 // browser-native APIs (DOMParser/XMLSerializer, window.crypto) are used
 // besides forge, so this bundles cleanly with browserify + envify.
 
@@ -188,31 +189,18 @@ function rsaSigAlgRefusal(sigAlg, who) {
 // with the message hash and a salt as long as the digest, which is what
 // RFC 9231's sha*-rsa-MGF1 identifiers default to and what defaultVerify()'s
 // pssFor() expects.
-var NODE_CRYPTO_MODULE = 'crypto';
-var nodeCryptoCache;
-function nodeCrypto() {
-  log.debug("Entering nodeCrypto().");
-  if (nodeCryptoCache !== undefined) {
-    log.debug("Leaving nodeCrypto(). Cached.");
-    return nodeCryptoCache;
-  }
-  nodeCryptoCache = null;
-  if (typeof process === 'undefined' || !process.versions ||
-      !process.versions.node || typeof require !== 'function') {
-    log.debug("Leaving nodeCrypto(). Not node.");
-    return null;
-  }
-  try {
-    var c = require(NODE_CRYPTO_MODULE);
-    if (c && typeof c.sign === 'function' &&
-        typeof c.createPrivateKey === 'function') {
-      nodeCryptoCache = c;
-    }
-  } catch (e) {
-    log.debug("nodeCrypto(): no crypto module: " + e.message);
-  }
-  log.debug("Leaving nodeCrypto().");
-  return nodeCryptoCache;
+// THE SIGNATURE ITSELF IS crypto_provider.js's (#463 step 3), which does
+// exactly what this did: OpenSSL in node, forge where there is none, the
+// same bytes for PKCS#1 v1.5 and the same PSS parameters on both. Staged
+// flat beside this file in every bundle, the api image and the embedded
+// tree; from a checkout it is ./crypto/crypto_provider.js, named through a
+// variable so browserify does not try to resolve it.
+var provider;
+try {
+  provider = require("./crypto_provider");
+} catch (e) {
+  var NESTED_PROVIDER = "./crypto/crypto_provider";
+  provider = require(NESTED_PROVIDER);
 }
 
 // Which backend rsaSign() will use here: 'node' or 'forge'. Exported so a test
@@ -220,50 +208,33 @@ function nodeCrypto() {
 function rsaSignBackend() {
   log.debug("Entering rsaSignBackend().");
   log.debug("Leaving rsaSignBackend().");
-  return nodeCrypto() ? 'node' : 'forge';
+  return provider.rsaSignBackend();
 }
 
 // Sign `octets` (a raw binary string — already UTF-8 where it came from
 // text) with an RSA private key in PEM. `hash` is sha1/sha256/sha384/sha512
 // and `pad` is 'pss' or anything else for PKCS#1 v1.5. Returns the signature
-// as a binary string, which is what forge's pk.sign() returned, so every call
-// site keeps its base64 step. `forceForge` exists for the test that compares
-// the two backends.
-//
-// A PEM that is not an RSA key goes to forge, which refuses it with the error
-// it always gave ("OID is not RSA") rather than with a different one here.
+// as a binary string, so every call site keeps its base64 step.
+// `forceForge` exists for the test that compares the two backends.
 function rsaSign(privateKeyPem, hash, octets, pad, forceForge) {
   log.debug("Entering rsaSign(). hash=" + hash + " pad=" + (pad || 'v1_5'));
-  var c = forceForge ? null : nodeCrypto();
-  if (c) {
-    var key = null;
-    try {
-      key = c.createPrivateKey(privateKeyPem);
-    } catch (e) {
-      log.debug("rsaSign(): node could not read the key: " + e.message);
-      key = null;
-    }
-    if (key && key.asymmetricKeyType === 'rsa') {
-      var params = { key: key };
-      if (pad === 'pss') {
-        params.padding = c.constants.RSA_PKCS1_PSS_PADDING;
-        params.saltLength = forge.md[hash].create().digestLength;
-      } else {
-        params.padding = c.constants.RSA_PKCS1_PADDING;
-      }
-      // Uint8Array both ways rather than Buffer: naming Buffer here would
-      // make browserify insert its Buffer shim into every bundle, for a
-      // branch no bundle ever takes.
-      var sig = c.sign(hash, forge.util.binary.raw.decode(octets), params);
-      log.debug("Leaving rsaSign(). node crypto.");
-      return forge.util.binary.raw.encode(new Uint8Array(sig));
-    }
+  var key;
+  try {
+    key = provider.importKey(String(privateKeyPem));
+  } catch (e) {
+    log.debug("Leaving rsaSign(). Unreadable key.");
+    throw new Error('the signing key is not a PEM private key or a JWK: ' +
+                    e.message);
   }
-  var pk = forge.pki.privateKeyFromPem(privateKeyPem);
-  var md = forge.md[hash].create();
-  md.update(octets);
-  log.debug("Leaving rsaSign(). forge.");
-  return pad === 'pss' ? pk.sign(md, pssFor(hash)) : pk.sign(md);
+  if (key.type !== 'rsa') {
+    log.debug("Leaving rsaSign(). Not RSA.");
+    throw new Error('rsaSign: the private key is ' + key.type + ', not RSA.');
+  }
+  var sig = provider.sign('rsa-' + (pad === 'pss' ? 'pss' : 'pkcs1') + '-' +
+      hash, key, forge.util.binary.raw.decode(octets),
+      { forceJs: !!forceForge });
+  log.debug("Leaving rsaSign().");
+  return forge.util.binary.raw.encode(sig);
 }
 
 // --- Canonical XML 1.0 over a DOM element ----------------------------------
@@ -2905,12 +2876,12 @@ function defaultVerify(octets, signature, spec, publicKey) {
         : ''));
   }
   if (!publicKey) throw new Error('No RSA public key to verify with.');
-  var md = FORGE_MD[spec.hash].create();
-  md.update(octets);
+  // The forge public key this file reads from KeyInfo, as the provider's.
+  var key = provider.importKey(forge.pki.publicKeyToPem(publicKey));
   log.debug("Leaving defaultVerify().");
-  return spec.pad === 'pss'
-    ? publicKey.verify(md.digest().getBytes(), signature, pssFor(spec.hash))
-    : publicKey.verify(md.digest().getBytes(), signature);
+  return provider.verify('rsa-' + (spec.pad === 'pss' ? 'pss' : 'pkcs1') +
+      '-' + spec.hash, key, forge.util.binary.raw.decode(octets),
+      forge.util.binary.raw.decode(signature));
 }
 
 // --- Building the Signature -------------------------------------------------

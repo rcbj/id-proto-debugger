@@ -207,13 +207,17 @@ log "installing the api's production dependencies"
 (cd "${WORK}/tree/api" && "${NPM}" install --omit=dev --no-audit --no-fund)
 
 # ---------------------------------------------------------------------------
-# 4. What api/Dockerfile stages beside the api: data.js and xmldsig.js from
-#    common/, the repo-root VERSION and the client's version.js (one
-#    implementation of M.N.P.B), and the stamp.
+# 4. What api/Dockerfile stages beside the api: data.js, xmldsig.js and the
+#    central crypto module from common/, the repo-root VERSION and the
+#    client's version.js (one implementation of M.N.P.B), and the stamp.
 # ---------------------------------------------------------------------------
-log "staging common/data.js, common/xmldsig.js, VERSION and version.js"
+log "staging common/data.js, common/xmldsig.js, common/crypto, VERSION" \
+    "and version.js"
 cp "${WORK}/tree/common/data.js" "${WORK}/tree/api/data.js"
 cp "${WORK}/tree/common/xmldsig.js" "${WORK}/tree/api/xmldsig.js"
+# The central crypto module (#463), flat beside xmldsig.js as api/Dockerfile
+# stages it: xmldsig.js requires ./crypto_provider.
+cp "${WORK}/tree/common/crypto/"*.js "${WORK}/tree/api/"
 cp "${WORK}/tree/VERSION" "${WORK}/tree/api/VERSION"
 cp "${WORK}/tree/client/version.js" "${WORK}/tree/api/version.js"
 (cd "${WORK}/tree/api" && node version.js --stamp .)
