@@ -242,20 +242,61 @@ POST /admin-api/config/set  { "key": "global.corsOrigins",
 ### 2. A management-API token
 
 `/admin-api` takes an OAuth 2.0 access token from the seeded `sts-api-client`
-by `client_credentials`:
+by `client_credentials`. Include the **`admin:security`** scope as well — the
+authentication-policy change in step 3 needs it (a Security Administrator
+privilege, above ordinary admin read/write):
 
 ```bash
 curl -s https://sts.example.com/oauth2/token \
   -u 'sts-api-client:<the ADMIN_API_CLIENT_SECRET you set>' \
   -d grant_type=client_credentials \
-  -d 'scope=admin:read admin:write' \
+  -d 'scope=admin:read admin:write admin:security' \
   -d resource=https://sts.example.com/admin-api
 ```
 
 Send the returned token as `Authorization: Bearer <token>` on every call
 below. Keep the secret out of files, pages and screenshots.
 
-### 3. A holder account
+### 3. Relax the demo realm
+
+Out of the box the default realm is **product-mode secure**: it requires a
+**second factor of everyone** (NIST SP 800-63B-4 / ASVS 5.0.0 6.3.3) and
+**scores every sign-in for risk**. A holder with only a password is sent to an
+MFA-setup screen, and an unusual sign-in can be scored and refused — so a
+plain demo cannot sign in until both are relaxed. For a demonstration wallet:
+
+```text
+# 1. let the realm's policy decide, instead of forcing MFA on everyone
+POST /admin-api/config/set  { "key": "authn.allowOptionalSecondFactor",
+                              "value": true }
+
+# 2. require a second factor only from accounts that already hold one
+#    (save-authn-policy REPLACES the policy and EVERY field is required, so
+#     read the current one with GET /admin-api/policies and resend it with
+#     this one change; it needs the admin:security scope from step 2)
+POST /admin-api/policies/save-authn-policy
+{ "profile": "default",
+  "requireSecondFactor": "if-held",
+  "requireSecondFactorForAdministrators": "if-held",
+  "passwordPrimary": true, "passwordSecondFactor": false,
+  "passkeyPrimary": true, "securityKeySecondFactor": true,
+  "totpSecondFactor": true, "recoveryCodeSecondFactor": true,
+  "emailCodePrimary": false, "emailCodeSecondFactor": false,
+  "emailLinkPrimary": false, "emailLinkSecondFactor": false,
+  "certificatePrimary": false, "kerberosPrimary": false,
+  "walletPrimary": false, "walletSecondFactor": false,
+  "federationPrimary": false, "emailCodeTtlS": 600, "emailCodeAttempts": 5,
+  "emailResendS": 60, "emailFailureLimit": 10,
+  "rememberedBrowserSkipsSecondFactor": false, "rememberedBrowserDays": 30 }
+
+# 3. stop scoring sign-ins for risk
+POST /admin-api/config/set  { "key": "risk.assessSignIns", "value": false }
+```
+
+Keep the realm's defaults for a real deployment; these two relaxations are for
+a public demonstration wallet only.
+
+### 4. A holder account
 
 ```text
 POST /admin-api/users/create
@@ -268,7 +309,7 @@ POST /admin-api/users/create
 The claims the issuer puts in a credential come from these directory
 attributes; `GET /admin-api/users/new` lists the ones it accepts.
 
-### 4. A wallet client for idptools.com
+### 5. A wallet client for idptools.com
 
 A public client whose redirect URI is the hosted site's `/callback`:
 
@@ -283,36 +324,71 @@ POST /admin-api/applications/create
     "oauthRedirectUri": ["https://idptools.com/callback"],
     "oauthResponseType": ["code"],
     "oauthTokenEndpointAuthMethod": "none",
-    "oauthAllowedScope": ["openid", "offline_access",
+    "oauthAllowedScope": ["openid", "profile", "email", "offline_access",
       "identity_credential", "identity_credential_jwt",
       "identity_credential_ldp", "identity_credential_did",
       "identity_credential_ldp_did"] } }
 ```
 
-`oidc` is declared because an `openid` scope has the issuer mint an ID token;
-`oauthAllowedScope` lists the credential scopes from the issuer metadata.
+- `oidc` is declared because an `openid` scope has the issuer mint an ID
+  token, whose issuance a product-mode policy refuses to a client not declared
+  for the `oidc` family.
+- `oauthAllowedScope` **must** include `openid`, `profile` and `email` as well
+  as the credential scopes: in product mode a client is issued only the scopes
+  it declared (RFC 7591 section 2), and the issuance flow requests the OpenID
+  `profile` and `email` scopes. The credential scopes are the ones in the
+  issuer metadata's `credential_configurations_supported`.
 
-### 5. Point idptools.com at it
+### 6. Run the two workflows on idptools.com
 
-**VC Issuance.** On step 1, set the **Credential Issuer Metadata URL** to
-`https://sts.example.com/.well-known/openid-credential-issuer` and **client_id**
-to `idptools-wallet`. Choose a configuration (e.g. `IdentityCredential`) and
-**Start Issuance** for the Authorization Code flow; or make a **pre-authorized**
-offer at `https://sts.example.com/portal/wallet` signed in as `demo-holder`,
-and paste it into step 1.
+**Load a credential (VC Issuance).** The wallet receives a credential from the
+iya-sts issuer.
 
-**VC Presentation.** Present to iya-sts's verifier, or in-browser through the
-**Digital Credentials API**. The hosted site cannot run the debugger's **own**
-hosted Verifier — that would store a presented credential server-side — so use
-the self-hosted build for that role.
+1. Open `https://idptools.com`, choose **VC Issuance**, and go to step 1.
+2. Set **Credential Issuer Metadata URL** to
+   `https://sts.example.com/.well-known/openid-credential-issuer` and
+   **client_id** (in **Configuration Parameters**) to `idptools-wallet`. The
+   page retrieves the issuer and authorization-server metadata.
+3. Choose a credential in **Credential to request** (e.g. `IdentityCredential`,
+   an SD-JWT VC), and press **Start Issuance** for the Authorization Code flow.
+   Sign in at iya-sts as `demo-holder`.
+   - *Or* the **pre-authorized** flow: at `https://sts.example.com/portal/wallet`,
+     sign in as `demo-holder`, choose the configuration and *cross-device*, and
+     make the offer; paste the `openid-credential-offer://` link into step 1 and
+     type the Transaction Code on step 2.
+4. On step 2 the tokens arrive; press **Approve and Request Credential**. Step 3
+   shows the credential, verified — it is now held in the wallet.
 
-### 6. Remove it again
+**Present it (VC Presentation).** The verifier is **iya-sts's own OpenID4VP
+verifier**. (The debugger's *own* Verifier page needs the self-hosted build, as
+it would store the answer server-side; on the hosted site use iya-sts or the
+browser's Digital Credentials API.)
+
+1. On iya-sts, open `https://sts.example.com/portal/verify`, choose what to ask
+   for, and **start a verification**. It shows an `openid4vp://` request as a
+   link and QR code — a request *by value*, with `response_mode=direct_post`.
+2. On `https://idptools.com`, choose **VC Presentation**. On step 1, paste the
+   `openid4vp://` request. The wallet reads it (no fetch needed), and you pick
+   the held credential and the claims to disclose.
+3. Press **Present**. The wallet builds the presentation and posts it to
+   iya-sts's `response_uri` (allowed by the CORS origin set in step 3).
+4. iya-sts's verify page shows the presentation **received and verified**.
+
+### 7. Remove it again
 
 ```text
 POST /admin-api/users/delete         { "user": "demo-holder" }
 POST /admin-api/applications/forget  { "application": "idptools-wallet" }
 POST /admin-api/config/reset         { "key": "global.corsOrigins" }
 POST /admin-api/config/reset         { "key": "global.publicBaseUrl" }
+```
+
+And, to put the realm's security back to its out-of-the-box defaults:
+
+```text
+POST /admin-api/policies/reset-authn-policy  { }
+POST /admin-api/config/reset   { "key": "authn.allowOptionalSecondFactor" }
+POST /admin-api/config/reset   { "key": "risk.assessSignIns" }
 ```
 
 ---
