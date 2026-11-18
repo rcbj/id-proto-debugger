@@ -147,7 +147,8 @@ two into one. The response checks are the `state`, the decryption of a
 answered. Per format:
 
 * **dc+sd-jwt**: the issuer's signature (an `x5c` in the issuer JWT, else
-  JWT VC Issuer Metadata, else a DID), the `typ`, the `vct`, validity, every
+  the DID that `iss` is, else the JWT VC Issuer Metadata of an `https`
+  `iss`), the `typ`, the `vct`, validity, every
   disclosure's digest against `_sd`, and every requested claim disclosed. For
   the Key Binding JWT: its `typ` and `alg`, `nonce`, `aud`, `iat`,
   `sd_hash`, and its signature against `cnf.jwk`.
@@ -206,6 +207,18 @@ something ties the key to the issuer:
   PASS or a FAIL; without them nothing anchors the chain, the row is an
   essential SKIP, and the verdict is incomplete. The certificate checks are
   pure JavaScript (node-forge ASN.1, @noble/curves, forge RSA).
+* **DCQL `trusted_authorities` (#471, E2).** With "Trusted authorities"
+  ticked, the generated query carries `{ "type": "aki", "values": [...] }`,
+  one value per trust anchor: its SubjectKeyIdentifier in base64url, which
+  is the AuthorityKeyIdentifier of every certificate it issues (OpenID4VP
+  1.0 section 6.1.1.1; HAIP 1.0 section 5 makes `aki` a MUST to support).
+  The query is drawn again when the anchors change. On the answer,
+  `issuer.trusted-authorities` (`mdoc.trusted-authorities` for an mdoc)
+  passes when a certificate in the credential's chain has an AKI equal to
+  a value, as bytes. Otherwise it is a non-essential SKIP naming why: no
+  chain, no match, or a type this Verifier does not evaluate (`etsi_tl`,
+  `openid_federation`). The wallet "SHOULD" return a matching credential;
+  whether the issuer is trusted is still decided by the trust rows.
 * **What is REPORTED and never fails (rcbj, 2026-11-17).** Each is a row of
   its own, a SKIP that is not essential, so neither the signature row nor
   the verdict changes because of it:
@@ -361,6 +374,32 @@ answered 503 rather than given the object signed in advance, which cannot
 carry the nonce (section 5.10.2: any HTTP error makes the wallet stop). A
 wallet that sent none gets the object signed in advance. The events say
 which happened. `docs/vc-verifier-api.md` has the routes.
+
+**The live object honours the wallet's `wallet_metadata` (#471, E4).**
+`vp_verifier.planForWalletMetadata()` reads what the wallet POSTed and
+`signLive()` acts on it. Each choice is a `wallet_metadata:` line in the
+event list, `vc-ok` when honoured and `vc-pending` when it could not be.
+Section 5.10 puts no MUST on the Verifier here, so none of them refuses the
+wallet:
+
+* `request_object_signing_alg_values_supported`: sign with the first alg
+  the request key makes that the wallet lists (Ed25519 makes both
+  `Ed25519` and `EdDSA`). With none in common, the key's own alg is used
+  and the line says so.
+* `jwks`: the Request Object is signed, then encrypted (RFC 9101 section
+  4) to the first key that is not `use: "sig"` and that `jose_jwe.js` can
+  encrypt to. The alg is the key's own `alg`, else ECDH-ES for EC/OKP and
+  RSA-OAEP-256 for RSA; the enc is A256GCM. Both are narrowed by
+  `request_object_encryption_alg_values_supported` and
+  `..._enc_values_supported` when the wallet lists them. It is a Nested JWT,
+  so `cty` is `JWT` (RFC 7519 section 5.2). Only this live answer can be
+  encrypted: an object signed in advance has nobody's key.
+* `authorization_encryption_enc_values_supported`: for `direct_post.jwt`,
+  `encrypted_response_enc_values_supported` is narrowed to the values both
+  sides do. A response alg the wallet does not list in
+  `authorization_encryption_alg_values_supported` is reported.
+* `client_id_prefixes_supported` and `vp_formats_supported`: a prefix or a
+  requested format the wallet lacks is reported.
 
 ## Tests
 

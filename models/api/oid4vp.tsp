@@ -176,8 +176,10 @@ model VerifierCreateRequest {
 
 /** The Request Object the page signed for ONE held Wallet. */
 model VerifierPublishForRequest {
-  /** The signed Request Object, a compact JWS. */
-  @checkedInCode("api/oid4vp_verifier.js: required, three base64url segments, at most oid4vpVerifierMaxRequestObjectBytes")
+  /** The signed Request Object, a compact JWS; or, when the Wallet's
+   *  wallet_metadata gave a key to encrypt to, that JWS encrypted to it, a
+   *  compact JWE (section 5.10; RFC 9101 section 4). */
+  @checkedInCode("api/oid4vp_verifier.js: required, three base64url segments (a JWS) or five (a JWE), at most oid4vpVerifierMaxRequestObjectBytes")
   @passthrough
   requestObject?: string | null;
 }

@@ -82,6 +82,18 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
               require cryptographic holder binding (a Key Binding JWT, a signed VP, a device signature)</label></td>
         </tr>
         <tr>
+          <td><label for="vpv_trusted_authorities">Trusted authorities</label></td>
+          <td><label><input type="checkbox" id="vpv_trusted_authorities"
+                            onchange="return vcverifier.regenerateDcql();" />
+              ask for credentials whose X.509 chain is under the "Trust anchors for issuers" below
+              (DCQL <code>trusted_authorities</code>, type <code>aki</code>)</label>
+              <span class="vc-note" id="vpv_trusted_authorities_note">&nbsp;</span>
+              <span class="vc-note">Each anchor's SubjectKeyIdentifier, base64url, which is the
+              AuthorityKeyIdentifier of every certificate it issues (OpenID4VP 1.0 section 6.1.1.1; HAIP 1.0
+              section 5). The wallet SHOULD return a credential that matches; one that does not is reported on
+              its own row, and its issuer's trust is still decided by the anchors.</span></td>
+        </tr>
+        <tr>
           <td><label for="vpv_dcql">DCQL query</label></td>
           <td><textarea id="vpv_dcql" class="vc-mono" rows="10" cols="80"></textarea>
               <span class="vc-status" id="vpv_dcql_status">&nbsp;</span></td>
@@ -109,7 +121,9 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
               </select>
               <span class="vc-note">The certificate is a leaf made for this request, under the Verifier's
               root CA (below), which is kept across runs. The leaf's subjectAltName is the api's host name and
-              its Authority Information Access points at the root, which the api serves.</span></td>
+              its Authority Information Access points at the root, which the api serves. A signed Digital
+              Credentials API request is the exception: its leaf names this page's host (see the note
+              under the response mode).</span></td>
         </tr>
         <tr id="vpv_client_id_row">
           <td><label for="vpv_client_id_typed">Pre-registered client_id</label></td>
@@ -157,7 +171,7 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
           <td><label for="vpv_trust_anchors">Trust anchors for issuers (PEM, optional)</label></td>
           <td><textarea id="vpv_trust_anchors" class="vc-mono" rows="4" cols="80"
                         placeholder="-----BEGIN CERTIFICATE-----"
-                        onchange="return vcverifier.settingsChanged();"></textarea>
+                        onchange="return vcverifier.anchorsChanged();"></textarea>
               <span class="vc-note">The roots (an IACA for mdoc) an issuer's x5c must chain to. With none, an
               x5c-signed credential's issuer trust is reported as not performed, and the verdict is
               incomplete rather than a pass: a certificate is not trusted just because it is in x5c

@@ -52,7 +52,7 @@ var VERIFIER_KEYS = [
   "vpv_dcql", "vpv_client_prefix", "vpv_response_mode", "vpv_delivery",
   "vpv_scheme", "vpv_redirect_uri", "vpv_client_id_typed", "vpv_dc_signed",
   "vpv_trust_anchors", "vpv_fetch_via_api", "vpv_save_identity",
-  "vpv_public_base_url", "vpv_issuer_bindings"
+  "vpv_public_base_url", "vpv_issuer_bindings", "vpv_trusted_authorities"
 ];
 
 // Whether issuer metadata, DID documents and status lists are fetched
@@ -511,6 +511,21 @@ function querySpec() {
     }).map(pathOf),
     requireBinding: !!val("vpv_binding")
   };
+  if (val("vpv_trusted_authorities")) {
+    var aki = verifier.akiValuesFromAnchors(trustAnchorsFromPage());
+    setText("vpv_trusted_authorities_note", aki.values.length
+      ? aki.values.length + " aki value(s) from the trust anchors." +
+        (aki.missing.length ? " No SubjectKeyIdentifier in: " +
+          aki.missing.join(", ") + "." : "")
+      : "No trust anchor below has a SubjectKeyIdentifier, so no " +
+        "trusted_authorities can be asked for.",
+      aki.values.length ? "vc-ok" : "vc-bad");
+    if (aki.values.length) {
+      spec.trustedAuthorities = [{ type: "aki", values: aki.values }];
+    }
+  } else {
+    setText("vpv_trusted_authorities_note", "");
+  }
   if (format === "dc+sd-jwt") {
     spec.vct = types;
   } else if (format === "mso_mdoc") {
@@ -559,6 +574,18 @@ function formatChanged() {
   return false;
 }
 
+// The trust anchors changed: the trusted_authorities a generated query asks
+// for are drawn from them, so the query is drawn again when it asks.
+function anchorsChanged() {
+  log.debug("Entering anchorsChanged().");
+  settingsChanged();
+  if (val("vpv_trusted_authorities")) {
+    regenerateDcql();
+  }
+  log.debug("Leaving anchorsChanged().");
+  return false;
+}
+
 function settingsChanged() {
   log.debug("Entering settingsChanged().");
   // An unsigned request has nothing to fetch by reference: section 5.10's
@@ -574,9 +601,23 @@ function settingsChanged() {
   var mode = val("vpv_response_mode");
   var dcNote = el("vpv_dc_api_note");
   if (dcNote) {
+    // OpenID4VP 1.0 Appendix A.2: an unsigned request carries no client_id
+    // (the audience is "origin:" + this page's origin), so the prefix is not
+    // used; a signed one names its prefix in client_id, and its certificate
+    // is made for THIS PAGE's host, not the api's. redirect_uri cannot be
+    // signed (section 5.9.3).
+    var signedDc = !!(el("vpv_dc_signed") && el("vpv_dc_signed").checked);
     dcNote.textContent = mode === "dc_api" || mode === "dc_api.jwt"
       ? "Nothing is hosted: the browser hands the request to a wallet " +
-        "and the answer comes back to this page."
+        "and the answer comes back to this page. " + (signedDc
+          ? "Signed: client_id carries the Client Identifier prefix above, " +
+            "and the certificate names this page's host (" +
+            window.location.hostname + "), not the api's" +
+            (val("vpv_client_prefix") === "redirect_uri"
+              ? "; redirect_uri cannot be signed, so choose another " +
+                "prefix or untick \"signed\"." : ".")
+          : "Unsigned: no client_id is sent and the prefix above is not " +
+            "used; the audience is origin:" + window.location.origin + ".")
       : "";
   }
   saveState();
@@ -1143,6 +1184,8 @@ function eventLine(event) {
       (event.method || "GET") + ")" +
       (event.walletNonce ? ", sending wallet_nonce " + event.walletNonce
                          : "") +
+      (event.walletMetadata !== undefined ? " and wallet_metadata " +
+        JSON.stringify(event.walletMetadata).slice(0, 300) : "") +
       (event.signingId ? "; the api is holding it open for a Request " +
         "Object signed with that nonce" : "") + "." +
       (event.problem ? " " + event.problem : "");
@@ -1180,18 +1223,55 @@ function eventLine(event) {
 // Request Object carrying its wallet_nonce (section 5.10) and hand it over.
 // A 404 means the wait ran out and the wallet already has the one signed in
 // advance, which the event that follows will say.
+// What honouring wallet_metadata found, one line each in the event list.
+function showWalletMetadataFindings(findings) {
+  log.debug("Entering showWalletMetadataFindings().");
+  var list = el("vpv_events");
+  if (!list) {
+    log.debug("Leaving showWalletMetadataFindings(). No list.");
+    return;
+  }
+  (findings || []).forEach(function (f) {
+    var li = document.createElement("li");
+    li.className = f.level === "ok" ? "vc-ok" : "vc-pending";
+    li.textContent = "wallet_metadata: " + f.text;
+    list.appendChild(li);
+  });
+  log.debug("Leaving showWalletMetadataFindings().");
+}
+
 async function signLive(event) {
   log.debug("Entering signLive(). " + event.signingId);
   try {
+    // What the wallet said it can do (section 5.10), honoured where this
+    // Verifier can and reported where it cannot.
+    var dcql = current.claimsInput.dcql || {};
+    var plan = verifier.planForWalletMetadata(event.walletMetadata, {
+      keyJwk: (current.signer.identity || {}).privateJwk,
+      prefix: current.signer.prefix, responseMode:
+        current.claimsInput.responseMode,
+      responseAlg: current.claimsInput.encryptionJwk ? "ECDH-ES" : "",
+      formats: (dcql.credentials || []).map(function (q) {
+        return q.format;
+      }) });
     var input = Object.assign({}, current.claimsInput, {
-      walletNonce: event.walletNonce || undefined });
+      walletNonce: event.walletNonce || undefined,
+      encValuesSupported: plan.encValues });
     var claims = verifier.requestObjectClaims(input);
-    var jws = await signWith(current.signer, claims);
+    var jws = await verifier.signRequestObject({
+      claims: claims, identity: current.signer.identity,
+      attester: current.signer.attester || undefined,
+      algId: plan.signAlg });
+    var served = plan.encryptTo
+      ? await verifier.encryptRequestObject(jws, plan) : jws;
     await apiJson("PUT", "/oid4vp/verifier/" + current.hosted.id +
                   "/request/" + encodeURIComponent(event.signingId),
-                  { requestObject: jws }, current.hosted.secret);
+                  { requestObject: served }, current.hosted.secret);
     setVal("vpv_request_object", decodeJws(jws) + "\n(signed live, for " +
-           "wallet_nonce " + (event.walletNonce || "none") + ")");
+           "wallet_nonce " + (event.walletNonce || "none") +
+           (plan.encryptTo ? "; then encrypted to the wallet's key" : "") +
+           ")");
+    showWalletMetadataFindings(plan.findings);
   } catch (e) {
     setText("vpv_wait_status", "Could not sign a live Request Object: " +
             e.message, "vc-bad");
@@ -1629,6 +1709,7 @@ module.exports = {
   regenerateDcql: regenerateDcql,
   formatChanged: formatChanged,
   settingsChanged: settingsChanged,
+  anchorsChanged: anchorsChanged,
   createRequest: createRequest,
   checkPasted: checkPasted,
   askThroughDcApi: askThroughDcApi,

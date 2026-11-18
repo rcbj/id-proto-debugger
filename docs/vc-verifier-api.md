@@ -115,7 +115,11 @@ A session created with `liveSigning: true` closes that gap with a long poll:
    Request Object carrying that `walletNonce` and sends it as
    `PUT /oid4vp/verifier/:id/request/:signingId` with `{ requestObject }`,
    the Bearer secret, and publish's rules (a compact JWS, at most
-   `oid4vpVerifierMaxRequestObjectBytes`).
+   `oid4vpVerifierMaxRequestObjectBytes`). Here, and only here, it may
+   instead be a compact JWE: the object signed and then encrypted to a
+   key from that Wallet's `wallet_metadata.jwks` (section 5.10, RFC 9101
+   section 4). A publish to `PUT /oid4vp/verifier/:id` refuses one,
+   because an object signed for every Wallet has nobody's key.
 3. The held Wallet gets **that** object as `application/oauth-authz-req+jwt`,
    and the api records `request-signed` with `liveSigned: true`. The
    session's pre-signed object is not replaced, so a later GET still gets it.

@@ -3417,6 +3417,61 @@ async function securityFindings(env) {
      /configured mapping/.test(checkById(r, "p[0].issuer.iss").detail),
      "S3: a configured sha256 mapping binds iss: " +
      JSON.stringify(checkById(r, "p[0].issuer.iss")));
+  // #471 E2: DCQL trusted_authorities (OpenID4VP 1.0 section 6.1.1). The
+  // aki values the page asks for are the anchors' SubjectKeyIdentifiers,
+  // read here by OpenSSL, not by this tree.
+  const opensslSki = function opensslSki(pem) {
+    log.debug("Entering opensslSki().");
+    const out = require("child_process").execFileSync("openssl",
+      ["x509", "-noout", "-ext", "subjectKeyIdentifier"], { input: pem })
+      .toString();
+    const hex = (/([0-9A-F]{2}(:[0-9A-F]{2})+)/.exec(out) || [""])[0]
+      .replace(/:/g, "");
+    log.debug("Leaving opensslSki().");
+    return Buffer.from(hex, "hex").toString("base64url");
+  };
+  const rootAki = opensslSki(root.pem);
+  const interAki = opensslSki(inter.pem);
+  eq(verifier.akiValuesFromAnchors([root.pem, inter.pem]).values,
+     [rootAki, interAki], "E2: aki values are the anchors' SKIs");
+  const taDcql = function taDcql(entries) {
+    log.debug("Entering taDcql().");
+    log.debug("Leaving taDcql().");
+    return verifier.buildDcql({ queries: [{ id: "p", format: "dc+sd-jwt",
+      vct: VCT, requireBinding: false, trustedAuthorities: entries }] });
+  };
+  eq(taDcql([{ type: "aki", values: [rootAki] }]).credentials[0]
+     .trusted_authorities, [{ type: "aki", values: [rootAki] }]);
+  let taRefused = "";
+  try {
+    taDcql([{ type: "aki", values: [] }]);
+  } catch (e) {
+    taRefused = e.message;
+  }
+  ok(/non-empty array of strings/.test(taRefused), "E2: empty values");
+  const taRun = function taRun(entries) {
+    log.debug("Entering taRun().");
+    log.debug("Leaving taRun().");
+    return sendSd(x5cJwt([leaf, inter], GOV), { session: Object.assign({},
+      anchors.session, { dcql: taDcql(entries) }) });
+  };
+  // The leaf's AKI is the intermediate's SKI; the intermediate's is the
+  // root's, so either value matches somewhere in the chain.
+  for (const v of [interAki, rootAki]) {
+    r = await taRun([{ type: "aki", values: [v] }]);
+    ok(checkById(r, "p[0].issuer.trusted-authorities").status === "pass",
+       "E2: aki " + v + " matches: " +
+       JSON.stringify(checkById(r, "p[0].issuer.trusted-authorities")));
+  }
+  r = await taRun([{ type: "aki", values: ["s9tIpPmhxdiuNkHMEWNpYim8S8Y"] },
+                   { type: "etsi_tl", values: ["https://lotl.example.com"] }]);
+  const taMiss = checkById(r, "p[0].issuer.trusted-authorities");
+  ok(taMiss.status === "skip" && !taMiss.essential &&
+     /no certificate in its chain of 2.*etsi_tl.*SHOULD/.test(taMiss.detail),
+     "E2: section 6.1.1.1's example value matches nothing, reported: " +
+     JSON.stringify(taMiss));
+  eq(failedIds(r), [], "E2: a credential outside trusted_authorities " +
+     "fails nothing (the wallet SHOULD, the trust rows decide)");
   // A chain anchored at some OTHER root.
   const otherRootKey = nodePemPair("ec");
   const otherRoot = await testCert({ profile: "root-ca", cn: "Other Root",
@@ -4818,6 +4873,124 @@ async function cwtStatusLists(env) {
   log.debug("Leaving cwtStatusLists().");
 }
 
+// #471 E4: wallet_metadata from a request_uri POST (OpenID4VP 1.0 section
+// 5.10) is honoured where this Verifier can, and reported where it cannot.
+// The encrypted Request Object is opened by the `jose` library, which
+// shares no code with this tree.
+async function walletMetadataHonoured(env) {
+  log.debug("Entering walletMetadataHonoured().");
+  const id = env.identity;
+  const base = { keyJwk: id.privateJwk, prefix: "x509_hash",
+                 responseMode: "direct_post", formats: ["dc+sd-jwt"] };
+  // Section 5.10's own example, exactly as it travels: form-decoded, it is
+  // a JSON string listing ES256 for dc+sd-jwt.
+  const example = decodeURIComponent(
+    "%7B%22vp_formats_supported%22%3A%7B%22dc%2Bsd-jwt%22%3A%7B%22sd-jwt_a" +
+    "lg_values%22%3A%20%5B%22ES256%22%5D%2C%22kb-jwt_alg_values%22%3A%20%5B" +
+    "%22ES256%22%5D%7D%7D%7D");
+  let plan = verifier.planForWalletMetadata(example, base);
+  eq([plan.signAlg, plan.encryptTo, plan.findings], ["ES256", null, []],
+     "E4: section 5.10's example asks nothing this request does not do");
+  plan = verifier.planForWalletMetadata(example, Object.assign({}, base,
+    { formats: ["mso_mdoc"] }));
+  ok(plan.findings.length === 1 && /mso_mdoc.*not in the wallet's vp_formats_supported/
+       .test(plan.findings[0].text), "E4: a format the wallet lacks: " +
+     JSON.stringify(plan.findings));
+  plan = verifier.planForWalletMetadata("{not json", base);
+  ok(/not JSON/.test(plan.findings[0].text), "E4: unreadable metadata");
+  eq(verifier.planForWalletMetadata(undefined, base).findings, [],
+     "E4: no wallet_metadata, nothing to say");
+  // request_object_signing_alg_values_supported.
+  plan = verifier.planForWalletMetadata({
+    request_object_signing_alg_values_supported: ["ES384", "ES256"] }, base);
+  eq(plan.signAlg, "ES256", "E4: the key's alg the wallet lists");
+  plan = verifier.planForWalletMetadata({
+    request_object_signing_alg_values_supported: ["PS256"] }, base);
+  ok(plan.signAlg === "ES256" && plan.findings[0].level === "warn" &&
+     /signs only ES256; signed with ES256 anyway/.test(plan.findings[0].text),
+     "E4: no common signing alg is reported: " +
+     JSON.stringify(plan.findings));
+  eq(verifier.signingAlgsFor({ crv: "Ed25519" }), ["Ed25519", "EdDSA"]);
+  // client_id_prefixes_supported.
+  plan = verifier.planForWalletMetadata({
+    client_id_prefixes_supported: ["x509_san_dns"] }, base);
+  ok(/does not include x509_hash/.test(plan.findings[0].text),
+     "E4: a prefix the wallet lacks: " + JSON.stringify(plan.findings));
+  // authorization_encryption_*: the offer is narrowed to what both do.
+  const jwt = Object.assign({}, base, { responseMode: "direct_post.jwt",
+                                        responseAlg: "ECDH-ES" });
+  plan = verifier.planForWalletMetadata({
+    authorization_encryption_alg_values_supported: ["ECDH-ES"],
+    authorization_encryption_enc_values_supported: ["A256GCM"] }, jwt);
+  eq(plan.encValues, ["A256GCM"], "E4: enc narrowed to both sides'");
+  plan = verifier.planForWalletMetadata({
+    authorization_encryption_alg_values_supported: ["RSA-OAEP-256"],
+    authorization_encryption_enc_values_supported: ["A192GCM"] }, jwt);
+  eq(plan.encValues, ["A128GCM", "A256GCM"], "E4: nothing shared, " +
+     "offered unchanged");
+  eq(plan.findings.map(function (f) {
+    return f.level;
+  }), ["warn", "warn"], "E4: both mismatches reported");
+  // jwks: the Request Object is signed, then encrypted to the wallet's key.
+  const walletKey = nodeCrypto.generateKeyPairSync("ec",
+    { namedCurve: "P-256" });
+  const walletPub = Object.assign(walletKey.publicKey.export(
+    { format: "jwk" }), { kid: "wallet-enc-1", use: "enc" });
+  const sigOnly = Object.assign({}, walletPub, { kid: "wallet-sig",
+                                                 use: "sig" });
+  plan = verifier.planForWalletMetadata({ jwks: { keys: [sigOnly,
+    walletPub] } }, base);
+  eq([plan.encryptTo && plan.encryptTo.kid, plan.requestEncAlg,
+      plan.requestEnc], ["wallet-enc-1", "ECDH-ES", "A256GCM"],
+     "E4: the first key not for signing, ECDH-ES / A256GCM");
+  const claims = verifier.requestObjectClaims({
+    clientId: verifier.clientIdFor("x509_hash", id, {}),
+    responseUri: "https://verifier.example/response",
+    responseMode: "direct_post", nonce: "n-e4", state: "s-e4",
+    walletNonce: "wn-e4",
+    dcql: verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
+      vct: VCT, claims: [["given_name"]] }] }) });
+  const signed = await verifier.signRequestObject({ claims: claims,
+    identity: id, algId: plan.signAlg });
+  const sealed = await verifier.encryptRequestObject(signed, plan);
+  eq(sealed.split(".").length, 5, "E4: a compact JWE");
+  const jose = await import("jose");
+  const opened = await jose.compactDecrypt(sealed,
+    await jose.importJWK(walletKey.privateKey.export({ format: "jwk" }),
+                         "ECDH-ES"));
+  eq([opened.protectedHeader.alg, opened.protectedHeader.enc,
+      opened.protectedHeader.cty, opened.protectedHeader.kid],
+     ["ECDH-ES", "A256GCM", "JWT", "wallet-enc-1"],
+     "E4: jose reads the header RFC 9101 section 4 and RFC 7519 5.2 ask for");
+  eq(new TextDecoder().decode(opened.plaintext), signed,
+     "E4: jose opens it to the signed Request Object");
+  const inner = await jose.compactVerify(signed, await jose.importX509(
+    "-----BEGIN CERTIFICATE-----\n" + id.x5c[0] +
+    "\n-----END CERTIFICATE-----", "ES256"));
+  eq(JSON.parse(new TextDecoder().decode(inner.payload)).wallet_nonce,
+     "wn-e4", "E4: and the signature inside verifies, carrying wallet_nonce");
+  // A key nothing here encrypts to, and enc values nothing here does.
+  plan = verifier.planForWalletMetadata({ jwks: { keys: [{ kty: "oct",
+    k: "AAAA" }] } }, base);
+  ok(!plan.encryptTo && /none is one this Verifier can encrypt to/.test(
+     plan.findings[0].text), "E4: no usable key: " +
+     JSON.stringify(plan.findings));
+  plan = verifier.planForWalletMetadata({ jwks: { keys: [walletPub] },
+    request_object_encryption_enc_values_supported: ["XC20P"] }, base);
+  ok(!plan.encryptTo && /names no content encryption/.test(
+     plan.findings[0].text), "E4: no usable enc");
+  let refused = "";
+  try {
+    await verifier.signRequestObject({ claims: claims, identity: id,
+                                       algId: "ES384" });
+  } catch (e) {
+    refused = e.message;
+  }
+  ok(/cannot sign ES384/.test(refused), "E4: an alg the key cannot make " +
+     "is refused, not mislabelled: " + refused);
+  log.debug("Leaving walletMetadataHonoured().");
+}
+
 async function main() {
   log.debug("Entering main().");
   randomTokens();
@@ -4848,6 +5021,7 @@ async function main() {
   await mdocFindings(env);
   await proofContexts(env);
   await requestSideFindings(env);
+  await walletMetadataHonoured(env);
   log.info("vp_verifier_engine: " + assertions + " assertions, " +
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
