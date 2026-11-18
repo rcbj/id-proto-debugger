@@ -661,13 +661,14 @@ function signKbJwt(opts) {
   log.debug("Leaving signKbJwt().");
   // VERBATIM header: a Key Binding JWT's `typ` is `kb+jwt` and the SD-JWT VC
   // specification fixes the rest, so the bytes are not this module's to
-  // rearrange. jws.js does the signing input and the Web Crypto call.
+  // rearrange. jws.js does the signing input and the signature, on its
+  // default pure-JS backend (#463, step 2c), so a KB-JWT is made on every
+  // deployment, plain HTTP included.
   return jws.signJwsAsync({
     algId: alg.algId,
     protectedHeader: header,
     payload: payload,
-    privateKey: { jwk: opts.holderPrivateJwk },
-    backend: "webcrypto"
+    privateKey: { jwk: opts.holderPrivateJwk }
   }).then(function (signed) {
     log.debug("Leaving signKbJwt().");
     return { jwt: signed.serialized, header: header, payload: payload };
@@ -732,12 +733,14 @@ function signVpJwt(opts) {
     }
   };
   log.debug("Leaving signVpJwt().");
+  // The pure-JS backend (jws.js's default, on crypto_provider.js): it works
+  // on every deployment, plain HTTP included, where crypto.subtle does not
+  // exist (#463, step 2c).
   return jws.signJwsAsync({
     algId: alg.algId,
     protectedHeader: header,
     payload: payload,
-    privateKey: { jwk: opts.holderPrivateJwk },
-    backend: "webcrypto"
+    privateKey: { jwk: opts.holderPrivateJwk }
   }).then(function (signed) {
     log.debug("Leaving signVpJwt().");
     return { jwt: signed.serialized, header: header, payload: payload };

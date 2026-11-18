@@ -851,8 +851,8 @@ function selfIssuedIdToken(opts) {
       algId: signing.algId,
       protectedHeader: header,
       payload: payload,
-      privateKey: { jwk: opts.privateJwk },
-      backend: "webcrypto"
+      // jws.js's default pure-JS backend (#463, step 2c): every deployment.
+      privateKey: { jwk: opts.privateJwk }
     }).then(function (signed) {
       log.debug("Leaving selfIssuedIdToken().");
       return { jwt: signed.serialized, header: header, payload: payload,

@@ -657,8 +657,11 @@ async function appendRfc9068Signature(results, compact) {
     } else {
       throw new Error('Unsupported verification method.');
     }
+    // The pure-JS backend (jws.js's default, on crypto_provider.js): it works
+    // on every deployment, plain HTTP included, where crypto.subtle does not
+    // exist (#463, step 2c).
     var result = await jwsLib.verifyJwsAsync({
-      jws: compact, publicKey: keyInput, backend: 'webcrypto'
+      jws: compact, publicKey: keyInput
     });
     var first = result.signatures[0] || {};
     if (result.valid) {
@@ -1054,17 +1057,16 @@ async function signJWT() {
     setVal('jwt_tools_header', JSON.stringify(header, null, 2));
     var payload = parseJson('jwt_tools_payload', 'JWT Payload');
 
-    // backend: 'webcrypto' keeps this pane on crypto.subtle, which is what it
-    // has always signed with. jws.js's pure-JS backend produces byte-identical
-    // output for every deterministic algorithm here (tests/jws_engine.js
-    // asserts exactly that), so this is a choice about blast radius rather
-    // than about correctness: nothing this page emits changes.
+    // jws.js's default pure-JS backend (#463, step 2c). This pane signed on
+    // crypto.subtle until then, which made it depend on a secure context;
+    // the pure-JS backend produces byte-identical output for every
+    // deterministic algorithm here (tests/jws_engine.js asserts exactly
+    // that), and works on every deployment.
     var result = await jwsLib.signJwsAsync({
       algId: jwsAlgId(alg),
       protectedHeader: header,
       payload: payload,
-      privateKey: signingKeyInput(alg, val('sign_private_key')),
-      backend: 'webcrypto'
+      privateKey: signingKeyInput(alg, val('sign_private_key'))
     });
 
     setVal('jwt_tools_signed', result.serialized);
@@ -1460,8 +1462,11 @@ async function verifyJWT() {
     // algorithm selector, so the header's `alg` is all there is to go on.
     // That is RFC 8725 §3.1's bad case, and it is what a debugger is FOR —
     // the pane's job is to tell you what the token says, not to decide.
+    // The pure-JS backend (jws.js's default, on crypto_provider.js): it works
+    // on every deployment, plain HTTP included, where crypto.subtle does not
+    // exist (#463, step 2c).
     var result = await jwsLib.verifyJwsAsync({
-      jws: jwt_, publicKey: keyInput, backend: 'webcrypto'
+      jws: jwt_, publicKey: keyInput
     });
     var first = result.signatures[0] || {};
 
