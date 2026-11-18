@@ -47,6 +47,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
+const nodeCrypto = require("crypto");
 const { Command, Option } = require("commander");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -565,6 +566,67 @@ async function theWholeExtensionSetAtOnce() {
 // ---------------------------------------------------------------------------
 // 5. The four-deep hierarchy the page exists to build.
 // ---------------------------------------------------------------------------
+// #463: with crypto.subtle removed, as on a page served over plain HTTP,
+// a CA is still generated, issues a certificate and checks its chain. Every
+// signature is crypto_provider.js's now. The CSR is ECDSA with SHA-384 on a
+// P-256 key, a curve/hash pairing X.509 allows and the provider's fixed ECDSA
+// rows do not, so the hash override is exercised. node's X509 verifies the
+// root's and the leaf's signatures afterwards.
+async function aCaWorksWithNoWebCrypto() {
+  log.debug("Entering aCaWorksWithNoWebCrypto().");
+  log.info("=== A CA with no crypto.subtle ===");
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  const real = globalThis.crypto;
+  Object.defineProperty(globalThis, "crypto", { configurable: true,
+    writable: true, value: { getRandomValues: function (a) {
+      return real.getRandomValues(a);
+    } } });
+  let root;
+  let leaf;
+  let links;
+  try {
+    assert.strictEqual(typeof crypto.subtle, "undefined");
+    const rootKey = await keys.generateKeyPair("rsa-2048");
+    root = await x509.issueCertificate({
+      profile: "root-ca", subject: "CN=No Web Crypto Root,O=idptools",
+      subjectPublicKey: rootKey.publicPem,
+      issuerPrivateKey: rootKey.privatePem,
+      signatureAlg: "sha256-rsapss",
+      extensions: x509.defaultExtensions("root-ca")
+    });
+    const leafKey = await keys.generateKeyPair("ec-p256");
+    leaf = await x509.issueCertificate({
+      profile: "tls-server", subject: "CN=nowc.example.com,O=idptools",
+      subjectPublicKey: leafKey.publicPem,
+      issuer: { certificatePem: root.pem, privateKeyPem: rootKey.privatePem,
+                keyAlg: "rsa-2048" },
+      signatureAlg: "sha256-rsa",
+      extensions: x509.defaultExtensions("tls-server")
+    });
+    const csr = await x509.certificationRequest({
+      subject: "CN=csr.example.com", publicKeyPem: leafKey.publicPem,
+      privateKeyPem: leafKey.privatePem, signatureAlg: "sha384-ecdsa" });
+    assert.ok(new nodeCrypto.X509Certificate(root.pem)
+      .verify(new nodeCrypto.X509Certificate(root.pem).publicKey),
+      "node verifies the root's RSASSA-PSS self-signature");
+    links = await x509.verifyChain([leaf.pem, root.pem]);
+    assert.ok(csr && /CERTIFICATE REQUEST/.test(csr.pem),
+              "a CSR signed ECDSA/SHA-384 by a P-256 key");
+  } finally {
+    Object.defineProperty(globalThis, "crypto", descriptor);
+  }
+  const rootCert = new nodeCrypto.X509Certificate(root.pem);
+  const leafCert = new nodeCrypto.X509Certificate(leaf.pem);
+  assert.ok(leafCert.verify(rootCert.publicKey),
+            "node verifies the leaf's signature by the root");
+  assert.ok(Array.isArray(links) && links.every(function (l) {
+    return l.signatureValid !== false;
+  }), "verifyChain() found every signature valid: " + JSON.stringify(links));
+  log.info("[no web crypto] OK — a root, a leaf and a CSR, and the chain " +
+           "checked, with crypto.subtle absent; node agrees.");
+  log.debug("Leaving aCaWorksWithNoWebCrypto().");
+}
+
 async function aRootIntermediateIssuingChainVerifies() {
   log.debug("Entering aRootIntermediateIssuingChainVerifies().");
   // Deliberately a different key algorithm at every level, and a different
@@ -1518,6 +1580,7 @@ async function test() {
   await everyProfileIssuesWhatItPromises();
   await keyUsageFollowsTheKeyAlgorithm();
   await aRootIntermediateIssuingChainVerifies();
+  await aCaWorksWithNoWebCrypto();
   await nameConstraintsAreEnforcedByOpenssl();
   await basicConstraintsAreEnforcedByOpenssl();
   await anUnknownCriticalExtensionIsRefused();
