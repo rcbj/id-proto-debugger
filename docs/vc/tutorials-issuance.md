@@ -13,9 +13,10 @@ no client registration — an issuer that advertises
 `pre-authorized_grant_anonymous_access_supported` redeems the code for a
 wallet it has never seen. The Authorization Code flow needs the wallet's
 `client_id` registered at the authorization server with this deployment's
-`/callback` as a redirect URI. These tutorials have no screenshots in this
-edition; the screens are described in
-[reference-issuance.md](reference-issuance.md).
+`/callback` as a redirect URI. The screens are also described in
+[reference-issuance.md](reference-issuance.md). The screenshots below were
+taken against the mock STS as a concrete example; your issuer's own sign-in
+and offer pages will look different, but the debugger's panes are the same.
 
 If your issuer is iya-sts, [setup-iya-sts.md](setup-iya-sts.md) shows one
 way to create the account, client and offers (optional, iya-sts only).
@@ -47,20 +48,32 @@ OpenID4VCI Appendix H.2, §4.1.1, §6.1.
    `pre-authorized_code` grant with its `tx_code` description, and the
    page retrieves the issuer's and the authorization server's metadata on
    its own.
+
+   ![The Credential Offer pane, naming the issuer, the configuration and the pre-authorized grant with its Transaction Code description](images/vc-pre-authorized-02-offer.png)
 4. Press **Start Issuance**. A pre-authorized offer skips the sign-in and
    goes straight to step 2.
 5. In **Token Request (pre-authorized code)**, type the Transaction Code.
    The hint says the length and input mode the offer declared; the code is
    never stored. **The call** shows the request exactly as it will be sent.
    Press **Send the Token Request**.
+
+   ![The pre-authorized-code Token Request, with the Transaction Code field and the request as it will be sent](images/vc-pre-authorized-06-token-request.png)
 6. The access token appears. **OID4VCI Credential Request** shows the holder
    key the wallet generated, the `c_nonce` it fetched from the Nonce
    Endpoint, the `openid4vci-proof+jwt` key proof and the request body.
    Press **Approve and Request Credential**.
+
+   ![The Credential Request, with the holder key, the c_nonce, the key proof and the request body](images/vc-pre-authorized-06-credential-request.png)
 7. Step 3 shows the SD-JWT VC: the issuer-signed JWT with its **Checks**,
    one row per Disclosure, and the resulting claim set. Every check should
    pass — in particular that `cnf` names the key the wallet generated in
    step 6, and that every Disclosure's digest is in `_sd`.
+
+   ![Step 3: the SD-JWT VC credential pane](images/vc-pre-authorized-07-credential.png)
+
+   ![Step 3: one row per Disclosure, each digest matched into _sd](images/vc-pre-authorized-09-disclosures.png)
+
+   ![Step 3: the resulting claim set](images/vc-pre-authorized-10-claims.png)
 8. Optionally, **Notify the Issuer** with `credential_accepted` (§11).
 
 The credential is now held (`sdjwtvc_credential`) and ready to present —
@@ -91,11 +104,17 @@ Appendix H.6 (from the wallet) or H.1 (from an offer); §5.
    PKCE, you sign in at the authorization server, and the code is exchanged
    for tokens without further clicks. Those pages are described in
    [../oauth2-oidc/oidc-flows.md](../oauth2-oidc/oidc-flows.md).
+
+   ![Step 1's handoff pane, before Start Issuance drives the authorization request](images/vc-authorization-code-01-authorize-issuance.png)
 5. You land on step 2, with the tokens in **Tokens from the OIDC
    Authorization Code Flow**. With `authorization_details`, the token
    response grants `credential_identifiers`, and **Credential Request
    Options** names the credential by `credential_identifier` (§8.2).
+
+   ![Step 2: the tokens from the Authorization Code flow](images/vc-authorization-code-02-tokens.png)
 6. Press **Approve and Request Credential**, and read step 3 as above.
+
+   ![Step 3: the credential issued by authorization code](images/vc-authorization-code-04-credential.png)
 
 ## Ask for only some of the claims
 
@@ -125,6 +144,10 @@ RFC 9449; [../dpop.md](../dpop.md).
    picked up and the request retried once. **Proof sent** decodes the last
    proof.
 
+![The DPoP pane: sender-constrain the token, the proof algorithm and the server's supported values](images/vc-dpop-01-dpop.png)
+
+![Token binding: token_type DPoP and a cnf.jkt equal to the DPoP key's jkt](images/vc-dpop-01-token-request.png)
+
 A server that ignores DPoP answers `token_type: Bearer`, and **Token
 binding** shows exactly that.
 
@@ -138,16 +161,21 @@ Endpoint, the request it sends and every attempt. It polls on its own at
 the `interval` the issuer asks for (5 seconds if none) and opens step 3 when
 the credential arrives; **Check again now** polls immediately.
 
+![The Deferred Issuance pane: the transaction, the endpoint and each poll](images/vc-deferred-01-deferred-pane.png)
+
 ## Refresh a credential
 
 §14.5 (implementation considerations), RFC 6749 §6.
 
 1. From step 3, press **Refresh It (step 4)**. **The Credential You Hold**
    shows its type, validity and the key it is bound to.
+   ![Step 4: The Credential You Hold, with its type, validity and bound key](images/vc-refresh-01-current.png)
 2. **Refresh the Access Token**: press **Send the Refresh Request**. A
    confidential client authenticates (the **Client Authentication** pane).
    An authorization server need not issue a refresh token; when it did not,
    the page says so.
+
+   ![Refreshing the access token](images/vc-refresh-03-refresh-token.png)
 3. **Ask the Credential Endpoint Again**: keep **Holder key** at *Reuse the
    key the credential is already bound to* to get a replacement, or choose
    *Generate a new holder key pair* to bind a new one.
@@ -155,6 +183,8 @@ the credential arrives; **Check again now** polls immediately.
 4. **What Changed** compares the two: the issuer may only re-sign, or may
    change claims and validity. Choose **Replace the credential I hold** or
    **Discard the refreshed one**.
+
+   ![What Changed: the credential you hold against the refreshed one](images/vc-refresh-05-what-changed.png)
 5. **Credential History** logs every attempt — issuance, token refresh,
    Credential Request, deferred poll — with its outcome. **Oldest**,
    **Older**, **Newer** and **Latest** walk the generations, and making one
@@ -209,6 +239,16 @@ it) and follow the same steps. What changes is the holder binding and step
 | `jpt`, `sd-cwt` (drafts) | per format | [format-sd-cwt-jwp.md](format-sd-cwt-jwp.md) |
 | `anoncreds` | a link secret | [format-anoncreds.md](format-anoncreds.md) |
 
+A `jwt_vc_json` credential at step 3, its checks and its claims:
+
+![jwt_vc_json: the credential](images/vc-jwt-vc-json-01-credential.png)
+
+![jwt_vc_json: the checks](images/vc-jwt-vc-json-02-checks.png)
+
 An `ldp_vc` whose issuer is named by a DID has its proof checked against the
 DID document step 1 resolved; **Use DIDs for this credential** is on by
 default for that format.
+
+![ldp_vc: the credential with its Data Integrity proof](images/vc-ldp-vc-01-credential.png)
+
+![ldp_vc: the checks, including the proof against the resolved DID document](images/vc-ldp-vc-02-checks.png)
