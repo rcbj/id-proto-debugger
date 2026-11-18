@@ -159,15 +159,22 @@ function rsaPadding(id) {
   return found;
 }
 
-function oaepOptions(hashName) {
-  log.debug("Entering oaepOptions(). hash=" + hashName);
+// `mgfHashName` is MGF1's hash when it is not the label hash: XML
+// Encryption 1.1's rsa-oaep names the two separately (DigestMethod and
+// xenc11:MGF), and its rsa-oaep-mgf1p fixes MGF1 to SHA-1 whatever the
+// digest. Absent, MGF1 uses the label hash, as JOSE's RSA-OAEP-256 does.
+function oaepOptions(hashName, mgfHashName) {
+  log.debug("Entering oaepOptions(). hash=" + hashName + " mgf=" +
+            (mgfHashName || hashName));
   var factory = OAEP_HASHES[hashName || 'SHA-256'];
-  if (!factory) {
+  var mgf = OAEP_HASHES[mgfHashName || hashName || 'SHA-256'];
+  if (!factory || !mgf) {
     log.debug("Leaving oaepOptions(). Unknown hash.");
-    throw new Error('Unknown OAEP hash: ' + hashName);
+    throw new Error('Unknown OAEP hash: ' + (factory ? mgfHashName :
+                                              hashName));
   }
   log.debug("Leaving oaepOptions().");
-  return { md: factory.create(), mgf1: { md: factory.create() } };
+  return { md: factory.create(), mgf1: { md: mgf.create() } };
 }
 
 // PKCS#8 for the private half, NOT forge's default PKCS#1.
@@ -242,7 +249,8 @@ function rsaEncrypt(options) {
   }
   var raw = forge.util.binary.raw.encode(plaintext);
   var out = padding.forgeScheme === 'RSA-OAEP'
-    ? publicKey.encrypt(raw, 'RSA-OAEP', oaepOptions(opts.hash))
+    ? publicKey.encrypt(raw, 'RSA-OAEP', oaepOptions(opts.hash,
+                                                      opts.mgfHash))
     : publicKey.encrypt(raw, 'RSAES-PKCS1-V1_5');
   log.debug("Leaving rsaEncrypt().");
   return { ciphertext: forge.util.binary.raw.decode(out) };
@@ -255,7 +263,8 @@ function rsaDecrypt(options) {
   var padding = rsaPadding(opts.padding);
   var raw = forge.util.binary.raw.encode(asBytes(opts.ciphertext));
   var out = padding.forgeScheme === 'RSA-OAEP'
-    ? privateKey.decrypt(raw, 'RSA-OAEP', oaepOptions(opts.hash))
+    ? privateKey.decrypt(raw, 'RSA-OAEP', oaepOptions(opts.hash,
+                                                       opts.mgfHash))
     : privateKey.decrypt(raw, 'RSAES-PKCS1-V1_5');
   log.debug("Leaving rsaDecrypt().");
   return forge.util.binary.raw.decode(out);

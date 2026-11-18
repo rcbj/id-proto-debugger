@@ -997,6 +997,11 @@ function aesKwUnwrap(kek, wrapped) {
 var RSA_ENC = {
   "rsa-oaep-sha1": { padding: "oaep", hash: "SHA-1" },
   "rsa-oaep-sha256": { padding: "oaep", hash: "SHA-256" },
+  // The general form: opts.hash (the OAEP label hash) and opts.mgfHash
+  // (MGF1's), each "SHA-1", "SHA-256", "SHA-384" or "SHA-512". XML
+  // Encryption 1.1 lets the two differ, so the fixed rows above cannot
+  // express every key transport it defines.
+  "rsa-oaep": { padding: "oaep", hash: null },
   "rsa-pkcs1v15-enc": { padding: "v1_5" }
 };
 
@@ -1013,22 +1018,26 @@ function rsaEncScheme(alg) {
 
 // OAEP uses MGF1 over the SAME hash as the label hash (RFC 8017 / JWE's
 // RSA-OAEP and RSA-OAEP-256; XML Encryption's rsa-oaep-mgf1p is SHA-1 both).
-function rsaEncrypt(alg, publicKey, plaintext) {
+function rsaEncrypt(alg, publicKey, plaintext, opts) {
   log.debug("Entering rsaEncrypt(). alg=" + alg);
   var s = rsaEncScheme(alg);
+  var o = opts || {};
   var out = pkEncryption.rsaEncrypt({
     publicPem: keys.exportKey(keys.publicKeyOf(publicKey), "spki-pem"),
-    padding: s.padding, hash: s.hash, plaintext: plaintext });
+    padding: s.padding, hash: s.hash || o.hash || "SHA-256",
+    mgfHash: s.hash ? undefined : o.mgfHash, plaintext: plaintext });
   log.debug("Leaving rsaEncrypt().");
   return out.ciphertext;
 }
 
-function rsaDecrypt(alg, privateKey, ciphertext) {
+function rsaDecrypt(alg, privateKey, ciphertext, opts) {
   log.debug("Entering rsaDecrypt(). alg=" + alg);
   var s = rsaEncScheme(alg);
+  var o = opts || {};
   var out = pkEncryption.rsaDecrypt({
     privatePem: keys.exportKey(privateKey, "pkcs8-pem"),
-    padding: s.padding, hash: s.hash, ciphertext: ciphertext });
+    padding: s.padding, hash: s.hash || o.hash || "SHA-256",
+    mgfHash: s.hash ? undefined : o.mgfHash, ciphertext: ciphertext });
   log.debug("Leaving rsaDecrypt().");
   return out;
 }

@@ -649,6 +649,111 @@ function mgfMdFor(uri) {
       return forge.md.sha1.create();
   }
 }
+// --- XML Encryption's primitives, on crypto_provider.js (#463 step 3b) ------
+// AES-GCM and AES-CBC, RSA key transport and randomness are the central
+// module's. 3DES-CBC (tripledes-cbc) stays on forge: the provider has no 3DES,
+// and rcbj's rule for this move is that no algorithm is lost. Everything here
+// speaks forge binary strings, one character per byte, as the rest of the file
+// does.
+var MD_NAME = { sha1: 'SHA-1', sha256: 'SHA-256', sha384: 'SHA-384',
+                sha512: 'SHA-512' };
+
+function bin(bytesValue) {
+  return forge.util.binary.raw.encode(bytesValue);
+}
+
+function unbin(binaryString) {
+  return forge.util.binary.raw.decode(binaryString);
+}
+
+function randomBin(count) {
+  log.debug("Entering randomBin(). " + count);
+  log.debug("Leaving randomBin().");
+  return bin(provider.randomBytes(count));
+}
+
+// IV || ciphertext (|| the 16-byte tag for GCM), as CipherValue carries it.
+// CBC pads with PKCS#7, which is one instance of what XML Encryption 1.1
+// section 5.2.1 allows (arbitrary bytes, the last naming their count).
+function encryptData(spec, keyBin, plainBin) {
+  log.debug("Entering encryptData(). " + spec.cipher);
+  var iv = randomBin(spec.ivBytes);
+  if (spec.cipher === '3DES-CBC') {
+    var cipher = forge.cipher.createCipher(spec.cipher, keyBin);
+    cipher.start({ iv: iv });
+    cipher.update(forge.util.createBuffer(plainBin));
+    if (!cipher.finish()) throw new Error('Data encryption failed.');
+    log.debug("Leaving encryptData(). 3DES, forge.");
+    return iv + cipher.output.getBytes();
+  }
+  if (spec.gcm) {
+    var sealed = provider.aesGcmEncrypt(unbin(keyBin), unbin(iv),
+                                        unbin(plainBin));
+    log.debug("Leaving encryptData(). AES-GCM.");
+    return iv + bin(sealed.ciphertext) + bin(sealed.tag);
+  }
+  log.debug("Leaving encryptData(). AES-CBC.");
+  return iv + bin(provider.aesCbcEncrypt(unbin(keyBin), unbin(iv),
+                                         unbin(plainBin)));
+}
+
+// The plaintext of a CipherValue, or null when it does not decrypt (a wrong
+// key, an altered ciphertext, a GCM tag that does not verify). CBC padding is
+// removed as section 5.2.1 defines it: the LAST octet is the number of
+// padding octets, 1 to the block size, and the others may be anything. A
+// PKCS#7 unpad would refuse the random padding other implementations write.
+function decryptData(spec, keyBin, cipherRaw) {
+  log.debug("Entering decryptData(). " + spec.cipher);
+  var iv = cipherRaw.substring(0, spec.ivBytes);
+  if (spec.cipher === '3DES-CBC') {
+    var decipher = forge.cipher.createDecipher(spec.cipher, keyBin);
+    decipher.start({ iv: iv });
+    decipher.update(forge.util.createBuffer(cipherRaw.substring(
+        spec.ivBytes)));
+    var ok = decipher.finish();
+    log.debug("Leaving decryptData(). 3DES, forge. " + ok);
+    return ok ? decipher.output.getBytes() : null;
+  }
+  try {
+    if (spec.gcm) {
+      var body = cipherRaw.substring(spec.ivBytes, cipherRaw.length - 16);
+      var tag = cipherRaw.substring(cipherRaw.length - 16);
+      var plain = provider.aesGcmDecrypt(unbin(keyBin), unbin(iv),
+                                         unbin(body), unbin(tag));
+      log.debug("Leaving decryptData(). AES-GCM.");
+      return bin(plain);
+    }
+    var padded = provider.aesCbcDecrypt(unbin(keyBin), unbin(iv),
+        unbin(cipherRaw.substring(spec.ivBytes)), { padding: 'none' });
+    var n = padded.length ? padded[padded.length - 1] : 0;
+    if (!n || n > 16 || n > padded.length) {
+      log.debug("Leaving decryptData(). Bad padding length.");
+      return null;
+    }
+    log.debug("Leaving decryptData(). AES-CBC.");
+    return bin(padded.slice(0, padded.length - n));
+  } catch (e) {
+    log.debug("Leaving decryptData(). " + e.message);
+    return null;
+  }
+}
+
+// The provider's RSA key transport for an EncryptionMethod: rsa-1_5,
+// rsa-oaep-mgf1p (MGF1 fixed to SHA-1) or xenc11 rsa-oaep (MGF named
+// separately), each digest and MGF as this file has always read them.
+function keyTransport(keyAlg, digestUri, mgfUri) {
+  log.debug("Entering keyTransport().");
+  if (keyAlg === XENC_NS + 'rsa-1_5') {
+    log.debug("Leaving keyTransport(). PKCS#1 v1.5.");
+    return { alg: 'rsa-pkcs1v15-enc', opts: {} };
+  }
+  var hash = MD_NAME[forgeMdFor(digestUri).algorithm];
+  var mgf = keyAlg === XENC11_NS + 'rsa-oaep'
+    ? MD_NAME[mgfMdFor(mgfUri).algorithm] : 'SHA-1';
+  log.debug("Leaving keyTransport(). OAEP " + hash + "/MGF1 " + mgf + ".");
+  return { alg: 'rsa-oaep', opts: { hash: hash, mgfHash: mgf } };
+}
+
 // Parse caller-supplied XML, refusing anything that is not well-formed.
 //
 // This is the correct control for an XML input, and note what it deliberately
@@ -771,16 +876,7 @@ function encapsulateXml(xml, opts, ctx) {
 
   var plaintext = encPlaintext(xml, ctx.c14nMode, ctx.type);
   var ptBytes = forge.util.encodeUtf8(plaintext);
-  var iv = forge.random.getBytesSync(ctx.spec.ivBytes);
-  var cipher = forge.cipher.createCipher(ctx.spec.cipher, sessionKey);
-  cipher.start(ctx.spec.gcm ? { iv: iv, tagLength: 128 } : { iv: iv });
-  cipher.update(forge.util.createBuffer(ptBytes));
-  if (!cipher.finish()) {
-    log.debug("Leaving encapsulateXml(). Data encryption failed.");
-    throw new Error('Data encryption failed.');
-  }
-  var cipherValue = iv + cipher.output.getBytes() +
-      (ctx.spec.gcm ? cipher.mode.tag.getBytes() : '');
+  var cipherValue = encryptData(ctx.spec, sessionKey, ptBytes);
 
   log.debug("Leaving encapsulateXml(). " + ctx.kem.alg + ".");
   return '<xenc:EncryptedData xmlns:xenc="' + XENC_NS + '" Type="' + ctx.type +
@@ -844,34 +940,25 @@ function encryptXml(xml, opts) {
 
   var plaintext = encPlaintext(xml, c14nMode, type);
   var ptBytes = forge.util.encodeUtf8(plaintext);
-  var sessionKey = forge.random.getBytesSync(spec.keyBytes);
-  var iv = forge.random.getBytesSync(spec.ivBytes);
-  var cipher = forge.cipher.createCipher(spec.cipher, sessionKey);
-  cipher.start(spec.gcm ? { iv: iv, tagLength: 128 } : { iv: iv });
-  cipher.update(forge.util.createBuffer(ptBytes));
-  if (!cipher.finish()) throw new Error('Data encryption failed.');
-  var cipherValue = iv + cipher.output.getBytes() + (spec.gcm ?
-      cipher.mode.tag.getBytes() : '');
+  var sessionKey = randomBin(spec.keyBytes);
+  var cipherValue = encryptData(spec, sessionKey, ptBytes);
   var cipherB64 = forge.util.encode64(cipherValue);
 
-  var wrapped, keyMethodInner = '';
-  if (keyAlg === XENC_NS + 'rsa-1_5') {
-    wrapped = pub.encrypt(sessionKey, 'RSAES-PKCS1-V1_5');
-  } else {
-    var digestUri = opts.digest || (XENC_NS + 'sha256');
-    var oaepOpts = { md: forgeMdFor(digestUri) };
+  var keyMethodInner = '';
+  var digestUri = opts.digest || (XENC_NS + 'sha256');
+  var mgfUri = opts.mgf || (XENC11_NS + 'mgf1sha256');
+  if (keyAlg !== XENC_NS + 'rsa-1_5') {
     keyMethodInner = '<ds:DigestMethod xmlns:ds="' + DS_NS + '" Algorithm="' +
         digestUri + '"/>';
     if (keyAlg === XENC11_NS + 'rsa-oaep') {
-      var mgfUri = opts.mgf || (XENC11_NS + 'mgf1sha256');
-      oaepOpts.mgf1 = { md: mgfMdFor(mgfUri) };
       keyMethodInner += '<xenc11:MGF xmlns:xenc11="' + XENC11_NS +
           '" Algorithm="' + mgfUri + '"/>';
-    } else {
-      oaepOpts.mgf1 = { md: forge.md.sha1.create() };
     }
-    wrapped = pub.encrypt(sessionKey, 'RSA-OAEP', oaepOpts);
   }
+  var transport = keyTransport(keyAlg, digestUri, mgfUri);
+  var wrapped = bin(provider.rsaEncrypt(transport.alg,
+      provider.importKey(forge.pki.publicKeyToPem(pub)), unbin(sessionKey),
+      transport.opts));
   var wrappedB64 = forge.util.encode64(wrapped);
 
   log.debug("Leaving encryptXml().");
@@ -1640,28 +1727,21 @@ function decryptXml(xml, opts) {
     log.debug("Leaving decryptXml(). No private key.");
     throw new Error('decryptXml: privateKeyPem is required.');
   }
-  var priv = forge.pki.privateKeyFromPem(opts.privateKeyPem);
   var wrapped = forge.util.decode64(wrappedB64);
   var sessionKey;
   try {
-    if (keyAlg === XENC_NS + 'rsa-1_5') {
-      sessionKey = priv.decrypt(wrapped, 'RSAES-PKCS1-V1_5');
-    } else {
-      var digEl = kmEl ? firstByLocal(kmEl, 'DigestMethod') : null;
-      var digestUri = digEl ? digEl.getAttribute('Algorithm') : (XENC_NS +
-          'sha256');
-      var oaep = { md: forgeMdFor(digestUri) };
-      if (keyAlg === XENC11_NS + 'rsa-oaep') {
-        var mgfEl = kmEl ? firstByLocal(kmEl, 'MGF') : null;
-        var mgfUri = mgfEl ? mgfEl.getAttribute('Algorithm') : (XENC11_NS +
-            'mgf1sha1');
-        oaep.mgf1 = { md: mgfMdFor(mgfUri) };
-      } else {
-        // rsa-oaep-mgf1p: MGF1 is fixed to SHA-1.
-        oaep.mgf1 = { md: forge.md.sha1.create() };
-      }
-      sessionKey = priv.decrypt(wrapped, 'RSA-OAEP', oaep);
-    }
+    var digEl = kmEl ? firstByLocal(kmEl, 'DigestMethod') : null;
+    var digestUri = digEl ? digEl.getAttribute('Algorithm') : (XENC_NS +
+        'sha256');
+    // xenc11 rsa-oaep's MGF defaults to MGF1-SHA1 when absent; for
+    // rsa-oaep-mgf1p it is fixed to SHA-1 (keyTransport()).
+    var mgfEl = kmEl ? firstByLocal(kmEl, 'MGF') : null;
+    var mgfUri = mgfEl ? mgfEl.getAttribute('Algorithm') : (XENC11_NS +
+        'mgf1sha1');
+    var transport = keyTransport(keyAlg, digestUri, mgfUri);
+    sessionKey = bin(provider.rsaDecrypt(transport.alg,
+        provider.importKey(String(opts.privateKeyPem)), unbin(wrapped),
+        transport.opts));
   } catch (e) {
     throw new Error('could not unwrap the session key (wrong private key or ' +
                     'key-transport algorithm mismatch): ' + e.message);
@@ -1670,22 +1750,11 @@ function decryptXml(xml, opts) {
   var dataB64 = cipherValueOf(ed);
   if (!dataB64) throw new Error('EncryptedData has no CipherValue.');
   var cipherRaw = forge.util.decode64(dataB64);
-  var iv = cipherRaw.substring(0, spec.ivBytes);
-  var decipher = forge.cipher.createDecipher(spec.cipher, sessionKey);
-  if (spec.gcm) {
-    var tag = cipherRaw.substring(cipherRaw.length - 16);
-    var body = cipherRaw.substring(spec.ivBytes, cipherRaw.length - 16);
-    decipher.start({ iv: iv, tag: forge.util.createBuffer(tag),
-                   tagLength: 128 });
-    decipher.update(forge.util.createBuffer(body));
-  } else {
-    decipher.start({ iv: iv });
-    decipher.update(forge.util.createBuffer(cipherRaw.substring(spec.ivBytes)));
-  }
-  if (!decipher.finish()) throw new Error('data decryption failed (wrong key ' +
+  var plainBin = decryptData(spec, sessionKey, cipherRaw);
+  if (plainBin === null) throw new Error('data decryption failed (wrong key ' +
       'or corrupted ciphertext).');
   log.debug("Leaving decryptXml().");
-  return forge.util.decodeUtf8(decipher.output.getBytes());
+  return forge.util.decodeUtf8(plainBin);
 }
 
 // ---------------------------------------------------------------------------
@@ -1747,20 +1816,8 @@ function decapsulateXml(doc, ed, ek, kmEl, ciphertextB64, opts, ctx) {
     throw new Error('EncryptedData has no CipherValue.');
   }
   var cipherRaw = forge.util.decode64(dataB64);
-  var iv = cipherRaw.substring(0, ctx.spec.ivBytes);
-  var decipher = forge.cipher.createDecipher(ctx.spec.cipher, sessionKey);
-  if (ctx.spec.gcm) {
-    var tag = cipherRaw.substring(cipherRaw.length - 16);
-    var body = cipherRaw.substring(ctx.spec.ivBytes, cipherRaw.length - 16);
-    decipher.start({ iv: iv, tag: forge.util.createBuffer(tag),
-                     tagLength: 128 });
-    decipher.update(forge.util.createBuffer(body));
-  } else {
-    decipher.start({ iv: iv });
-    decipher.update(forge.util.createBuffer(
-        cipherRaw.substring(ctx.spec.ivBytes)));
-  }
-  if (!decipher.finish()) {
+  var plainBin = decryptData(ctx.spec, sessionKey, cipherRaw);
+  if (plainBin === null) {
     log.debug("Leaving decapsulateXml(). The tag did not check out.");
     throw new Error('The content did not decrypt. With a KEM this is USUALLY ' +
         'THE WRONG DECAPSULATION KEY rather than a corrupted document: ' +
@@ -1769,7 +1826,7 @@ function decapsulateXml(doc, ed, ek, kmEl, ciphertextB64, opts, ctx) {
         'different one, and the first thing that notices is this AEAD tag.');
   }
   log.debug("Leaving decapsulateXml(). Decrypted.");
-  return forge.util.decodeUtf8(decipher.output.getBytes());
+  return forge.util.decodeUtf8(plainBin);
 }
 
 // Generate an RSA key pair + self-signed certificate (for a fresh signing key).
@@ -2303,32 +2360,20 @@ function hkdf(prfUri, ikm, salt, info, lengthBytes) {
         'RFC 9231 names the HMAC family; hmac-sha256 is what section 3.8.1 ' +
         'RECOMMENDS.');
   }
-  var hashLen = md.create().digestLength;
-  var actualSalt = salt && salt.length ? salt
-    : new Array(hashLen + 1).join('\x00');
-  var extract = forge.hmac.create();
-  extract.start(md.create(), actualSalt);
-  extract.update(ikm);
-  var prk = extract.digest().getBytes();
-  // Expand. T(0) is empty; T(n) = HMAC(PRK, T(n-1) || info || n).
-  var out = '';
-  var previous = '';
-  var counter = 1;
-  while (out.length < lengthBytes) {
-    if (counter > 255) {
-      log.debug("Leaving hkdf(). Too much output asked for.");
-      throw new Error('HKDF: RFC 5869 section 2.3 allows at most 255 ' +
-          'blocks of output.');
-    }
-    var expand = forge.hmac.create();
-    expand.start(md.create(), prk);
-    expand.update(previous + (info || '') + String.fromCharCode(counter));
-    previous = expand.digest().getBytes();
-    out += previous;
-    counter++;
+  // RFC 5869, by crypto_provider.js. An absent salt is HashLen zero
+  // octets there, as it was here; RFC 5869 section 2.3 caps the output at
+  // 255 blocks, checked here.
+  var maxLen = 255 * md.create().digestLength;
+  if (lengthBytes > maxLen) {
+    log.debug("Leaving hkdf(). Too much output asked for.");
+    throw new Error('HKDF: RFC 5869 section 2.3 allows at most 255 ' +
+        'blocks of output.');
   }
+  var out = bin(provider.hkdf(hmacHashOf(prfUri), unbin(ikm),
+      salt && salt.length ? unbin(salt) : undefined, unbin(info || ''),
+      lengthBytes));
   log.debug("Leaving hkdf(). " + lengthBytes + " bytes.");
-  return out.substring(0, lengthBytes);
+  return out;
 }
 
 // The hash a `hmac-sha*` PRF identifier names. Written as a lookup rather than
