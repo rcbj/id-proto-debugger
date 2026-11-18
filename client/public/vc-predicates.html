@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — Predicate Queries</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+    <style>
+      .vcp-result th { text-align: left; vertical-align: top; padding: 4px 12px 4px 0; white-space: nowrap; }
+      .vcp-result td { vertical-align: top; padding: 4px 0; word-break: break-all; }
+      .vcp-result pre { white-space: pre-wrap; word-break: break-all; margin: 0; max-height: 360px; overflow: auto; }
+      .vcp-wide { width: 95%; font-family: monospace; }
+      .vcp-json { white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; }
+    </style>
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/vc_predicates_page.js">
+</script>
+
+<p class="vc-return"><a id="return_link" href="/vc-presentation-0.html">&larr; Return to the VC presentation workflow</a></p>
+
+<h3 class="vc-title">Predicate Queries &mdash; prove a claim, do not show it</h3>
+
+<p class="vc-intro">A predicate asks the holder to prove something <em>about</em> a claim &mdash; <code>age &gt;= 18</code>,
+<code>birthdate_dateint &lt;= 20081118</code> &mdash; instead of disclosing the claim. <strong>OpenID4VP 1.0's DCQL has
+no predicates</strong>: a claim's <code>values</code> is an exact match, best effort (section 6.4.1), and a wallet
+ignores a property it does not understand (section 6.1). This page composes a predicate query in one of two languages,
+shows the <a href="https://hyperledger.github.io/anoncreds-spec/" target="_blank" rel="noopener noreferrer">AnonCreds</a>
+presentation request it maps onto, sends it to this debugger's wallet, and verifies what comes back.</p>
+
+<p class="vc-intro"><strong>Which parts are standard.</strong>
+<a href="https://identity.foundation/presentation-exchange/spec/v2.1.1/" target="_blank" rel="noopener noreferrer">DIF
+Presentation Exchange 2.1.1</a> and its <em>Predicate Feature</em> are standard, carried as a
+<code>presentation_definition</code> as the <strong>OpenID4VP drafts</strong> did &mdash; <strong>removed in
+1.0</strong>. The DCQL form is <strong>this debugger's extension</strong> (<code>x_debugger_predicates</code>, honoured
+only when <code>x_debugger_crit</code> lists it). AnonCreds proves a range in <strong>zero knowledge</strong>; an ISO
+mdoc answers an age bound with the issuer's <code>age_over_NN</code>; SD-JWT VC, <code>jwt_vc_json</code> and
+<code>ldp_vc</code> cannot prove one, and a <code>required</code> predicate is then <strong>refused</strong>, never
+answered with the value. Nothing secret is stored: only the composed request (<code>vcpred_request</code>).</p>
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" onchange="vcpSetAllPanes(this.checked);" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<script type="text/javascript">
+function vcpSetAllPanes(expand) {
+  var fieldsets = ['vcp_compose_fieldset', 'vcp_mapping_fieldset', 'vcp_send_fieldset', 'vcp_inspect_fieldset', 'vcp_capability_fieldset', 'vc_tools_fieldset'];
+  for (var i = 0; i < fieldsets.length; i++) {
+    var fs = document.getElementById(fieldsets[i]);
+    if (fs) fs.style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.dbg-toggle-text');
+  if (text) text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  return false;
+}
+</script>
+
+<!-- ============ Pane 1: compose ============ -->
+<div class="step0 dbg-pane" id="pane_vcp_compose">
+  <legend class="dbg-legend" id="vcp_compose_expand" onclick="return vcpredicatespage.togglePane('vcp_compose_fieldset');">Compose a Predicate Query</legend>
+  <fieldset name="vcp_compose_fieldset" id="vcp_compose_fieldset" style="display: block;">
+    <p class="vc-note"><a href="#" id="vcp_example" onclick="return vcpredicatespage.loadExample();">Load the example</a>: an AnonCreds credential, reveal <code>name</code>, prove <code>age &gt;= 18</code>.</p>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_language">Query language: </label><span class="tooltiptext">Presentation Exchange 2.1.1 (DIF, standard) carried as presentation_definition, as the OpenID4VP drafts did and 1.0 no longer does; or DCQL (OpenID4VP 1.0) with this debugger's non-standard predicate extension, honoured only when marked critical.</span></div></td>
+          <td><select id="vcp_language" name="vcp_language" onchange="return vcpredicatespage.onLanguage();">
+            <option value="pe">Presentation Exchange 2.1.1 &mdash; OpenID4VP drafts, presentation_definition, removed in 1.0</option>
+            <option value="dcql">DCQL + debugger predicate extension (non-standard)</option>
+          </select>
+          <div class="vc-note" id="vcp_language_note">&nbsp;</div></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_format">Credential format: </label><span class="tooltiptext">The format the query asks for. anoncreds proves a range predicate in zero knowledge; di_vc is AnonCreds in the W3C form (anoncreds-2023); mso_mdoc answers an age bound with the issuer's age_over_NN; the others cannot prove a predicate and a wallet refuses a required one.</span></div></td>
+          <td><select id="vcp_format" name="vcp_format">
+            <option value="anoncreds">anoncreds (CL, zero-knowledge range proofs)</option>
+            <option value="di_vc">di_vc (AnonCreds W3C form, anoncreds-2023)</option>
+            <option value="mso_mdoc">mso_mdoc (issuer-computed age_over_NN)</option>
+            <option value="dc+sd-jwt">dc+sd-jwt (no predicates)</option>
+            <option value="jwt_vc_json">jwt_vc_json (no predicates)</option>
+            <option value="ldp_vc">ldp_vc (no predicates)</option>
+          </select></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_query_id">Query id: </label><span class="tooltiptext">The Input Descriptor id (Presentation Exchange) or the credential query id (DCQL): letters, digits, _ and -.</span></div></td>
+          <td><input type="text" id="vcp_query_id" name="vcp_query_id" value="credential" size="30" /></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_reveal">Claims to reveal: </label><span class="tooltiptext">Attribute names the holder discloses, comma separated. A claim a predicate is about must not also be revealed: that would defeat the predicate, and AnonCreds refuses it.</span></div></td>
+          <td><input type="text" id="vcp_reveal" name="vcp_reveal" size="60" placeholder="name, Given Name" /></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_predicates">Predicates: </label><span class="tooltiptext">One per line, "attribute op integer" with op one of &gt;= &gt; &lt;= &lt; (AnonCreds p_type). In Presentation Exchange each becomes a field with predicate and a filter of type integer with minimum, exclusiveMinimum, maximum or exclusiveMaximum. AnonCreds proves over integer attributes only; a date is YYYYMMDD.</span></div></td>
+          <td><textarea id="vcp_predicates" name="vcp_predicates" rows="3" class="vcp-wide" placeholder="age >= 18"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_age_years">Older than: </label><span class="tooltiptext">Adds a predicate "born on or before today minus N years" over a YYYYMMDD birth date attribute, the AnonCreds specification's convention for date predicates ("birth_dateint &lt;= 20020116").</span></div></td>
+          <td><input type="text" id="vcp_age_years" name="vcp_age_years" value="18" size="4" /> years, over
+            <input type="text" id="vcp_age_attr" name="vcp_age_attr" value="birthdate_dateint" size="20" />
+            <input class="btn2" id="vcp_age_button" type="button" value="Add" onclick="return vcpredicatespage.addAgeOver();" /></td>
+        </tr>
+        <tr id="vcp_mode_row">
+          <td><div class="tooltip"><label for="vcp_mode">Predicate: </label><span class="tooltiptext">Presentation Exchange 2.1.1: "required" means the answer MUST be the boolean result; "preferred" means it SHOULD be, so a holder may answer with the value. This debugger's wallet does not fall back to the value: an unprovable preferred predicate is refused too.</span></div></td>
+          <td><select id="vcp_mode" name="vcp_mode"><option value="required">required</option><option value="preferred">preferred</option></select></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_cred_def_id">cred_def_id: </label><span class="tooltiptext">Optional. An AnonCreds restriction: only a credential under this credential definition answers. In Presentation Exchange it is a field on $.cred_def_id with a const filter.</span></div></td>
+          <td><input type="text" id="vcp_cred_def_id" name="vcp_cred_def_id" size="60" /></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_purpose">Purpose: </label><span class="tooltiptext">Optional. The Input Descriptor's purpose, shown to the holder (Presentation Exchange only).</span></div></td>
+          <td><input type="text" id="vcp_purpose" name="vcp_purpose" size="60" /></td>
+        </tr>
+        <tr>
+          <td><input class="btn2" id="vcp_build_button" type="button" value="Build" onclick="return vcpredicatespage.buildQuery();" /></td>
+          <td><div class="vc-status" id="vcp_compose_status">&nbsp;</div></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_query">Query: </label><span class="tooltiptext">The presentation_definition or the dcql_query, as JSON. Edit it by hand to try what a wallet does with a malformed or unusual query; the panes below read it from here.</span></div></td>
+          <td><textarea id="vcp_query" name="vcp_query" rows="14" class="vcp-wide" onchange="return vcpredicatespage.showMapping();"></textarea></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 2: the AnonCreds request ============ -->
+<div class="step0 dbg-pane" id="pane_vcp_mapping">
+  <legend class="dbg-legend" id="vcp_mapping_expand" onclick="return vcpredicatespage.togglePane('vcp_mapping_fieldset');">The Equivalent AnonCreds Presentation Request</legend>
+  <fieldset name="vcp_mapping_fieldset" id="vcp_mapping_fieldset" style="display: block;">
+    <p class="vc-note">Every query maps onto an AnonCreds presentation request: one requested attribute per
+    claim, one requested predicate per bound (<code>minimum</code> &rarr; <code>&gt;=</code>,
+    <code>exclusiveMinimum</code> &rarr; <code>&gt;</code>, <code>maximum</code> &rarr; <code>&lt;=</code>,
+    <code>exclusiveMaximum</code> &rarr; <code>&lt;</code>). The mapping is this debugger's: neither OpenID4VP nor
+    Presentation Exchange defines AnonCreds.</p>
+    <div class="vc-status" id="vcp_mapping_status">&nbsp;</div>
+    <div id="vcp_mapping"></div>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_anoncreds_request">AnonCreds request: </label><span class="tooltiptext">An AnonCreds presentation request as the AnonCreds specification defines it: name, version, nonce (decimal digits), requested_attributes and requested_predicates ({ name, p_type, p_value }). Read converts it into the query above; Prove answers it with the credential this browser holds, with no OpenID4VP around it.</span></div></td>
+          <td><textarea id="vcp_anoncreds_request" name="vcp_anoncreds_request" rows="8" class="vcp-wide" placeholder='{"name":"proof of age","version":"1.0","nonce":"1234567890","requested_attributes":{},"requested_predicates":{"adult":{"name":"age","p_type":">=","p_value":18}}}'></textarea></td>
+        </tr>
+        <tr>
+          <td></td>
+          <td><input class="btn2" id="vcp_read_request_button" type="button" value="Read into the query" onclick="return vcpredicatespage.readAnoncredsRequest();" />
+            <input class="btn2" id="vcp_prove_request_button" type="button" value="Prove with the held credential" onclick="return vcpredicatespage.proveRawRequest();" />
+            <div class="vc-status" id="vcp_anoncreds_status">&nbsp;</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 3: send to the wallet ============ -->
+<div class="step0 dbg-pane" id="pane_vcp_send">
+  <legend class="dbg-legend" id="vcp_send_expand" onclick="return vcpredicatespage.togglePane('vcp_send_fieldset');">Send It to the Wallet</legend>
+  <fieldset name="vcp_send_fieldset" id="vcp_send_fieldset" style="display: block;">
+    <p class="vc-note">An OpenID4VP Authorization Request carrying the query &mdash; as <code>dcql_query</code>, or as
+    the drafts' <code>presentation_definition</code> &mdash; from a <code>redirect_uri:</code> Client Identifier that is
+    this page, answered by <code>fragment</code>. The wallet (steps 1 and 2 of the presentation workflow) shows which
+    predicates it proves and what it does not reveal, and the answer comes back here to be verified.</p>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_nonce">Nonce: </label><span class="tooltiptext">The OpenID4VP nonce. The AnonCreds nonce, which must be decimal digits, is derived from it by the wallet's documented rule (the nonce itself when it is digits, else the first 80 bits of its SHA-256).</span></div></td>
+          <td><input type="text" id="vcp_nonce" name="vcp_nonce" size="40" /></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_request_uri">Request: </label><span class="tooltiptext">The Authorization Request as a link to this debugger's wallet. Send opens it; the composed query and its nonce are kept (vcpred_request) so the answer can be checked against them.</span></div></td>
+          <td><textarea id="vcp_request_uri" name="vcp_request_uri" rows="4" class="vcp-wide" readonly></textarea></td>
+        </tr>
+        <tr>
+          <td><input class="btn2" id="vcp_show_request_button" type="button" value="Show the request" onclick="return vcpredicatespage.showRequest();" /></td>
+          <td><input class="btn2" id="vcp_send_button" type="button" value="Send to the wallet" onclick="return vcpredicatespage.sendToWallet();" />
+            <div class="vc-status" id="vcp_send_status">&nbsp;</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 4: inspect ============ -->
+<div class="step0 dbg-pane" id="pane_vcp_inspect">
+  <legend class="dbg-legend" id="vcp_inspect_expand" onclick="return vcpredicatespage.togglePane('vcp_inspect_fieldset');">Inspect a Returned Presentation</legend>
+  <fieldset name="vcp_inspect_fieldset" id="vcp_inspect_fieldset" style="display: block;">
+    <p class="vc-note">The AnonCreds request is rebuilt from the query above, the nonce and what the presentation
+    reveals, and the CL proof is verified against it with <code>anoncreds.js</code>: every predicate the query asks for
+    must be proven, at exactly its bound.</p>
+    <input type="hidden" id="vcp_raw_mode" value="" />
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_vp_token">vp_token: </label><span class="tooltiptext">What the wallet answered. For DCQL, an object keyed by credential query id (OpenID4VP 1.0 section 8.1); for a presentation_definition, the presentation itself. An AnonCreds presentation, legacy JSON or the W3C form.</span></div></td>
+          <td><textarea id="vcp_vp_token" name="vcp_vp_token" rows="8" class="vcp-wide"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_submission">presentation_submission: </label><span class="tooltiptext">Presentation Exchange 2.1.1: which Input Descriptor the vp_token answers, in which format, at which JSONPath. Checked against the definition and the vp_token. Empty for DCQL.</span></div></td>
+          <td><textarea id="vcp_submission" name="vcp_submission" rows="4" class="vcp-wide"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcp_bundle">Issuer material: </label><span class="tooltiptext">The schema and credential definition (and, for a revocable credential, the registry definition, status list and tails) to verify with, as an AnonCreds bundle. Empty: the bundle this browser holds is used. A Verifier with no ledger needs these out of band.</span></div></td>
+          <td><textarea id="vcp_bundle" name="vcp_bundle" rows="3" class="vcp-wide" placeholder="(empty: the held credential's bundle)"></textarea></td>
+        </tr>
+        <tr>
+          <td><input class="btn2" id="vcp_verify_button" type="button" value="Verify" onclick="return vcpredicatespage.verifyPresentation();" /></td>
+          <td><div class="vc-status" id="vcp_inspect_status">&nbsp;</div></td>
+        </tr>
+      </tbody>
+    </table>
+    <div id="vcp_inspect_result"></div>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 5: capability advertisement ============ -->
+<div class="step0 dbg-pane" id="pane_vcp_capability">
+  <legend class="dbg-legend" id="vcp_capability_expand" onclick="return vcpredicatespage.togglePane('vcp_capability_fieldset');">Capability Advertisement (debugger extension)</legend>
+  <fieldset name="vcp_capability_fieldset" id="vcp_capability_fieldset" style="display: block;">
+    <p class="vc-note">No specification defines how a wallet or a Verifier says it can prove or verify predicates.
+    This debugger uses <code>x_debugger_predicates_supported</code>, in the wallet's <code>wallet_metadata</code>
+    (OpenID4VP 1.0 section 10, sent under <code>request_uri_method=post</code>) and in the Verifier's
+    <code>client_metadata</code>. Both are labelled as an extension wherever they appear.</p>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Wallet metadata: </label><span class="tooltiptext">What this debugger's wallet advertises: the query languages it reads, the crit entries it understands, and per format how it proves a predicate.</span></div></td>
+          <td><pre class="vc-json vcp-json" id="vcp_wallet_metadata">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Verifier client_metadata: </label><span class="tooltiptext">What a Verifier sending this page's request advertises: the formats whose predicate proofs it verifies.</span></div></td>
+          <td><pre class="vc-json vcp-json" id="vcp_verifier_metadata">&nbsp;</pre></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!--#include file="/partials/vc_tools.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

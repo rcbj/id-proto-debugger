@@ -59,6 +59,7 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
                 <option value="jwt_vc_json">jwt_vc_json (W3C VC as a JWT)</option>
                 <option value="mso_mdoc">mso_mdoc (ISO mdoc)</option>
                 <option value="ldp_vc">ldp_vc (W3C VC with a Data Integrity proof)</option>
+                <option value="anoncreds">anoncreds (AnonCreds; this debugger's identifier, no OpenID4VP format)</option>
               </select></td>
         </tr>
         <tr>
@@ -111,6 +112,37 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
               AuthorityKeyIdentifier of every certificate it issues (OpenID4VP 1.0 section 6.1.1.1; HAIP 1.0
               section 5). The wallet SHOULD return a credential that matches; one that does not is reported on
               its own row, and its issuer's trust is still decided by the anchors.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_predicates">Predicates (optional)</label></td>
+          <td><textarea id="vpv_predicates" rows="2" cols="60" placeholder="age &gt;= 18"
+                        onchange="return vcverifier.regenerateDcql();"></textarea>
+              <span class="vc-note">One per line, <code>name op integer</code> with op one of
+              <code>&gt;= &gt; &lt;= &lt;</code>: prove it, do not show it. OpenID4VP 1.0's DCQL has no predicates, so
+              in DCQL they go in <strong>this debugger's extension</strong> (<code>x_debugger_predicates</code>, marked
+              critical); in Presentation Exchange they are its standard Predicate Feature. Only AnonCreds proves a
+              range in zero knowledge; an mdoc answers an age bound with <code>age_over_NN</code>; any other format
+              fails the predicate. A predicate's claim must not also be in Claims.
+              <a href="/vc-predicates.html">Predicate query page</a>.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_query_language">Query language</label></td>
+          <td><select id="vpv_query_language" onchange="return vcverifier.regenerateDcql();">
+                <option value="dcql">DCQL (OpenID4VP 1.0)</option>
+                <option value="pe">Presentation Exchange 2.1.1 &mdash; OpenID4VP drafts, presentation_definition, removed in 1.0</option>
+              </select>
+              <span class="vc-note">Presentation Exchange is sent as <code>presentation_definition</code> and answered
+              with a <code>presentation_submission</code>, as the drafts defined; this Verifier checks such an answer
+              in AnonCreds only, and reports any other format's as incomplete.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_anoncreds_material">AnonCreds issuer material</label></td>
+          <td><textarea id="vpv_anoncreds_material" class="vc-mono" rows="3" cols="80"
+                        placeholder='{"format":"anoncreds","schema":{...},"schema_id":"...","credential_definition":{...},"cred_def_id":"..."}'></textarea>
+              <span class="vc-note">An AnonCreds proof is checked against the issuer's schema and credential definition
+              (and, for a revocable credential, its registry definition, status list and tails), which a Verifier with
+              no ledger is given out of band: an AnonCreds bundle. Without it an AnonCreds answer is incomplete. Not
+              stored.</span></td>
         </tr>
         <tr>
           <td><label for="vpv_dcql">DCQL query</label></td>

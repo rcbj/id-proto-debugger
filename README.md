@@ -31,7 +31,7 @@ guide, a page per workflow, and how to run, test and release it.
 | [SAML 1.1](docs/saml11.md) | SAML 1.1, the Shibboleth AuthnRequest profile | Browser/POST and Browser/Artifact sign-in. |
 | [WS-Trust](docs/wstrust.md) | WS-Trust 1.0–1.4, WS-Security, WS-Addressing | Issue, renew, validate and cancel against a security token service. |
 | [WS-Federation](docs/wsfed.md) | WS-Federation 1.2 | The passive requestor profile: sign-in and sign-out, signed requests, encrypted tokens. |
-| [Verifiable credentials](docs/sd-jwt-vc-issuance.md) | OID4VCI 1.0, OID4VP 1.0, SD-JWT (RFC 9901), SD-JWT VC, DCQL, JAR (RFC 9101), DIDs | A wallet: credential issuance and presentation with selective disclosure. |
+| [Verifiable credentials](docs/vc/index.md) | OID4VCI 1.0, OID4VP 1.0, HAIP 1.0, SIOPv2, SD-JWT (RFC 9901), SD-JWT VC, DCQL, JAR (RFC 9101), DIDs | A wallet: credential issuance and presentation with selective disclosure; a Verifier; DID, VC Barcode, Gordian Envelope and ACDC tools. |
 | [WebAuthn](docs/webauthn.md) | WebAuthn Level 3, FIDO U2F | Registration and authentication ceremonies decoded, with a read-only browser extension. |
 | [Smart cards](docs/smartcard.md) | ISO/IEC 7816-4, PC/SC, USB CCID, WebHID, Yubico OTP, YKOATH (RFC 4226, RFC 6238), NIST SP 800-73-4, FIPS 201-3, OpenPGP card 3.4.1, YubiHSM Auth | Decode, read, write and reset a YubiKey's applets, from the browser or through the api's PC/SC relay. |
 | [Kerberos v5](docs/kerberos.md) | RFC 4120, RFC 3961, RFC 3962, RFC 8009, RFC 4121, MS-PAC, MS-SFU | A TGT, a service ticket and the AP exchange against a real KDC, the PAC, delegation, and a decoder. |
