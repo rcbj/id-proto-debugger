@@ -31,6 +31,7 @@
 
 var clientAuth = require("./client_auth");
 var sdJwtVc = require("./sd_jwt_vc");
+var opMetadata = require("./op_metadata");
 var provider = require("./crypto_provider");
 
 var bunyan = require("bunyan");
@@ -497,6 +498,53 @@ function postBounded(vciWallet, request, stageName) {
   });
 }
 
+// The authorization server's challenge_endpoint (draft-ietf-oauth-
+// attestation-based-client-auth-12 section 6.1, an AS metadata member),
+// from the AS document step 1 retrieved; "" when it advertises none.
+function challengeEndpoint() {
+  log.debug("Entering challengeEndpoint().");
+  var doc = null;
+  try {
+    doc = JSON.parse(sdJwtVc.get(opMetadata.DISCOVERY_INFO_KEY) || "null");
+  } catch (e) {
+    doc = null;
+  }
+  var url = doc && typeof doc.challenge_endpoint === "string" ?
+      doc.challenge_endpoint : "";
+  log.debug("Leaving challengeEndpoint(). " + (url || "none"));
+  return url;
+}
+
+// POST to the challenge endpoint (section 6.1): { attestation_challenge }.
+// Bounded like a token request.
+function fetchChallenge(url) {
+  log.debug("Entering fetchChallenge(). " + url);
+  var controller = typeof AbortController === "function" ?
+      new AbortController() : null;
+  var timer = setTimeout(function () {
+    if (controller) controller.abort();
+  }, TOKEN_TIMEOUT_MS);
+  log.debug("Leaving fetchChallenge().");
+  return fetch(url, { method: "POST",
+                      signal: controller ? controller.signal : undefined })
+    .then(function (response) {
+      return response.json().then(function (body) {
+        clearTimeout(timer);
+        var c = body && body.attestation_challenge;
+        if (!response.ok || typeof c !== "string" || !c) {
+          throw new Error("the challenge endpoint " + url + " answered " +
+            response.status + " without an attestation_challenge.");
+        }
+        sdJwtVc.set(KEYS.CHALLENGE, c);
+        return c;
+      });
+    }, function (e) {
+      clearTimeout(timer);
+      throw new Error("the challenge endpoint " + url + " could not be " +
+        "reached: " + e.message);
+    });
+}
+
 // onStage(text), when given, is told each step, so a page's status says
 // what it is waiting on.
 function sendToken(vciWallet, params, endpoint, context, onStage) {
@@ -506,10 +554,13 @@ function sendToken(vciWallet, params, endpoint, context, onStage) {
     if (typeof onStage === "function") onStage(text);
   };
   var m = method();
+  var endpointUrl = m === "attest_jwt_client_auth" ? challengeEndpoint() : "";
+  // Where the challenge in a PoP came from, for the stage text.
+  var source = "";
   var attempt = function (retry) {
-    stage(m === "attest_jwt_client_auth" ? (retry ? "Signing a new Client " +
-      "Attestation PoP with the server's challenge …" : "Signing the " +
-      "Client Attestation PoP …") : "Applying " + m + " …");
+    stage(m === "attest_jwt_client_auth" ? "Signing the Client Attestation " +
+      "PoP" + (source ? " with the challenge from " + source : "") +
+      (retry ? " (retry)" : "") + " …" : "Applying " + m + " …");
     return applyTo(params, endpoint).then(function (applied) {
       var name = "token request, " + m + (retry ? ", challenge retry" : "");
       stage("Waiting for the token endpoint (" + name + ") …");
@@ -523,19 +574,45 @@ function sendToken(vciWallet, params, endpoint, context, onStage) {
           if (!retry && err === "use_attestation_challenge" &&
               m === "attest_jwt_client_auth") {
             log.debug("sendToken(): retrying with the server's challenge.");
-            if (!sdJwtVc.get(KEYS.CHALLENGE)) {
-              stage("The server asked for a challenge and its " +
-                "OAuth-Client-Attestation-Challenge header could not be " +
-                "read (not exposed to the page by CORS?); retrying anyway …");
+            var fromHeader = clientAuth.challengeOf(
+              headersLowerOf(result.response));
+            if (fromHeader) {
+              source = "the OAuth-Client-Attestation-Challenge header";
+              return attempt(true);
             }
+            if (endpointUrl) {
+              // Section 6.1: the header is the server's to send and the
+              // page's to read only if CORS exposes it; the endpoint is
+              // the specification's other source.
+              stage("The server asked for a challenge and its header " +
+                "could not be read; fetching one from challenge_endpoint …");
+              return fetchChallenge(endpointUrl).then(function () {
+                source = "challenge_endpoint (the header was not readable)";
+                return attempt(true);
+              });
+            }
+            stage("The server asked for a challenge, its " +
+              "OAuth-Client-Attestation-Challenge header could not be read " +
+              "(not exposed by CORS?) and its metadata names no " +
+              "challenge_endpoint; retrying anyway …");
+            sdJwtVc.set(KEYS.CHALLENGE, "");
             return attempt(true);
           }
+          result.challengeSource = source;
           result.applied = applied;
           return result;
         });
     });
   };
   log.debug("Leaving sendToken().");
+  if (endpointUrl) {
+    // Up front, so the first PoP already carries one (section 6.1).
+    stage("Fetching a challenge from challenge_endpoint …");
+    return fetchChallenge(endpointUrl).then(function () {
+      source = "challenge_endpoint";
+      return attempt(false);
+    });
+  }
   return attempt(false);
 }
 
@@ -543,6 +620,7 @@ module.exports = {
   KEYS: KEYS,
   sendToken: sendToken,
   TOKEN_TIMEOUT_MS: TOKEN_TIMEOUT_MS,
+  challengeEndpoint: challengeEndpoint,
   KEY_MATERIAL: KEY_MATERIAL,
   SECRET_FIELD: SECRET_FIELD,
   method: method,
