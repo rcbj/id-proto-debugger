@@ -305,24 +305,13 @@ function onClear() {
 // letting a decryption attempt fail with something that names AES.
 function reportCryptoAvailability() {
   log.debug("Entering reportCryptoAvailability().");
-  var available = !!(typeof globalThis !== "undefined" && globalThis.crypto &&
-      globalThis.crypto.subtle);
+  // Since #463 decryption is crypto_provider.js's, pure JS, so it works on
+  // every origin and there is nothing to warn about. The note is cleared,
+  // so a page cached from an older build does not keep a stale warning.
   var note = el("krb_crypto_note");
-  if (!note) {
-    log.debug("Leaving reportCryptoAvailability().");
-    return;
-  }
-  if (available) {
+  if (note) {
     note.textContent = "";
-    log.debug("Leaving reportCryptoAvailability().");
-    return;
   }
-  note.textContent = "This page is not in a secure context, so Web Crypto is " +
-      "unavailable and nothing " +
-    "can be decrypted here. Decoding the structure still works — that is " +
-        "arithmetic over the bytes. " +
-    "Load this page over https (or from localhost) to supply keys.";
-  note.className = "krb-note krb-bad";
   log.debug("Leaving reportCryptoAvailability().");
 }
 
