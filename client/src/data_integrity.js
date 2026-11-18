@@ -582,14 +582,18 @@ async function createProof(doc, opts) {
   var vd = await verifyData(row, proof, unsecured, o.privateJwk, "document",
                             o.documentLoader);
   var key = importJwk(o.privateJwk);
+  // ECDSA is hedged by default (crypto_provider.js); opts.deterministic
+  // asks for plain RFC 6979, which only a known-answer test needs.
+  var signOpts = { deterministic: !!o.deterministic };
   if (row.encoding === "jws") {
     var encoded = cbytes.bytesToB64u(cbytes.strBytes(
         JSON.stringify(jwsHeader(prim.jws))));
-    var sig = provider.sign(prim.alg, key, jwsSigningInput(encoded, vd.data));
+    var sig = provider.sign(prim.alg, key, jwsSigningInput(encoded, vd.data),
+                            signOpts);
     proof.jws = encoded + ".." + cbytes.bytesToB64u(sig);
   } else {
     proof.proofValue = "z" + didLib.base58Encode(
-        provider.sign(prim.alg, key, vd.data));
+        provider.sign(prim.alg, key, vd.data, signOpts));
   }
   var out = Object.assign({}, base);
   var existing = toArray(doc.proof);

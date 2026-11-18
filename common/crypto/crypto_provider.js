@@ -43,9 +43,9 @@
 // `webcrypto` is reserved: a later step may add it as an OPTIONAL second
 // backend, chosen per call or per page, and it must then produce output
 // byte-identical to `js` wherever the operation is deterministic (ECDSA is the
-// trap: the `js` backend signs RFC 6979 deterministically, Web Crypto signs
-// with fresh randomness, so for ECDSA "identical" can only mean "each
-// verifies the other's"). THIS FILE NEVER TOUCHES WEB CRYPTO — the test
+// trap: both sign with fresh randomness — the `js` backend hedges RFC
+// 6979 unless opts.deterministic — so for ECDSA "identical" can only mean
+// "each verifies the other's"). THIS FILE NEVER TOUCHES WEB CRYPTO — the test
 // asserts its text does not even name it — so it works outside a secure
 // context, which is the point of the whole issue.
 //
@@ -204,8 +204,9 @@ var SIGNERS = {
       keyType: s.family === "ecdsa" ? "ec"
              : s.family === "eddsa" ? "okp" : "rsa",
       curve: s.curve || null, hash: s.hash || null,
-      // RFC 6979 makes the js backend's ECDSA deterministic; PSS salts.
-      deterministic: s.family !== "rsa-pss"
+      // ECDSA is hedged unless opts.deterministic asks for RFC 6979; PSS
+      // salts.
+      deterministic: s.family !== "rsa-pss" && s.family !== "ecdsa"
     });
   }
   var pq = Object.keys(pqc.SIGNATURE_ALGS);
@@ -603,8 +604,14 @@ function rsaSignBackend() {
 //
 //   ECDSA: opts.encoding "raw" (r || s, the default — JOSE and COSE) or
 //          "der" (XML DSig's ECDSA URIs say raw too; X.509 and CMS use DER).
-//          Deterministic RFC 6979 nonces, low-S on secp256k1 and not on the
-//          NIST curves — exactly what jws.js's js backend emits today.
+//          HEDGED nonces by default: RFC 6979 section 3.6 with fresh
+//          randomness as the additional data, so every signature is
+//          unique, as a Web Crypto one is. A protocol with a replay check
+//          (GNAP's jwsd, a DPoP proof) refuses a second proof that is
+//          byte-identical to the first, and two identical requests in one
+//          second were exactly that with plain RFC 6979.
+//          opts.deterministic: true gives plain RFC 6979, for its vectors.
+//          Low-S on secp256k1 and not on the NIST curves.
 //   HSS-LMS / XMSS / XMSSMT: THE KEY IS MUTATED. key.privateKey is replaced
 //          by the advanced state hbs.js returns, and the caller MUST persist
 //          it before using the signature; signing again from a stale copy
@@ -622,7 +629,8 @@ function sign(alg, key, data, opts) {
     // P-384 key may sign SHA-256), so the curve's usual hash can be
     // overridden. JOSE and COSE never pass it.
     var sig = c.noble.sign(digest(o.hash || signer.hash, msg),
-                           key.privateKey);
+                           key.privateKey,
+                           { extraEntropy: !o.deterministic });
     var raw = concatBytes(bytes.bigToBytes(sig.r, c.size),
                           bytes.bigToBytes(sig.s, c.size));
     log.debug("Leaving sign(). ECDSA.");
