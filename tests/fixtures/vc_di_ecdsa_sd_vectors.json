@@ -1,0 +1,772 @@
+{
+ "_source": {
+  "specification": "W3C Data Integrity ECDSA Cryptosuites v1.0, Appendix A.7 and A.8 (ecdsa-sd-2023), https://www.w3.org/TR/vc-di-ecdsa/",
+  "repository": "https://github.com/w3c/vc-di-ecdsa/tree/4c9e4494c3d06cb42dc801fb1c2664f995efc4c9/TestVectors",
+  "commit": "4c9e4494c3d06cb42dc801fb1c2664f995efc4c9",
+  "context": "https://w3id.org/citizenship/v4rc1, as w3id.org served it on 2026-11-18, which both examples use and the wallet does not ship"
+ },
+ "keyMaterial": {
+  "baseKeyPair": {
+   "publicKeyMultibase": "zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP",
+   "secretKeyMultibase": "z42twTcNeSYcnqg1FLuSFs2bsGH3ZqbRHFmvS9XMsYhjxvHN"
+  },
+  "proofKeyPair": {
+   "publicKeyMultibase": "zDnaeTHfhmSaQKBc7CmdL3K7oYg3D6SC7yowe2eBeVd2DH32r",
+   "secretKeyMultibase": "z42tqvNGyzyXRzotAYn43UhcFtzDUVdxJ7461fwrfhBPLmfY"
+  },
+  "hmacKeyString": "00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF"
+ },
+ "contexts": {
+  "https://w3id.org/citizenship/v4rc1": {
+   "@context": {
+    "@protected": true,
+    "image": {
+     "@id": "https://schema.org/image",
+     "@type": "@id"
+    },
+    "QuantitativeValue": {
+     "@id": "https://schema.org/QuantitativeValue",
+     "@context": {
+      "@protected": true,
+      "unitCode": "https://schema.org/unitCode",
+      "value": "https://schema.org/value"
+     }
+    },
+    "PostalAddress": {
+     "@id": "https://schema.org/PostalAddress",
+     "@context": {
+      "@protected": true,
+      "addressCountry": "https://schema.org/addressCountry",
+      "addressLocality": "https://schema.org/addressLocality",
+      "addressRegion": "https://schema.org/addressRegion"
+     }
+    },
+    "Person": {
+     "@id": "https://schema.org/Person",
+     "@context": {
+      "@protected": true,
+      "id": "@id",
+      "type": "@type",
+      "additionalName": "https://schema.org/additionalName",
+      "birthCountry": "https://w3id.org/citizenship#birthCountry",
+      "birthDate": {
+       "@id": "https://schema.org/birthDate",
+       "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+      },
+      "familyName": "https://schema.org/familyName",
+      "gender": "https://schema.org/gender",
+      "givenName": "https://schema.org/givenName",
+      "height": "https://schema.org/height",
+      "image": {
+       "@id": "https://schema.org/image",
+       "@type": "@id"
+      },
+      "maritalStatus": "https://w3id.org/citizenship#maritalStatus",
+      "marriageCertificateNumber": "https://w3id.org/citizenship#marriageCertificateNumber",
+      "marriageLocation": {
+       "@id": "https://w3id.org/citizenship#marriageLocation",
+       "@type": "@id"
+      }
+     }
+    },
+    "PermanentResident": {
+     "@id": "https://w3id.org/citizenship#PermanentResident",
+     "@context": {
+      "@protected": true,
+      "id": "@id",
+      "type": "@type",
+      "commuterClassification": "https://w3id.org/citizenship#commuterClassification",
+      "formerNationality": "https://w3id.org/citizenship#formerNationality",
+      "permanentResidentCard": {
+       "@id": "https://w3id.org/citizenship#permanentResidentCard",
+       "@type": "@id"
+      },
+      "residence": {
+       "@id": "https://w3id.org/citizenship#residence",
+       "@type": "@id"
+      },
+      "residentSince": {
+       "@id": "https://w3id.org/citizenship#residentSince",
+       "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+      }
+     }
+    },
+    "PermanentResidentCard": {
+     "@id": "https://w3id.org/citizenship#PermanentResidentCard",
+     "@context": {
+      "@protected": true,
+      "id": "@id",
+      "type": "@type",
+      "filingLocation": {
+       "@id": "https://w3id.org/citizenship#filingLocation",
+       "@type": "@id"
+      },
+      "identifier": "https://schema.org/identifier",
+      "lprCategory": "https://w3id.org/citizenship#lprCategory",
+      "lprNumber": "https://w3id.org/citizenship#lprNumber",
+      "mrzHash": {
+       "@id": "https://w3id.org/citizenship#mrzHash",
+       "@type": "https://w3id.org/security#multibase"
+      }
+     }
+    },
+    "PermanentResidentCardCredential": "https://w3id.org/citizenship#PermanentResidentCardCredential",
+    "EmployablePerson": {
+     "@id": "https://w3id.org/citizenship#EmployablePerson",
+     "@context": {
+      "@protected": true,
+      "id": "@id",
+      "type": "@type",
+      "commuterClassification": "https://w3id.org/citizenship#commuterClassification",
+      "employmentAuthorizationDocument": {
+       "@id": "https://w3id.org/citizenship#employmentAuthorizationDocument",
+       "@type": "@id"
+      },
+      "formerNationality": "https://w3id.org/citizenship#formerNationality",
+      "residence": {
+       "@id": "https://w3id.org/citizenship#residence",
+       "@type": "@id"
+      },
+      "residentSince": {
+       "@id": "https://w3id.org/citizenship#residentSince",
+       "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+      }
+     }
+    },
+    "EmploymentAuthorizationDocument": {
+     "@id": "https://w3id.org/citizenship#EmploymentAuthorizationDocument",
+     "@context": {
+      "@protected": true,
+      "id": "@id",
+      "type": "@type",
+      "filingLocation": {
+       "@id": "https://w3id.org/citizenship#filingLocation",
+       "@type": "@id"
+      },
+      "identifier": "https://schema.org/identifier",
+      "lprCategory": "https://w3id.org/citizenship#lprCategory",
+      "lprNumber": "https://w3id.org/citizenship#lprNumber",
+      "mrzHash": {
+       "@id": "https://w3id.org/citizenship#mrzHash",
+       "@type": "https://w3id.org/security#multibase"
+      }
+     }
+    },
+    "EmploymentAuthorizationDocumentCredential": "https://w3id.org/citizenship#EmploymentAuthorizationDocumentCredential",
+    "NaturalizedPerson": {
+     "@id": "https://w3id.org/citizenship#NaturalizedPerson",
+     "@context": {
+      "@protected": true,
+      "id": "@id",
+      "type": "@type",
+      "formerNationality": "https://w3id.org/citizenship#formerNationality",
+      "certificateOfNaturalization": {
+       "@id": "https://w3id.org/citizenship#certificateOfNaturalization",
+       "@type": "@id"
+      },
+      "residence": {
+       "@id": "https://w3id.org/citizenship#residence",
+       "@type": "@id"
+      },
+      "residentSince": {
+       "@id": "https://w3id.org/citizenship#residentSince",
+       "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+      },
+      "commuterClassification": "https://w3id.org/citizenship#commuterClassification"
+     }
+    },
+    "CertificateOfNaturalization": {
+     "@id": "https://w3id.org/citizenship#CertificateOfNaturalization",
+     "@context": {
+      "@protected": true,
+      "id": "@id",
+      "type": "@type",
+      "ceremonyDate": {
+       "@id": "https://w3id.org/citizenship#ceremonyDate",
+       "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+      },
+      "ceremonyLocation": {
+       "@id": "https://w3id.org/citizenship#ceremonyLocation",
+       "@type": "@id"
+      },
+      "filingLocation": {
+       "@id": "https://w3id.org/citizenship#filingLocation",
+       "@type": "@id"
+      },
+      "naturalizationLocation": {
+       "@id": "https://w3id.org/citizenship#naturalizationLocation",
+       "@type": "@id"
+      },
+      "naturalizedBy": "https://w3id.org/citizenship#naturalizedBy",
+      "identifier": "https://schema.org/identifier",
+      "insRegistrationNumber": "https://w3id.org/citizenship#insRegistrationNumber"
+     }
+    },
+    "CertificateOfNaturalizationCredential": "https://w3id.org/citizenship#CertificateOfNaturalizationCredential",
+    "Citizen": {
+     "@id": "https://w3id.org/citizenship#Citizen",
+     "@context": {
+      "@protected": true,
+      "id": "@id",
+      "type": "@type",
+      "certificateOfCitizenship": {
+       "@id": "https://w3id.org/citizenship#certificateOfCitizenship",
+       "@type": "@id"
+      }
+     }
+    },
+    "CertificateOfCitizenship": {
+     "@id": "https://w3id.org/citizenship#CertificateOfCitizenship",
+     "@context": {
+      "@protected": true,
+      "id": "@id",
+      "type": "@type",
+      "filingLocation": {
+       "@id": "https://w3id.org/citizenship#filingLocation",
+       "@type": "@id"
+      },
+      "identifier": "https://schema.org/identifier",
+      "ceremonyDate": {
+       "@id": "https://w3id.org/citizenship#ceremonyDate",
+       "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+      },
+      "ceremonyLocation": {
+       "@id": "https://w3id.org/citizenship#ceremonyLocation",
+       "@type": "@id"
+      },
+      "cisRegistrationNumber": "https://w3id.org/citizenship#cisRegistrationNumber"
+     }
+    },
+    "CertificateOfCitizenshipCredential": "https://w3id.org/citizenship#CertificateOfCitizenshipCredential"
+   }
+  }
+ },
+ "examples": {
+  "employ": {
+   "unsigned": {
+    "@context": [
+     "https://www.w3.org/ns/credentials/v2",
+     "https://w3id.org/citizenship/v4rc1"
+    ],
+    "type": [
+     "VerifiableCredential",
+     "EmploymentAuthorizationDocumentCredential"
+    ],
+    "issuer": {
+     "id": "did:key:zDnaegE6RR3atJtHKwTRTWHsJ3kNHqFwv7n9YjTgmU7TyfU76",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgUPr/HwADaAIhG61j/AAAAABJRU5ErkJggg=="
+    },
+    "credentialSubject": {
+     "type": [
+      "Person",
+      "EmployablePerson"
+     ],
+     "givenName": "JOHN",
+     "additionalName": "JACOB",
+     "familyName": "SMITH",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2Ng+M/wHwAEAQH/7yMK/gAAAABJRU5ErkJggg==",
+     "gender": "Male",
+     "residentSince": "2015-01-01",
+     "birthCountry": "Bahamas",
+     "birthDate": "1999-07-17",
+     "employmentAuthorizationDocument": {
+      "type": "EmploymentAuthorizationDocument",
+      "identifier": "83627465",
+      "lprCategory": "C09",
+      "lprNumber": "999-999-999"
+     }
+    },
+    "name": "Employment Authorization Document",
+    "description": "Example Employment Authorization Document.",
+    "validFrom": "2019-12-03T00:00:00Z",
+    "validUntil": "2029-12-03T00:00:00Z"
+   },
+   "mandatoryPointers": [
+    "/issuer"
+   ],
+   "selectivePointers": [
+    "/validFrom",
+    "/validUntil",
+    "/credentialSubject/birthCountry"
+   ],
+   "proofConfig": {
+    "type": "DataIntegrityProof",
+    "cryptosuite": "ecdsa-sd-2023",
+    "created": "2023-08-15T23:36:38Z",
+    "verificationMethod": "did:key:zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP#zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP",
+    "proofPurpose": "assertionMethod",
+    "@context": [
+     "https://www.w3.org/ns/credentials/v2",
+     "https://w3id.org/citizenship/v4rc1"
+    ]
+   },
+   "hmacCanon": [
+    "<did:key:zDnaegE6RR3atJtHKwTRTWHsJ3kNHqFwv7n9YjTgmU7TyfU76> <https://schema.org/image> <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgUPr/HwADaAIhG61j/AAAAABJRU5ErkJggg==> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://schema.org/Person> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/citizenship#EmployablePerson> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://schema.org/additionalName> \"JACOB\" .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://schema.org/birthDate> \"1999-07-17\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://schema.org/familyName> \"SMITH\" .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://schema.org/gender> \"Male\" .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://schema.org/givenName> \"JOHN\" .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://schema.org/image> <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2Ng+M/wHwAEAQH/7yMK/gAAAABJRU5ErkJggg==> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://w3id.org/citizenship#birthCountry> \"Bahamas\" .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://w3id.org/citizenship#employmentAuthorizationDocument> _:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://w3id.org/citizenship#residentSince> \"2015-01-01\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/citizenship#EmploymentAuthorizationDocumentCredential> .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://schema.org/description> \"Example Employment Authorization Document.\" .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://schema.org/name> \"Employment Authorization Document\" .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://www.w3.org/2018/credentials#credentialSubject> _:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://www.w3.org/2018/credentials#issuer> <did:key:zDnaegE6RR3atJtHKwTRTWHsJ3kNHqFwv7n9YjTgmU7TyfU76> .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://www.w3.org/2018/credentials#validFrom> \"2019-12-03T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://www.w3.org/2018/credentials#validUntil> \"2029-12-03T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/citizenship#EmploymentAuthorizationDocument> .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://schema.org/identifier> \"83627465\" .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://w3id.org/citizenship#lprCategory> \"C09\" .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://w3id.org/citizenship#lprNumber> \"999-999-999\" .\n"
+   ],
+   "hashData": {
+    "proofHash": "9c5c9b189f06cfa9d9f21a838ccb9b04316f07ad1a517bfd4955ee28c6a8229c",
+    "mandatoryHash": "a042dc047c236816f49fbe5282a79c5e77abe111e47f4c20203b5064c7f0f059"
+   },
+   "signedBase": {
+    "@context": [
+     "https://www.w3.org/ns/credentials/v2",
+     "https://w3id.org/citizenship/v4rc1"
+    ],
+    "type": [
+     "VerifiableCredential",
+     "EmploymentAuthorizationDocumentCredential"
+    ],
+    "issuer": {
+     "id": "did:key:zDnaegE6RR3atJtHKwTRTWHsJ3kNHqFwv7n9YjTgmU7TyfU76",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgUPr/HwADaAIhG61j/AAAAABJRU5ErkJggg=="
+    },
+    "credentialSubject": {
+     "type": [
+      "Person",
+      "EmployablePerson"
+     ],
+     "givenName": "JOHN",
+     "additionalName": "JACOB",
+     "familyName": "SMITH",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2Ng+M/wHwAEAQH/7yMK/gAAAABJRU5ErkJggg==",
+     "gender": "Male",
+     "residentSince": "2015-01-01",
+     "birthCountry": "Bahamas",
+     "birthDate": "1999-07-17",
+     "employmentAuthorizationDocument": {
+      "type": "EmploymentAuthorizationDocument",
+      "identifier": "83627465",
+      "lprCategory": "C09",
+      "lprNumber": "999-999-999"
+     }
+    },
+    "name": "Employment Authorization Document",
+    "description": "Example Employment Authorization Document.",
+    "validFrom": "2019-12-03T00:00:00Z",
+    "validUntil": "2029-12-03T00:00:00Z",
+    "proof": {
+     "type": "DataIntegrityProof",
+     "cryptosuite": "ecdsa-sd-2023",
+     "created": "2023-08-15T23:36:38Z",
+     "verificationMethod": "did:key:zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP#zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP",
+     "proofPurpose": "assertionMethod",
+     "proofValue": "u2V0AhVhAuNxVr-tkJ6mQ6dYMDTY7ZUMG2ScD5QNiEMopYZ2O0gQZS6PYbjHNvJn07p1fJfDMHB9E9fo5q-yaUM31GbRX4FgjgCQCKnLOGbY_FuM-ASpSkkOxsIR2E8n7Ml2q1UQ6tEwzi5NYIAARIjNEVWZ3iJmqu8zd7v8AESIzRFVmd4iZqrvM3e7_lFhA_ZHsSLNSSWX3oUU-n_oGcFTspvfWM4qEUl6zKIuwyvepZR8C_uFNbTPuFnmqiCg0jMxXThlNf1f8qL41TBsw91hAyS5upfZTQ8cErJRQ2k1V-HNCgpubrXr6zoMAoIebyZcuxIee67qv_ZrZ4_kdKRlxyP_l12hJfWL6JyVqfgO_mVhAXZj32ACuKqYpJ6ZeA0WlrgLfBByc0m3hUlpjQxuTYMJCFnN9I3TQeJ1OQKzdC_dbB3wGU0ptJYCErYvrFJmA1lhAyNcO3meGSzIZ3LPDgxQBygaaxfjbnicU1fV_Nnx2Mg0eCp-kkXVRrdgRpBXhm8wywBfvW6Augf7WcscnESMLEFhAOmJjWQq3-8Tl73vGw_a5zdipbHxNmh8SBhIhPKOaUPOde1bWNl6tYFS9vkuXGydp1hhBo_cjanQ05fGw9uLo_FhA9fH-KZCvWTYczUhjNZQFFkzmoIB9_t0tGXKCbmt57gUd8W9d_EPVftDVd0O5TE9X3VeE-7BKm_K2tyWPXFlVJFhARLaDMNGxLO7GwH7VYFh7a_1JyDH6kMGoclpBo-MkfylQvP5RoLJr9CLpT4EQAdwXsbk7P4JCNFesxcGfIU2l4VhAwpdEub-2iiUOsXqvSUFqinel7tAb4YwyeKN4Tbj2cxvaPalWhVvCfzvJHj-DMTceEAci_CI77LRwcqRbdlO-CFhAK2bSlvLQn_KA1M3sHQK2w4Bl7TbJm220CpqAD0-upGGHx7QsbLIytRA7yIRF9eHzLIlpIHFUbzFqg2zTGpefjVhAAW_fJBia3vp3PCatLgSCrr90p7uNWhQnI9Q9GK3AScQI-q_c74uxHNycco2PdGrjLgMZd2e7Gqkf1hqPxJk6vlhA5-5CCqAnukZxuSbCnixXT5RGFmCgs9bIKMzlAxTZ4eTDRu0Rk1Kt9hQcZuL85KLLdIbD-BzELjiKX5IShWd9lFhA_1FuHFme8jd5zdWmrjSn2xodJEUU0yMIqAl1LmwtES5ae0czYMC4yvJ5SaoWHRCHbRnHe1DnYWBzbx6kz976olhAyFNzACx3-yXniAwbLfLi-mwl3s9WOwqIMy5GVHc7CLkoa2Xv_gD4aJ3wPfbi381Fde_yOgjJK9Ng4oXCK_orXVhACekfid_QolL3mpcMrsVYFM1XCo5B7CrCXDO9iv5HmnC450TTY7x9qjE2JdDLTB6oxkyHV3g16bdBa0YVu4Le-VhAsYGYbvLPt3tx8nz7Q2W4hgeZ2ehMPfYrOGMxklDVepHUKcsVEnEiw2_TSpLqB0W0pkFFTFYcVcN3Qe4keoZiZFhAE9AqnK8Nlrn77Dl9T6rZDnjFbQy9kzIk1YtcgWI-NXGyKqFbxK0gHDZONWZ5PJ3anJg-mWX0fHzl_24bQkhN1FhAkcyVJLSqNG_G5AnpSyi4qYkUka5ifkfmDwzTbZADTrl6hZX8s1oH0_ql_CE-dZsL6gPLgsWKNxHJ3imbfneQS1hAItlRwgLNLb-Spf0gSD9hgXfxbAiqeY_W6KBjH7ptBZ4wTB7ZajeFqhviU56x-sIsqs4fRQtaOkhgLH-0xo8te1hA0PvPUY7BXD8Q2NKydZY4BwMK1-SwPmx6bKDmtz1h8VqU12CX_JHhqCjH2ScrF4uM7WQi2zbpoahc4qGOORFVQlhAvmNmrOxVc3anGkUPhil59g5kK47a_BBOr0aReEu0gkXz158JPNH2MdVSF64vnzDxfZuhuYquReAkYeHbm94SH4FnL2lzc3Vlcg"
+    }
+   },
+   "groupIndexes": {
+    "combinedIndexes": [
+     0,
+     1,
+     2,
+     9,
+     12,
+     13,
+     16,
+     17,
+     18,
+     19
+    ],
+    "mandatoryIndexes": [
+     0,
+     12,
+     13,
+     17
+    ],
+    "nonMandatoryIndexes": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     14,
+     15,
+     16,
+     18,
+     19,
+     20,
+     21,
+     22,
+     23
+    ],
+    "selectiveIndexes": [
+     1,
+     2,
+     9,
+     12,
+     13,
+     16,
+     18,
+     19
+    ]
+   },
+   "adjMandatoryIndexes": {
+    "adjMandatoryIndexes": [
+     0,
+     4,
+     5,
+     7
+    ]
+   },
+   "unsignedReveal": {
+    "@context": [
+     "https://www.w3.org/ns/credentials/v2",
+     "https://w3id.org/citizenship/v4rc1"
+    ],
+    "type": [
+     "VerifiableCredential",
+     "EmploymentAuthorizationDocumentCredential"
+    ],
+    "issuer": {
+     "id": "did:key:zDnaegE6RR3atJtHKwTRTWHsJ3kNHqFwv7n9YjTgmU7TyfU76",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgUPr/HwADaAIhG61j/AAAAABJRU5ErkJggg=="
+    },
+    "validFrom": "2019-12-03T00:00:00Z",
+    "validUntil": "2029-12-03T00:00:00Z",
+    "credentialSubject": {
+     "type": [
+      "Person",
+      "EmployablePerson"
+     ],
+     "birthCountry": "Bahamas"
+    }
+   },
+   "derived": {
+    "@context": [
+     "https://www.w3.org/ns/credentials/v2",
+     "https://w3id.org/citizenship/v4rc1"
+    ],
+    "type": [
+     "VerifiableCredential",
+     "EmploymentAuthorizationDocumentCredential"
+    ],
+    "issuer": {
+     "id": "did:key:zDnaegE6RR3atJtHKwTRTWHsJ3kNHqFwv7n9YjTgmU7TyfU76",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgUPr/HwADaAIhG61j/AAAAABJRU5ErkJggg=="
+    },
+    "validFrom": "2019-12-03T00:00:00Z",
+    "validUntil": "2029-12-03T00:00:00Z",
+    "credentialSubject": {
+     "type": [
+      "Person",
+      "EmployablePerson"
+     ],
+     "birthCountry": "Bahamas"
+    },
+    "proof": {
+     "type": "DataIntegrityProof",
+     "cryptosuite": "ecdsa-sd-2023",
+     "created": "2023-08-15T23:36:38Z",
+     "verificationMethod": "did:key:zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP#zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP",
+     "proofPurpose": "assertionMethod",
+     "proofValue": "u2V0BhVhAuNxVr-tkJ6mQ6dYMDTY7ZUMG2ScD5QNiEMopYZ2O0gQZS6PYbjHNvJn07p1fJfDMHB9E9fo5q-yaUM31GbRX4FgjgCQCKnLOGbY_FuM-ASpSkkOxsIR2E8n7Ml2q1UQ6tEwzi5OGWED9kexIs1JJZfehRT6f-gZwVOym99YzioRSXrMoi7DK96llHwL-4U1tM-4WeaqIKDSMzFdOGU1_V_yovjVMGzD3WEDJLm6l9lNDxwSslFDaTVX4c0KCm5utevrOgwCgh5vJly7Eh57ruq_9mtnj-R0pGXHI_-XXaEl9YvonJWp-A7-ZWEArZtKW8tCf8oDUzewdArbDgGXtNsmbbbQKmoAPT66kYYfHtCxssjK1EDvIhEX14fMsiWkgcVRvMWqDbNMal5-NWEAJ6R-J39CiUvealwyuxVgUzVcKjkHsKsJcM72K_keacLjnRNNjvH2qMTYl0MtMHqjGTIdXeDXpt0FrRhW7gt75WECxgZhu8s-3e3HyfPtDZbiGB5nZ6Ew99is4YzGSUNV6kdQpyxUScSLDb9NKkuoHRbSmQUVMVhxVw3dB7iR6hmJkWEAT0Cqcrw2WufvsOX1PqtkOeMVtDL2TMiTVi1yBYj41cbIqoVvErSAcNk41Znk8ndqcmD6ZZfR8fOX_bhtCSE3UogBYINy79kKRYKPmAHoHNXEECliRVtrBI0BehX7mdFRKDCh4AVgg4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC3-EAAQFBw"
+    }
+   },
+   "verifyNQuads": [
+    "<did:key:zDnaegE6RR3atJtHKwTRTWHsJ3kNHqFwv7n9YjTgmU7TyfU76> <https://schema.org/image> <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgUPr/HwADaAIhG61j/AAAAABJRU5ErkJggg==> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://schema.org/Person> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/citizenship#EmployablePerson> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://w3id.org/citizenship#birthCountry> \"Bahamas\" .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/citizenship#EmploymentAuthorizationDocumentCredential> .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://www.w3.org/2018/credentials#credentialSubject> _:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://www.w3.org/2018/credentials#issuer> <did:key:zDnaegE6RR3atJtHKwTRTWHsJ3kNHqFwv7n9YjTgmU7TyfU76> .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://www.w3.org/2018/credentials#validFrom> \"2019-12-03T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://www.w3.org/2018/credentials#validUntil> \"2029-12-03T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n"
+   ]
+  },
+  "prc": {
+   "unsigned": {
+    "@context": [
+     "https://www.w3.org/ns/credentials/v2",
+     "https://w3id.org/citizenship/v4rc1"
+    ],
+    "type": [
+     "VerifiableCredential",
+     "PermanentResidentCardCredential"
+    ],
+    "issuer": {
+     "id": "did:key:zDnaeTHxNEBZoKaEo6PdA83fq98ebiFvo3X273Ydu4YmV96rg",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4z/DiPwAG0ALnwgz64QAAAABJRU5ErkJggg=="
+    },
+    "name": "Permanent Resident Card",
+    "description": "Permanent Resident Card from Government of Utopia.",
+    "credentialSubject": {
+     "type": [
+      "PermanentResident",
+      "Person"
+     ],
+     "givenName": "JANE",
+     "familyName": "SMITH",
+     "gender": "Female",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4v43hPwAHIgK1v4tX6wAAAABJRU5ErkJggg==",
+     "residentSince": "2015-01-01",
+     "commuterClassification": "C1",
+     "birthCountry": "Arcadia",
+     "birthDate": "1978-07-17",
+     "permanentResidentCard": {
+      "type": [
+       "PermanentResidentCard"
+      ],
+      "identifier": "83627465",
+      "lprCategory": "C09",
+      "lprNumber": "999-999-999"
+     }
+    },
+    "validFrom": "2024-12-16T00:00:00Z",
+    "validUntil": "2025-12-16T23:59:59Z"
+   },
+   "mandatoryPointers": [
+    "/issuer"
+   ],
+   "selectivePointers": [
+    "/validFrom",
+    "/validUntil",
+    "/credentialSubject/birthCountry"
+   ],
+   "proofConfig": {
+    "type": "DataIntegrityProof",
+    "cryptosuite": "ecdsa-sd-2023",
+    "created": "2023-08-15T23:36:38Z",
+    "verificationMethod": "did:key:zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP#zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP",
+    "proofPurpose": "assertionMethod",
+    "@context": [
+     "https://www.w3.org/ns/credentials/v2",
+     "https://w3id.org/citizenship/v4rc1"
+    ]
+   },
+   "hmacCanon": [
+    "<did:key:zDnaeTHxNEBZoKaEo6PdA83fq98ebiFvo3X273Ydu4YmV96rg> <https://schema.org/image> <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4z/DiPwAG0ALnwgz64QAAAABJRU5ErkJggg==> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://schema.org/Person> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/citizenship#PermanentResident> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://schema.org/birthDate> \"1978-07-17\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://schema.org/familyName> \"SMITH\" .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://schema.org/gender> \"Female\" .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://schema.org/givenName> \"JANE\" .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://schema.org/image> <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4v43hPwAHIgK1v4tX6wAAAABJRU5ErkJggg==> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://w3id.org/citizenship#birthCountry> \"Arcadia\" .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://w3id.org/citizenship#commuterClassification> \"C1\" .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://w3id.org/citizenship#permanentResidentCard> _:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://w3id.org/citizenship#residentSince> \"2015-01-01\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/citizenship#PermanentResidentCard> .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://schema.org/identifier> \"83627465\" .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://w3id.org/citizenship#lprCategory> \"C09\" .\n",
+    "_:u4YIOZn1MHES1Z4Ij2hWZG3R4dEYBqg5fHTyDEvYhC38 <https://w3id.org/citizenship#lprNumber> \"999-999-999\" .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/citizenship#PermanentResidentCardCredential> .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://schema.org/description> \"Permanent Resident Card from Government of Utopia.\" .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://schema.org/name> \"Permanent Resident Card\" .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://www.w3.org/2018/credentials#credentialSubject> _:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://www.w3.org/2018/credentials#issuer> <did:key:zDnaeTHxNEBZoKaEo6PdA83fq98ebiFvo3X273Ydu4YmV96rg> .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://www.w3.org/2018/credentials#validFrom> \"2024-12-16T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://www.w3.org/2018/credentials#validUntil> \"2025-12-16T23:59:59Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n"
+   ],
+   "hashData": {
+    "proofHash": "9c5c9b189f06cfa9d9f21a838ccb9b04316f07ad1a517bfd4955ee28c6a8229c",
+    "mandatoryHash": "b76d8d5bf67d27f51597519d19d95809c75e35212cc65291bd71bbe36007f979"
+   },
+   "signedBase": {
+    "@context": [
+     "https://www.w3.org/ns/credentials/v2",
+     "https://w3id.org/citizenship/v4rc1"
+    ],
+    "type": [
+     "VerifiableCredential",
+     "PermanentResidentCardCredential"
+    ],
+    "issuer": {
+     "id": "did:key:zDnaeTHxNEBZoKaEo6PdA83fq98ebiFvo3X273Ydu4YmV96rg",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4z/DiPwAG0ALnwgz64QAAAABJRU5ErkJggg=="
+    },
+    "name": "Permanent Resident Card",
+    "description": "Permanent Resident Card from Government of Utopia.",
+    "credentialSubject": {
+     "type": [
+      "PermanentResident",
+      "Person"
+     ],
+     "givenName": "JANE",
+     "familyName": "SMITH",
+     "gender": "Female",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4v43hPwAHIgK1v4tX6wAAAABJRU5ErkJggg==",
+     "residentSince": "2015-01-01",
+     "commuterClassification": "C1",
+     "birthCountry": "Arcadia",
+     "birthDate": "1978-07-17",
+     "permanentResidentCard": {
+      "type": [
+       "PermanentResidentCard"
+      ],
+      "identifier": "83627465",
+      "lprCategory": "C09",
+      "lprNumber": "999-999-999"
+     }
+    },
+    "validFrom": "2024-12-16T00:00:00Z",
+    "validUntil": "2025-12-16T23:59:59Z",
+    "proof": {
+     "type": "DataIntegrityProof",
+     "cryptosuite": "ecdsa-sd-2023",
+     "created": "2023-08-15T23:36:38Z",
+     "verificationMethod": "did:key:zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP#zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP",
+     "proofPurpose": "assertionMethod",
+     "proofValue": "u2V0AhVhAHADSALdqTIftV6rg8JpqBetOJUiYhCp1jTsAaVF-qJd_mhGLTcwXvsM-n570G4Pc3glX3AhkP1RsjKI2DRsfL1gjgCQCKnLOGbY_FuM-ASpSkkOxsIR2E8n7Ml2q1UQ6tEwzi5NYIAARIjNEVWZ3iJmqu8zd7v8AESIzRFVmd4iZqrvM3e7_lFhA_ZHsSLNSSWX3oUU-n_oGcFTspvfWM4qEUl6zKIuwyvepZR8C_uFNbTPuFnmqiCg0jMxXThlNf1f8qL41TBsw91hANWjhQCr2cssaTDYO1wMMqLGnRO7TxFcndOltI-OokNsUjejb0GWUJEooP0YkelQOeNFHieDgxk7pa25ThjcHvFhAAI-ytGfXsqRvFnJ1Mq4y5AJ_x3RtR4gVwzLQpcRgIQMb9ysgsINRZuIdDTtQptFddfMN8U65scoQr1IWRFZIN1hAOmJjWQq3-8Tl73vGw_a5zdipbHxNmh8SBhIhPKOaUPOde1bWNl6tYFS9vkuXGydp1hhBo_cjanQ05fGw9uLo_FhAG5IuqZeRZJRkhJE3MIS8cd8f4JGGZQIfUwgptKOH7MtIYw92AV2jagebOIL2_3Cj-HrLznhgjmaGflsvwx34L1hAJw-DE5_iHqbLIXbmhVWA99w_ZpTwqz77cj7ceETDdtLjVmte4WdINKjmnRl6rnk-E6ijVUI0MaONqkQra0QK2lhAAQaJTlhQpT1DBusjf1KxFXniWRaqqXrk-R_SWL04BqbiRENgnUaXklmLF71U2hWVuCZu-iCqruJxzhrqt8dAQlhA3chDChv4zbu26MHi3LQ03A21mrDFUBvX2s7p4sAjTiOZ7ZV2XWLvTKvw_oEX7jLyS4-MZNGVXd1DYiadlJMDXlhAoWubJ2Gom3lCihyLvxkhbk0HJxAiv5hn0RoAVajxmqlYMZbQEjStY6OQspce694K50glhZNQAnepDw10_SFk8VhAxrirWhOXcO7y_avMJK5j-9-TolAjjffyniyQVZHmYOj8h_dKxT66GP4Eh8bv_uu_jJ5NB11a6Rsu14QsZ-C0KVhA5-5CCqAnukZxuSbCnixXT5RGFmCgs9bIKMzlAxTZ4eTDRu0Rk1Kt9hQcZuL85KLLdIbD-BzELjiKX5IShWd9lFhAjMYXlVg4vJX4ScingpVTdLrxUXJ-jRLltNCiALQG3Ng52-XV92DMOwK9ZQgdkVE4y_FIRrBuiYkW2OMMclqqX1hA4Q-EnQUsbeeqJFnZNVKsXqLr9S0uTsYlexBlRzQGZVOgnkGL7xFU9K-flCxLXMCtWjbqN1jIWNYMrWiXE5jtf1hArMCwuJE9qQQ_3xtbGawIox3ICeEoEov5_eBVjToFypGYxJwVKjpV5sOmqwvVlzbL4eDFtDr4PBp6dTpFKgJBtVhAKq38O_ZlZ0xZU3mIQTzD_ZRVNlAapvpUG7Arw5j1DRJSK1J3XTmSGh7TuMF7TJx_QYlzubCPb-4dYOnkiQThwlhA5B_LA6AQOYwaCokQPbqmH2BugVSOcjeiayCKxA1Xh2ZL127EpotryXqtDncaXohEk1AcWqUqrddP4Rgb7W1NblhAuWONE7xMGuy5h-D3E-9eCpKQz2nLGC9IwnYVMKXWCV259BlucGg1vzVJLSMhW5tQYyJWrGBfdN8BxVFEhjvyAlhA1U0AVrJ5oXxZG9hYABT4nIzaviDIDYT3wTfEo2-XhQ3QgD_W8dcIFKC1jc6dUPMBksmA1bxFHeqaZWn5DrXYuFhApnisYsVBbQ6TudvT76mt1MHhp55nB7o9gx_8EZ9oN8GEp2UjQMuKYgBPRZyQUGe5zAP0OzxnegIu6rHX1yQ8BVhAY3MMQgEKysMjkdctT3VbCFiOHCiauT4qLC2aXYWm09Bv3rOZOfYU77SzGRlmuub1AO5EJnrkSZDzC0TmySlDtIFnL2lzc3Vlcg"
+    }
+   },
+   "groupIndexes": {
+    "combinedIndexes": [
+     0,
+     1,
+     2,
+     8,
+     16,
+     17,
+     20,
+     21,
+     22,
+     23
+    ],
+    "mandatoryIndexes": [
+     0,
+     16,
+     17,
+     21
+    ],
+    "nonMandatoryIndexes": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     18,
+     19,
+     20,
+     22,
+     23
+    ],
+    "selectiveIndexes": [
+     1,
+     2,
+     8,
+     16,
+     17,
+     20,
+     22,
+     23
+    ]
+   },
+   "adjMandatoryIndexes": {
+    "adjMandatoryIndexes": [
+     0,
+     4,
+     5,
+     7
+    ]
+   },
+   "unsignedReveal": {
+    "@context": [
+     "https://www.w3.org/ns/credentials/v2",
+     "https://w3id.org/citizenship/v4rc1"
+    ],
+    "type": [
+     "VerifiableCredential",
+     "PermanentResidentCardCredential"
+    ],
+    "issuer": {
+     "id": "did:key:zDnaeTHxNEBZoKaEo6PdA83fq98ebiFvo3X273Ydu4YmV96rg",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4z/DiPwAG0ALnwgz64QAAAABJRU5ErkJggg=="
+    },
+    "validFrom": "2024-12-16T00:00:00Z",
+    "validUntil": "2025-12-16T23:59:59Z",
+    "credentialSubject": {
+     "type": [
+      "PermanentResident",
+      "Person"
+     ],
+     "birthCountry": "Arcadia"
+    }
+   },
+   "derived": {
+    "@context": [
+     "https://www.w3.org/ns/credentials/v2",
+     "https://w3id.org/citizenship/v4rc1"
+    ],
+    "type": [
+     "VerifiableCredential",
+     "PermanentResidentCardCredential"
+    ],
+    "issuer": {
+     "id": "did:key:zDnaeTHxNEBZoKaEo6PdA83fq98ebiFvo3X273Ydu4YmV96rg",
+     "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4z/DiPwAG0ALnwgz64QAAAABJRU5ErkJggg=="
+    },
+    "validFrom": "2024-12-16T00:00:00Z",
+    "validUntil": "2025-12-16T23:59:59Z",
+    "credentialSubject": {
+     "type": [
+      "PermanentResident",
+      "Person"
+     ],
+     "birthCountry": "Arcadia"
+    },
+    "proof": {
+     "type": "DataIntegrityProof",
+     "cryptosuite": "ecdsa-sd-2023",
+     "created": "2023-08-15T23:36:38Z",
+     "verificationMethod": "did:key:zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP#zDnaepBuvsQ8cpsWrVKw8fbpGpvPeNSjVPTWoq6cRqaYzBKVP",
+     "proofPurpose": "assertionMethod",
+     "proofValue": "u2V0BhVhAHADSALdqTIftV6rg8JpqBetOJUiYhCp1jTsAaVF-qJd_mhGLTcwXvsM-n570G4Pc3glX3AhkP1RsjKI2DRsfL1gjgCQCKnLOGbY_FuM-ASpSkkOxsIR2E8n7Ml2q1UQ6tEwzi5OGWED9kexIs1JJZfehRT6f-gZwVOym99YzioRSXrMoi7DK96llHwL-4U1tM-4WeaqIKDSMzFdOGU1_V_yovjVMGzD3WEA1aOFAKvZyyxpMNg7XAwyosadE7tPEVyd06W0j46iQ2xSN6NvQZZQkSig_RiR6VA540UeJ4ODGTulrblOGNwe8WEDdyEMKG_jNu7boweLctDTcDbWasMVQG9fazuniwCNOI5ntlXZdYu9Mq_D-gRfuMvJLj4xk0ZVd3UNiJp2UkwNeWEDVTQBWsnmhfFkb2FgAFPicjNq-IMgNhPfBN8Sjb5eFDdCAP9bx1wgUoLWNzp1Q8wGSyYDVvEUd6pplafkOtdi4WECmeKxixUFtDpO529Pvqa3UweGnnmcHuj2DH_wRn2g3wYSnZSNAy4piAE9FnJBQZ7nMA_Q7PGd6Ai7qsdfXJDwFWEBjcwxCAQrKwyOR1y1PdVsIWI4cKJq5PiosLZpdhabT0G_es5k59hTvtLMZGWa65vUA7kQmeuRJkPMLRObJKUO0ogBYINy79kKRYKPmAHoHNXEECliRVtrBI0BehX7mdFRKDCh4AVggVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKyEAAQFBw"
+    }
+   },
+   "verifyNQuads": [
+    "<did:key:zDnaeTHxNEBZoKaEo6PdA83fq98ebiFvo3X273Ydu4YmV96rg> <https://schema.org/image> <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4z/DiPwAG0ALnwgz64QAAAABJRU5ErkJggg==> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://schema.org/Person> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/citizenship#PermanentResident> .\n",
+    "_:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg <https://w3id.org/citizenship#birthCountry> \"Arcadia\" .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/citizenship#PermanentResidentCardCredential> .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://www.w3.org/2018/credentials#credentialSubject> _:u3Lv2QpFgo-YAegc1cQQKWJFW2sEjQF6FfuZ0VEoMKHg .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://www.w3.org/2018/credentials#issuer> <did:key:zDnaeTHxNEBZoKaEo6PdA83fq98ebiFvo3X273Ydu4YmV96rg> .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://www.w3.org/2018/credentials#validFrom> \"2024-12-16T00:00:00Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n",
+    "_:uVkUuBrlOaELGVQWJD4M_qW5bcKEHWGNbOrPA_qAOKKw <https://www.w3.org/2018/credentials#validUntil> \"2025-12-16T23:59:59Z\"^^<http://www.w3.org/2001/XMLSchema#dateTime> .\n"
+   ]
+  }
+ }
+}
