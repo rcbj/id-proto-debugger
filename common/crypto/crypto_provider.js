@@ -515,6 +515,90 @@ function pssParams(hash) {
                             saltLength: md.digestLength });
 }
 
+// ---------------------------------------------------------------------------
+// RSA PRIVATE-KEY SIGNING ON OPENSSL WHERE THERE IS ONE (#463 step 3, keeping
+// issue #302). forge's RSA private-key operation is JavaScript: its blinding
+// comes from forge.random and its modPow has no side-channel hardening. Under
+// node (the api signing SAML and JOSE, and the tests) the same octets are
+// signed by node's crypto instead. In a browser nothing changes: this is
+// never reached, and every RSA signature is forge's, as before.
+//
+// NO ALGORITHM IS LOST (rcbj, 2026-11-18). This is used only for RSA
+// PKCS#1 v1.5 and PSS signing, and ONLY when node's crypto does that exact
+// hash. Anything it cannot do, or any error it raises, falls through to the
+// forge path, which handles every algorithm it handled before. PKCS#1 v1.5
+// is deterministic, so both paths give the same bytes (tests assert it);
+// PSS uses MGF1 over the message hash and a hash-length salt on both.
+//
+// THE MODULE NAME IS HELD IN A VARIABLE because this file is browserified:
+// a literal require of the crypto module would pull crypto-browserify (and
+// elliptic) into every bundle, which tests/jwk_pem_encoding.js refuses. The
+// call is made only when `process.versions.node` says this is node.
+// opts.forceJs skips it, for the test that compares the two.
+// ---------------------------------------------------------------------------
+var NODE_CRYPTO_MODULE = "crypto";
+var nodeCryptoCache;
+function nodeCrypto() {
+  log.debug("Entering nodeCrypto().");
+  if (nodeCryptoCache !== undefined) {
+    log.debug("Leaving nodeCrypto(). Cached.");
+    return nodeCryptoCache;
+  }
+  nodeCryptoCache = null;
+  if (typeof process === "undefined" || !process.versions ||
+      !process.versions.node || typeof require !== "function") {
+    log.debug("Leaving nodeCrypto(). Not node.");
+    return null;
+  }
+  try {
+    var c = require(NODE_CRYPTO_MODULE);
+    if (c && typeof c.sign === "function" &&
+        typeof c.createPrivateKey === "function" &&
+        typeof c.getHashes === "function") {
+      nodeCryptoCache = c;
+    }
+  } catch (e) {
+    log.debug("nodeCrypto(): no crypto module: " + e.message);
+  }
+  log.debug("Leaving nodeCrypto().");
+  return nodeCryptoCache;
+}
+
+// The signature by node's crypto, or null when it does not do this one (the
+// caller then uses forge).
+function nodeRsaSign(signer, key, msg) {
+  log.debug("Entering nodeRsaSign(). hash=" + signer.hash);
+  var c = nodeCrypto();
+  if (!c || c.getHashes().indexOf(signer.hash) === -1) {
+    log.debug("Leaving nodeRsaSign(). Not available.");
+    return null;
+  }
+  try {
+    var k = c.createPrivateKey({ key: keys.exportKey(key, "pkcs8-pem"),
+                                 format: "pem" });
+    var params = { key: k };
+    if (signer.family === "rsa-pss") {
+      params.padding = c.constants.RSA_PKCS1_PSS_PADDING;
+      params.saltLength = forgeMd(signer.hash).digestLength;
+    } else {
+      params.padding = c.constants.RSA_PKCS1_PADDING;
+    }
+    var sig = new Uint8Array(c.sign(signer.hash, msg, params));
+    log.debug("Leaving nodeRsaSign(). OpenSSL.");
+    return sig;
+  } catch (e) {
+    log.debug("Leaving nodeRsaSign(). Falling back: " + e.message);
+    return null;
+  }
+}
+
+// Which path an RSA signature takes here: "node" or "forge". For tests.
+function rsaSignBackend() {
+  log.debug("Entering rsaSignBackend().");
+  log.debug("Leaving rsaSignBackend().");
+  return nodeCrypto() ? "node" : "forge";
+}
+
 // sign(alg, key, data, opts) -> signature bytes.
 //
 //   ECDSA: opts.encoding "raw" (r || s, the default — JOSE and COSE) or
@@ -546,6 +630,11 @@ function sign(alg, key, data, opts) {
       .sign(msg, key.privateKey));
   }
   if (signer.family === "rsa-pkcs1" || signer.family === "rsa-pss") {
+    var viaNode = o.forceJs ? null : nodeRsaSign(signer, key, msg);
+    if (viaNode) {
+      log.debug("Leaving sign(). RSA, OpenSSL.");
+      return viaNode;
+    }
     var priv = keys.toForgeRsa(key, true);
     var md = forgeMd(signer.hash);
     md.update(forge.util.binary.raw.encode(msg));
@@ -1005,6 +1094,7 @@ module.exports = {
   // signatures
   sign: sign,
   verify: verify,
+  rsaSignBackend: rsaSignBackend,
   rawToDerEcdsa: rawToDerEcdsa,
   derToRawEcdsa: derToRawEcdsa,
   // key agreement
