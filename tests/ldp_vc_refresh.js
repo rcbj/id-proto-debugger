@@ -492,33 +492,47 @@ async function test() {
         "both would mean revoking either revoked the other. A=" +
     indexOf(aDoc) + " B=" + indexOf(bDoc));
 
+  // WHAT MAY DIFFER, now that the proof is W3C bbs-2023. Its base proof
+  // carries the HMAC key that relabels its blank nodes, "locally generated"
+  // for each base proof (vc-di-bbs, bbs-2023 base proof), so the PROOF of two
+  // issuances normally differs within one second: the old "BBS Sign draws
+  // no randomness" premise was the pre-W3C envelope's and is gone. The
+  // CREDENTIAL around it is
+  // another matter: only members that exist to be per-issuance may differ,
+  // its status entry and its own `id` (VC Data Model 2.0 section 4.4), plus
+  // the timestamps when the two straddled a second. Anything else differing
+  // is named here, so it is added on purpose.
   const sameSecond = aDoc.proof.created === bDoc.proof.created;
-  if (sameSecond) {
-    // Everything but the status entry and the proof over it: BBS Sign draws no
-    // randomness and this format carries no salts, so with the one per-issuance
-    // member removed the two must still be byte-identical.
-    const strip = function (doc) {
-      const copy = JSON.parse(JSON.stringify(doc));
-      delete copy.credentialStatus;
-      delete copy.proof;
-      return JSON.stringify(copy);
-    };
-    assert.strictEqual(strip(aDoc), strip(bDoc),
-      "two ldp_vc issuances stamped with the same second must differ ONLY in " +
-          "their status entry: BBS Sign draws no randomness and this format " +
-          "carries no salts. If this fails, something ELSE per-issuance has " +
-          "been added — good, but it should be named here.");
-    log.info("[determinism] OK — same second, identical but for the status " +
-             "entry each credential needs of its own.");
-  } else {
-    // The two straddled a second boundary. Not a failure and not a pass either:
-    // say so rather than logging OK for a check that did not run.
-    assert.notStrictEqual(aStr, bStr,
-      "these two straddled a second boundary, so they must differ.");
-    log.info("[determinism] straddled a second boundary — the identity check " +
-             "did not run this time; " +
-      "the differing-timestamp case was checked instead.");
+  const perIssuance = ["credentialStatus", "proof", "id"];
+  if (!sameSecond) {
+    perIssuance.push("validFrom", "validUntil", "issuanceDate",
+                     "expirationDate");
   }
+  const differing = Array.from(new Set(Object.keys(aDoc)
+    .concat(Object.keys(bDoc)))).filter(function (k) {
+    return JSON.stringify(aDoc[k]) !== JSON.stringify(bDoc[k]);
+  });
+  const unexpected = differing.filter(function (k) {
+    return perIssuance.indexOf(k) === -1;
+  });
+  assert.deepStrictEqual(unexpected, [],
+    "two ldp_vc issuances " + (sameSecond ? "stamped with the same second "
+      : "") + "may differ only in " + perIssuance.join(", ") + "; these " +
+      "differ too: " + unexpected.join(", ") + " (A=" +
+      JSON.stringify(unexpected.map(function (k) {
+        return aDoc[k];
+      })) + " B=" + JSON.stringify(unexpected.map(function (k) {
+        return bDoc[k];
+      })) + "). If that is deliberate, name it here.");
+  // A reused HMAC key is not forbidden in so many words, but it links every
+  // presentation derived from either credential, so it is reported.
+  if (JSON.stringify(aDoc.proof) === JSON.stringify(bDoc.proof)) {
+    log.warn("[per-issuance] the two base proofs are IDENTICAL: the issuer " +
+             "reused its HMAC key, so presentations from either link.");
+  }
+  log.info("[per-issuance] OK — " + (sameSecond ? "same second; " :
+    "straddled a second; ") + "the two differ in " + differing.join(", ") +
+    ", each of which is per-issuance.");
 
   // --- binding the refresh to a NEW key -------------------------------------
   log.info("=== The other key mode: bind the refresh to a new key ===");
