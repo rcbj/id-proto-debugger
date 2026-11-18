@@ -218,7 +218,14 @@ function rsaSignBackend() {
 // `forceForge` exists for the test that compares the two backends.
 function rsaSign(privateKeyPem, hash, octets, pad, forceForge) {
   log.debug("Entering rsaSign(). hash=" + hash + " pad=" + (pad || 'v1_5'));
-  var key = provider.importKey(String(privateKeyPem));
+  var key;
+  try {
+    key = provider.importKey(String(privateKeyPem));
+  } catch (e) {
+    log.debug("Leaving rsaSign(). Unreadable key.");
+    throw new Error('the signing key is not a PEM private key or a JWK: ' +
+                    e.message);
+  }
   if (key.type !== 'rsa') {
     log.debug("Leaving rsaSign(). Not RSA.");
     throw new Error('rsaSign: the private key is ' + key.type + ', not RSA.');
