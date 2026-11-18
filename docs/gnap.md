@@ -18,8 +18,9 @@ change to that test client does not arrive here, and a change here
 does not go back.
 
 `gnap_client.js` has no DOM and no network. The page decides where
-a prepared request is sent. Signing uses Web Crypto, which is the
-same API in the browser and in node.
+a prepared request is sent. Keys, signatures and digests are
+`common/crypto/crypto_provider.js`'s (#463): pure JS, the same in the
+browser and in node, and on a plain-HTTP page as well.
 
 ## What the page does
 

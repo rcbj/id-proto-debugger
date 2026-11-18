@@ -105,8 +105,9 @@ you are mid-flow and you need a certificate, rather than here because the
 certificate authority IS the task. Note that those links carry `?from=<page>`
 and this page does **not** read it — `pki.html`'s *Return* is a static link to
 the landing page, unlike `jwt_tools.js`'s `setReturnLink()`. Note too that the
-card carries **no** `data-not-on-static` marker: the CA is Web Crypto and pkijs
-in the browser and only the TLS test needs the api, which `#pki_backend_notice`
+card carries **no** `data-not-on-static` marker: the CA is pkijs for the ASN.1
+and `crypto_provider.js` for the cryptography, in the browser, and only the
+TLS test needs the api, which `#pki_backend_notice`
 says on the page itself. See `client/CLAUDE.md`, and the section below for what
 the page does with that one pane when there is no api behind it.
 
@@ -1016,14 +1017,32 @@ sign with one. Both are avoidable:
   `fromSchema()` for **every** algorithm rather than only for the one that needs
   it. One path, so the odd one out is not the untested one.
 * signing sets both AlgorithmIdentifiers to `1.3.101.112`, encodes the TBS,
-  signs it with Web Crypto and drops the result in as the BIT STRING.
-  `verifySignature()` has the mirror image, because `cert.verify()` has the same
-  gap.
+  signs it and drops the result in as the BIT STRING. Since #463 EVERY
+  algorithm is signed this way, by `crypto_provider.js`, with the
+  AlgorithmIdentifier from `signatureAlgorithmIdentifier()`; pkijs no longer
+  signs or verifies anything. `verifySignature()` is the mirror image, and
+  reads the algorithm from the certificate's own AlgorithmIdentifier.
 
 OpenSSL verifies the result, and `tests/pki_x509.js` issues a whole chain
 through it.
 
+### The one thing here that still needs Web Crypto
+
+Since #463 every key, signature and certificate on this page is
+`crypto_provider.js`'s, pure JS, and works on a plain-HTTP origin. **Two
+keystore formats are the exception**: PKCS#12 and password-protected PKCS#8
+are built by PKI.js, which does their cryptography (PBES2, the MAC)
+through its own Web Crypto engine. `key_material.js`'s `requirePkiEngine()`
+refuses them up front on a page with no `crypto.subtle`, saying it needs a
+secure context and that every other format works, rather than failing
+somewhere inside PKI.js. `tests/pki_key_formats.js` holds that sentence.
+
 ### The browser has to have Ed25519 at all
+
+**Historical since #463.** Every signature, verification and key here is
+`crypto_provider.js`'s, pure JS, so the browser's Ed25519 support no longer
+matters to this page. What follows is kept because the flag it describes is
+still passed by `tests/pki_page.js`.
 
 Everything above is about `pkijs`; the *browser's* own Web Crypto is the other
 half, and it is younger than this page. Chrome enabled Ed25519 in the Web
@@ -1397,7 +1416,8 @@ Kerberos, SPNEGO and LDAP — are dropped whole, and their landing cards are
 greyed, because on those sites *every* button on those pages fails at the
 network. This page is not that case and its card stays a live link: the
 certificate authority, all twenty X.509v3 extensions and the whole keystore
-matrix are Web Crypto and pkijs in the browser and work on `idptools.com`
+matrix are pkijs and `crypto_provider.js` in the browser and work on
+`idptools.com`
 exactly as they work here. **One pane cannot**, for the reason this whole
 section gives — a browser cannot choose which client certificate to present,
 cannot be given a truststore, and cannot read the handshake it made — so that
