@@ -126,6 +126,7 @@ function vpSetAllPanes(expand) {
     verifier asked for &mdash; a wallet should not have to be told to minimise &mdash; but the choice is the
     holder&rsquo;s, in both directions: send less and the verifier will refuse, send more and it will accept
     happily and keep what it was given.</p>
+    <p class="vc-note" id="vp_predicates_summary" style="display: none;">&nbsp;</p>
     <table class="vc-table" id="vp_disclosures_table"><tbody></tbody></table>
     <p class="vc-note" id="vp_selection_summary">&nbsp;</p>
     <p>
@@ -176,8 +177,12 @@ function vpSetAllPanes(expand) {
           <td><textarea class="vc-token" rows="6" readonly id="vp_presentation"></textarea></td>
         </tr>
         <tr>
-          <td><div class="tooltip"><label>vp_token</label><span class="tooltiptext">OID4VP section 8.1: a JSON object keyed by the DCQL credential query id, each value an array of presentations.</span></div></td>
+          <td><div class="tooltip"><label>vp_token</label><span class="tooltiptext">OID4VP section 8.1: a JSON object keyed by the DCQL credential query id, each value an array of presentations. Answering a presentation_definition (the OpenID4VP drafts, removed in 1.0) it is the presentation itself, with a presentation_submission beside it.</span></div></td>
           <td><pre class="vc-json" id="vp_vp_token">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>presentation_submission</label><span class="tooltiptext">DIF Presentation Exchange 2.1.1: which Input Descriptor of the presentation_definition the vp_token answers, in which format and at which JSONPath. Sent only when the request carried a presentation_definition (OpenID4VP drafts, removed in 1.0); a DCQL answer has none.</span></div></td>
+          <td><pre class="vc-json" id="vp_presentation_submission">&nbsp;</pre></td>
         </tr>
         <tr>
           <td><div class="tooltip"><label>What they will know</label><span class="tooltiptext">The claim set that follows from exactly these bytes — computed from the presentation, not from what this page intended to send.</span></div></td>

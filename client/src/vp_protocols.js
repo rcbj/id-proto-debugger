@@ -67,6 +67,8 @@ var didLib = require("./did");
 // vc_formats.js chooses.
 var dataIntegrity = require("./data_integrity");
 var vcFormats = require("./vc_formats");
+// The predicate capability this wallet advertises (#474; an extension).
+var vpQuery = require("./vp_query");
 
 var KEYS = {
   // Which protocol the presentation is answered under (see PROTOCOLS).
@@ -604,9 +606,21 @@ function oid4vpRules(params, ctx, out) {
     "nonce present: the answer is bound to this request." :
     "no nonce — nothing would stop the answer being replayed."));
   if (asksForVpToken(params)) {
-    out.push(rule("dcql_query", !!request.dcql, "block", request.dcql ?
-      "a DCQL query says what is wanted." :
-      "no dcql_query, so the request does not say what it wants."));
+    var pd = !request.dcql && !!request.presentationDefinition;
+    out.push(rule("dcql_query", !!request.dcql || pd, "block",
+      request.dcql ? "a DCQL query says what is wanted." : pd ?
+      "no dcql_query; a presentation_definition says what is wanted " +
+      "instead." : "no dcql_query, so the request does not say what it " +
+      "wants."));
+    if (pd) {
+      out.push(rule("presentation_definition", false, ctx.protocol ===
+        PROTOCOL_HAIP ? "block" : "warn", vpQuery.LABEL_PE + ": DIF " +
+        "Presentation Exchange " + vpQuery.PE_VERSION + ", answered as the " +
+        "drafts did — the vp_token is the presentation and a " +
+        "presentation_submission maps it to its Input Descriptor." +
+        (ctx.protocol === PROTOCOL_HAIP ? " HAIP 1.0 profiles OpenID4VP " +
+        "1.0, which has only DCQL." : "")));
+    }
   }
   if (who.prefix === "redirect_uri") {
     out.push(rule("redirect_uri prefix", !request.signed, "block",
@@ -942,6 +956,10 @@ function responseFields(opts) {
   log.debug("Entering responseFields().");
   var fields = {};
   if (opts.vpToken) fields.vp_token = opts.vpToken;
+  // Answering a presentation_definition (OpenID4VP drafts; removed in 1.0).
+  if (opts.presentationSubmission) {
+    fields.presentation_submission = opts.presentationSubmission;
+  }
   if (opts.idToken) fields.id_token = opts.idToken;
   if (opts.error) {
     fields.error = opts.error;
@@ -1060,7 +1078,9 @@ function walletMetadata() {
                                "vp_token id_token"],
     response_modes_supported: ["direct_post", "direct_post.jwt", "fragment",
                                "query", "form_post", "post"],
-    subject_syntax_types_supported: SUBJECT_SYNTAXES
+    subject_syntax_types_supported: SUBJECT_SYNTAXES,
+    // Not OpenID4VP: this debugger's predicate capability (vp_query.js).
+    x_debugger_predicates_supported: vpQuery.walletMetadataExtension()
   };
 }
 

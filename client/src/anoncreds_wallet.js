@@ -36,6 +36,7 @@ var bytes = require("./crypto_bytes");
 var anoncreds = require("./anoncreds");
 var rev = require("./anoncreds_revocation");
 var w3c = require("./anoncreds_w3c");
+var vpQuery = require("./vp_query");
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({
@@ -146,16 +147,25 @@ function nonceFor(oid4vpNonce) {
 // The presentation request for a DCQL credential query: one requested
 // attribute per claim, its referent the attribute's own name (a referent
 // is any string), so a presentation read back without its request still
-// names what it reveals.
-function presentationRequestFor(names, oid4vpNonce, revocationTimestamp) {
+// names what it reveals. `predicates` ([{ referent, name, p_type,
+// p_value }], vp_query.js planFor()) adds requested predicates — the
+// mapping of a Presentation Exchange predicate or of the debugger's DCQL
+// predicate extension (vp_query.js says which parts are standard).
+function presentationRequestFor(names, oid4vpNonce, revocationTimestamp,
+                                predicates) {
   log.debug("Entering presentationRequestFor(). " + names.length);
   var attrs = {};
   names.forEach(function (n) {
     attrs[String(n)] = { name: String(n) };
   });
+  var preds = {};
+  (predicates || []).forEach(function (p) {
+    preds[p.referent] = { name: p.name, p_type: p.p_type,
+                          p_value: p.p_value };
+  });
   var out = { nonce: nonceFor(oid4vpNonce), name: "OpenID4VP request",
               version: "1.0", requested_attributes: attrs,
-              requested_predicates: {} };
+              requested_predicates: preds };
   if (revocationTimestamp !== undefined && revocationTimestamp !== null) {
     out.non_revoked = { from: revocationTimestamp, to: revocationTimestamp };
   }
@@ -180,21 +190,172 @@ function revocationOf(b) {
            tails: bytes.b64uToBytes(b.revocation.tails) };
 }
 
-// Present the held bundle, revealing `names` (attribute names as the
-// credential spells them), to a request with `oid4vpNonce`.
-function present(held, names, linkSecretJwkValue, oid4vpNonce) {
-  log.debug("Entering present().");
-  var b = parseBundle(held);
+// The identifiers an AnonCreds restriction is evaluated against (AnonCreds
+// v1.0, "Restrictions"), for a parsed bundle.
+function restrictionTagsOf(b) {
+  log.debug("Entering restrictionTagsOf().");
+  var schema = b.schema || {};
+  log.debug("Leaving restrictionTagsOf().");
+  return { schema_id: b.schemaId, cred_def_id: b.credDefId,
+           schema_name: schema.name, schema_version: schema.version,
+           schema_issuer_id: schema.issuerId,
+           issuer_id: (b.credentialDefinition || {}).issuerId,
+           rev_reg_id: b.credential.rev_reg_id || undefined };
+}
+
+// Whether a restrictions value (an object, an array meaning OR, $or / $and
+// in the wallet query language's shape) is met by a bundle's tags. An
+// attr::<name>::value / ::marker restriction is checked against the
+// credential's values.
+function restrictionsMet(restrictions, b) {
+  log.debug("Entering restrictionsMet().");
+  if (restrictions === undefined || restrictions === null) {
+    log.debug("Leaving restrictionsMet(). None.");
+    return true;
+  }
+  var tags = restrictionTagsOf(b);
+  var values = b.credential.values || {};
+  var one = function (r) {
+    log.debug("Entering one().");
+    var ok = Object.keys(r || {}).every(function (k) {
+      if (k === "$or") {
+        return [].concat(r[k]).some(one);
+      }
+      if (k === "$and") {
+        return [].concat(r[k]).every(one);
+      }
+      var m = /^attr::(.+)::(value|marker)$/.exec(k);
+      if (m) {
+        var name = Object.keys(values).filter(function (n) {
+          return anoncreds.attrCommonView(n) ===
+            anoncreds.attrCommonView(m[1]);
+        })[0];
+        if (name === undefined) return false;
+        return m[2] === "marker" ? String(r[k]) === "1" :
+          String(values[name].raw) === String(r[k]);
+      }
+      return tags[k] !== undefined && String(tags[k]) === String(r[k]);
+    });
+    log.debug("Leaving one(). " + ok);
+    return ok;
+  };
+  var ok = Array.isArray(restrictions) ? (restrictions.length === 0 ||
+    restrictions.some(one)) : one(restrictions);
+  log.debug("Leaving restrictionsMet(). " + ok);
+  return ok;
+}
+
+// The held credential's attribute for a requested name (AnonCreds: case
+// insensitive, spaces ignored), or undefined.
+function heldAttribute(b, name) {
+  log.debug("Entering heldAttribute().");
+  var values = b.credential.values || {};
+  var hit = Object.keys(values).filter(function (n) {
+    return anoncreds.attrCommonView(n) === anoncreds.attrCommonView(name);
+  })[0];
+  log.debug("Leaving heldAttribute(). " + (hit !== undefined));
+  return hit;
+}
+
+// A claim lookup over a parsed bundle, for vp_query.js: a path's last
+// segment is an attribute name (or an identifier: schema_id, cred_def_id,
+// ...), and a value is the raw value the issuer signed the encoding of.
+function claimLookup(b) {
+  log.debug("Entering claimLookup().");
+  var tags = restrictionTagsOf(b);
+  log.debug("Leaving claimLookup().");
+  return function (path) {
+    var segs = [].concat(path || []).filter(function (x) {
+      return typeof x === "string";
+    });
+    var last = segs[segs.length - 1];
+    if (last === undefined) return { found: false };
+    if (segs.length === 1 && tags[last] !== undefined) {
+      return { found: true, value: tags[last] };
+    }
+    var name = heldAttribute(b, last);
+    return name === undefined ? { found: false } :
+      { found: true, value: b.credential.values[name].raw };
+  };
+}
+
+function compare(value, pType, pValue) {
+  log.debug("Entering compare().");
+  var v = Number(value);
+  var ok = pType === ">=" ? v >= pValue : pType === ">" ? v > pValue :
+    pType === "<=" ? v <= pValue : pType === "<" ? v < pValue : false;
+  log.debug("Leaving compare(). " + ok);
+  return ok;
+}
+
+// Present the held bundle to an AnonCreds presentation request — the
+// AnonCreds specification's own request object, which is where its
+// predicates are standardized, or one this debugger mapped an OpenID4VP
+// request onto. Every requested attribute is revealed and every predicate
+// proven from the one held credential; what the credential cannot answer
+// is refused here, naming it, rather than left for CL to fail on.
+// Answers { presentation, request, legacy? }.
+function presentRequest(held, request, linkSecretJwkValue) {
+  log.debug("Entering presentRequest().");
+  var b = typeof held === "string" ? parseBundle(held) : held;
   var revocation = revocationOf(b);
-  var request = presentationRequestFor(names, oid4vpNonce,
-    revocation ? revocation.list.timestamp : null);
   var entry = { credential: b.credential };
-  if (revocation) {
-    entry.timestamp = revocation.list.timestamp;
+  var nr = request.non_revoked;
+  if (revocation && nr) {
+    var ts = revocation.list.timestamp;
+    if ((nr.from !== undefined && ts < nr.from) ||
+        (nr.to !== undefined && ts > nr.to)) {
+      log.debug("Leaving presentRequest(). Timestamp outside.");
+      throw new Error("the held status list is at " + ts + ", outside the " +
+                      "requested non_revoked interval " +
+                      JSON.stringify(nr) + ".");
+    }
+    entry.timestamp = ts;
     entry.revocationState = rev.revocationState({ credential: b.credential,
       credentialDefinition: b.credentialDefinition,
       revocationRegistryDefinition: revocation.definition,
       revocationStatusList: revocation.list, tailsBytes: revocation.tails });
+  }
+  var prove = [];
+  var refusals = [];
+  Object.keys(request.requested_attributes || {}).forEach(function (ref) {
+    var a = request.requested_attributes[ref];
+    [].concat(a.names || a.name).forEach(function (n) {
+      if (heldAttribute(b, n) === undefined) {
+        refusals.push("the credential has no attribute " +
+                      JSON.stringify(n) + " (requested as " + ref + ")");
+      }
+    });
+    if (!restrictionsMet(a.restrictions, b)) {
+      refusals.push(ref + "'s restrictions are not met by this credential");
+    }
+    prove.push({ entryIndex: 0, referent: ref, isPredicate: false,
+                 reveal: true });
+  });
+  Object.keys(request.requested_predicates || {}).forEach(function (ref) {
+    var p = request.requested_predicates[ref];
+    var name = heldAttribute(b, p.name);
+    if (name === undefined) {
+      refusals.push("the credential has no attribute " +
+                    JSON.stringify(p.name) + " for predicate " + ref);
+    } else if (!/^[+-]?\d+$/.test(String(b.credential.values[name].raw))) {
+      refusals.push(p.name + " is not an integer, so no predicate can be " +
+                    "proven over it");
+    } else if (!compare(b.credential.values[name].raw, p.p_type,
+                        p.p_value)) {
+      refusals.push("the credential does not satisfy " + p.name + " " +
+                    p.p_type + " " + p.p_value);
+    }
+    if (!restrictionsMet(p.restrictions, b)) {
+      refusals.push(ref + "'s restrictions are not met by this credential");
+    }
+    prove.push({ entryIndex: 0, referent: ref, isPredicate: true,
+                 reveal: true });
+  });
+  if (refusals.length) {
+    log.debug("Leaving presentRequest(). Refused.");
+    throw new Error("this credential cannot answer the presentation " +
+                    "request: " + refusals.join("; ") + ".");
   }
   var schemas = {};
   schemas[b.schemaId] = b.schema;
@@ -202,22 +363,50 @@ function present(held, names, linkSecretJwkValue, oid4vpNonce) {
   cds[b.credDefId] = b.credentialDefinition;
   var presentation = anoncreds.createPresentation({
     presentationRequest: request, credentials: [entry],
-    credentialsProve: Object.keys(request.requested_attributes).map(
-      function (ref) {
-        return { entryIndex: 0, referent: ref, isPredicate: false,
-                 reveal: true };
-      }),
-    selfAttest: {}, linkSecret: linkSecretOf(linkSecretJwkValue),
+    credentialsProve: prove, selfAttest: {},
+    linkSecret: linkSecretOf(linkSecretJwkValue),
     schemas: schemas, credentialDefinitions: cds });
   if (b.w3c) {
     var issuerIds = {};
     issuerIds[b.credDefId] = b.w3cCredential.issuer;
-    log.debug("Leaving present(). W3C form.");
+    log.debug("Leaving presentRequest(). W3C form.");
     return { presentation: w3c.toW3cPresentation(presentation, request,
       { issuerIds: issuerIds }), legacy: presentation, request: request };
   }
-  log.debug("Leaving present().");
+  log.debug("Leaving presentRequest().");
   return { presentation: presentation, request: request };
+}
+
+// Present the held bundle, revealing `names` (attribute names as the
+// credential spells them) and proving `predicates` (vp_query.js planFor()
+// anoncredsPredicates), to a request with `oid4vpNonce`.
+function present(held, names, linkSecretJwkValue, oid4vpNonce, predicates) {
+  log.debug("Entering present().");
+  var b = parseBundle(held);
+  var revocation = revocationOf(b);
+  var request = presentationRequestFor(names, oid4vpNonce,
+    revocation ? revocation.list.timestamp : null, predicates);
+  log.debug("Leaving present().");
+  return presentRequest(b, request, linkSecretJwkValue);
+}
+
+// What a presentation PROVES without revealing: one row per requested
+// predicate the presentation answers, { referent, name, p_type, p_value,
+// subProofIndex }.
+function provenPredicates(presentation, request) {
+  log.debug("Entering provenPredicates().");
+  var legacy = legacyPresentation(presentation, request);
+  var rp = (legacy || {}).requested_proof || {};
+  var out = Object.keys((request || {}).requested_predicates || {}).map(
+    function (ref) {
+      var p = request.requested_predicates[ref];
+      var at = (rp.predicates || {})[ref];
+      return { referent: ref, name: p.name, p_type: p.p_type,
+               p_value: p.p_value, answered: !!at,
+               subProofIndex: at ? at.sub_proof_index : null };
+    });
+  log.debug("Leaving provenPredicates(). " + out.length);
+  return out;
 }
 
 // The legacy presentation anoncreds.js verifies, from either form.
@@ -261,6 +450,81 @@ function revealedClaims(presentation, request) {
   return out;
 }
 
+// A Verifier's check of an AnonCreds presentation against the QUERY it sent
+// (vp_query.js), holding no credential: the AnonCreds request is rebuilt
+// from the query item, the OpenID4VP nonce and the attributes the
+// presentation reveals, exactly as the wallet built it, and the CL proof is
+// verified against it — every predicate the item asks for included, so a
+// presentation proving a weaker predicate, or none, fails. opts:
+// { presentation, item, nonce (the OpenID4VP one), anoncredsNonce (a raw
+// AnonCreds request's own, instead), request (a raw AnonCreds request,
+// instead of item), schemas, credentialDefinitions,
+// revocationRegistryDefinitions, revocationStatusLists }.
+// { valid, errors, warnings, request, revealed, predicates }.
+function verifyForQuery(opts) {
+  log.debug("Entering verifyForQuery().");
+  var pres = typeof opts.presentation === "string" ?
+    JSON.parse(opts.presentation) : opts.presentation;
+  var isW3c = w3c.isW3cPresentation(pres);
+  var request = opts.request;
+  if (!request) {
+    var names = Object.keys(revealedClaims(pres, null));
+    var ids = isW3c ? w3c.fromW3cPresentation(pres, null).identifiers :
+      (pres.identifiers || []);
+    var ts = (ids[0] || {}).timestamp;
+    request = vpQuery.anoncredsRequestFor(vpQuery.nominalPlan(opts.item,
+      opts.item.claims.length ? names.filter(function (n) {
+        return opts.item.claims.some(function (c) {
+          return anoncreds.attrCommonView(c.attribute) ===
+            anoncreds.attrCommonView(n);
+        });
+      }).map(function (n) {
+        return opts.item.claims.filter(function (c) {
+          return anoncreds.attrCommonView(c.attribute) ===
+            anoncreds.attrCommonView(n);
+        })[0].attribute;
+      }) : []),
+      { nonce: opts.anoncredsNonce || nonceFor(opts.nonce),
+        revocationTimestamp: ts === null || ts === undefined ? null : ts });
+  }
+  var legacy;
+  try {
+    legacy = legacyPresentation(pres, request);
+  } catch (e) {
+    log.debug("Leaving verifyForQuery(). " + e.message);
+    return { valid: false, errors: [e.message], warnings: [],
+             request: request, revealed: {}, predicates: [] };
+  }
+  var r = anoncreds.verifyPresentation(legacy, {
+    presentationRequest: request, schemas: opts.schemas || {},
+    credentialDefinitions: opts.credentialDefinitions || {},
+    revocationRegistryDefinitions: opts.revocationRegistryDefinitions || {},
+    revocationStatusLists: opts.revocationStatusLists || [] });
+  // The query's restrictions (a PE field on $.cred_def_id, ...), against
+  // the credentials the sub-proofs name: the request carries none, so the
+  // CL verification above does not see them.
+  var restrictions = opts.item && opts.item.restrictions;
+  if (restrictions) {
+    (legacy.identifiers || []).forEach(function (id, i) {
+      var schema = (opts.schemas || {})[id.schema_id] || {};
+      var cd = (opts.credentialDefinitions || {})[id.cred_def_id] || {};
+      var met = restrictionsMet(restrictions, { schemaId: id.schema_id,
+        credDefId: id.cred_def_id, schema: schema, credentialDefinition: cd,
+        credential: { rev_reg_id: id.rev_reg_id, values: {} } });
+      if (!met) {
+        r.valid = false;
+        r.errors = r.errors.concat(["sub-proof " + i + "'s credential (" +
+          id.cred_def_id + ") does not meet the query's restrictions " +
+          JSON.stringify(restrictions) + "."]);
+      }
+    });
+  }
+  log.debug("Leaving verifyForQuery(). " + r.valid);
+  return { valid: r.valid, errors: r.errors, warnings: r.warnings,
+           request: request, revealed: revealedClaims(pres, request),
+           predicates: provenPredicates(pres, request), w3c: isW3c };
+}
+
 function looksLikePresentation(text) {
   log.debug("Entering looksLikePresentation().");
   try {
@@ -287,6 +551,11 @@ module.exports = {
   nonceFor: nonceFor,
   presentationRequestFor: presentationRequestFor,
   present: present,
+  presentRequest: presentRequest,
+  restrictionsMet: restrictionsMet,
+  claimLookup: claimLookup,
+  provenPredicates: provenPredicates,
+  verifyForQuery: verifyForQuery,
   legacyPresentation: legacyPresentation,
   revealedClaims: revealedClaims,
   revocationOf: revocationOf,

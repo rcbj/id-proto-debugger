@@ -63,6 +63,9 @@ var jwpLib = require("./jwp");
 var sdCwt = require("./sd_cwt");
 // AnonCreds presentations (#479).
 var anoncredsWallet = require("./anoncreds_wallet");
+// Predicate queries: Presentation Exchange (OpenID4VP drafts) and the
+// debugger's DCQL predicate extension (#474).
+var vpQuery = require("./vp_query");
 
 var KEYS = {
   // Which way the presentation is being started (see USE_CASES).
@@ -421,7 +424,7 @@ function forgetRequest() {
 var REQUEST_PARAMS = ["client_id", "response_type", "response_mode",
     "response_uri", "redirect_uri",
                       "nonce", "state", "dcql_query", "client_metadata",
-                          "request_uri",
+                          "request_uri", "presentation_definition",
                       "request_uri_method", "request", "scope",
                           "transaction_data", "id_token_type"];
 
@@ -603,6 +606,149 @@ function requiresKeyBinding(credentialQuery) {
   }
   log.debug("Leaving requiresKeyBinding().");
   return credentialQuery.require_cryptographic_holder_binding !== false;
+}
+
+// ---------------------------------------------------------------------------
+// The query, in either language (vp_query.js): DCQL, OpenID4VP 1.0's, with
+// the debugger's predicate extension when a credential query marks it
+// critical; or a DIF Presentation Exchange presentation_definition, which
+// the OpenID4VP DRAFTS carried and 1.0 removed.
+// ---------------------------------------------------------------------------
+function requestQuery(request) {
+  log.debug("Entering requestQuery().");
+  var params = (request && request.params) || {};
+  var dcql = (request && request.dcql) ||
+    requestObjectValue(params, "dcql_query");
+  var pd = (request && request.presentationDefinition) ||
+    requestObjectValue(params, "presentation_definition");
+  log.debug("Leaving requestQuery().");
+  return vpQuery.normalise({ dcql_query: dcql || undefined,
+                             presentation_definition: pd || undefined });
+}
+
+// A claim lookup over a parsed held credential, for vp_query.js planFor():
+// the path walked through the payload and the claims, then — as the rest
+// of this workflow names claims — by claimNameForPath() in the flat map.
+function heldLookup(parsed) {
+  log.debug("Entering heldLookup().");
+  if (!parsed) {
+    log.debug("Leaving heldLookup(). Nothing held.");
+    return function () {
+      return { found: false };
+    };
+  }
+  if (parsed.format === sdJwtVc.FORMAT_ANONCREDS && parsed.anoncreds) {
+    log.debug("Leaving heldLookup(). AnonCreds.");
+    return anoncredsWallet.claimLookup(parsed.anoncreds);
+  }
+  var flat = parsed.claims || {};
+  var view = Object.assign({}, parsed.payload || {}, flat);
+  if (parsed.document) view = Object.assign({}, parsed.document, view);
+  log.debug("Leaving heldLookup().");
+  return function (path) {
+    var segs = [].concat(path || []);
+    var hits = vpQuery.selectAll(view, segs);
+    if (hits.length) return { found: true, value: hits[0] };
+    var name = claimNameForPath(segs.join("."), parsed.format);
+    if (Object.prototype.hasOwnProperty.call(flat, name)) {
+      return { found: true, value: flat[name] };
+    }
+    var last = vpQuery.attributeOf(segs);
+    return Object.prototype.hasOwnProperty.call(flat, last) ?
+      { found: true, value: flat[last] } : { found: false };
+  };
+}
+
+// The workflow's claim name for a query path (DCQL, or the PE path that
+// matched): claimNameForPath() of its string segments. An AnonCreds
+// attribute is flat, so it is the last segment.
+function claimNameOf(path, format) {
+  log.debug("Entering claimNameOf().");
+  var segs = (path || []).filter(function (x) {
+    return typeof x === "string";
+  });
+  if (format === sdJwtVc.FORMAT_ANONCREDS) {
+    log.debug("Leaving claimNameOf(). AnonCreds.");
+    return segs[segs.length - 1] || "";
+  }
+  log.debug("Leaving claimNameOf().");
+  return claimNameForPath(segs.join("."), format);
+}
+
+// The plan for the credential in hand against the request: { model, item,
+// plan, blocking: [text] }. The wallet holds ONE credential, so it answers
+// one query item: DCQL's first credential query (as everywhere in this
+// workflow), or the first Input Descriptor the credential can answer.
+// opts: { allowPreferredDisclosure }.
+function planForRequest(request, parsed, opts) {
+  log.debug("Entering planForRequest().");
+  var model = requestQuery(request);
+  if (!model.items.length) {
+    log.debug("Leaving planForRequest(). No query.");
+    return { model: model, item: null, plan: null,
+             blocking: model.language ? model.errors.slice() : [] };
+  }
+  var held = { format: parsed ? parsed.format : "",
+               lookup: heldLookup(parsed),
+               w3c: !!(parsed && parsed.anoncreds && parsed.anoncreds.w3c),
+               ids: parsed && parsed.anoncreds ? {
+                 schema_id: parsed.anoncreds.schemaId,
+                 cred_def_id: parsed.anoncreds.credDefId,
+                 issuer_id: (parsed.anoncreds.credentialDefinition || {})
+                   .issuerId } : null };
+  var candidates = model.language === "dcql" ? [model.items[0]] :
+    model.items;
+  var plans = candidates.map(function (item) {
+    return { item: item, plan: vpQuery.planFor(model, item, held, opts) };
+  });
+  var chosen = plans.filter(function (x) {
+    return x.plan.ok;
+  })[0] || plans[0];
+  var plan = chosen.plan;
+  var rows = (plan.claims && plan.claims.rows) || [];
+  plan.disclose = plan.disclose.map(function (n) {
+    var row = rows.filter(function (x) {
+      return x.attribute === n && x.status === "available";
+    })[0];
+    return row && parsed ? claimNameOf(row.path, parsed.format) : n;
+  });
+  // What blocks: everything the plan refuses, except — for a plain DCQL
+  // query, no values, no claim_sets and no predicates — a claim this
+  // wallet's presence check cannot find, which stays the advisory it has
+  // always been (the check is approximate for nested paths).
+  var plain = model.language === "dcql" && !chosen.item.claimSets &&
+    !chosen.item.predicates.length && !(chosen.item.extension &&
+      (chosen.item.extension.refuse || chosen.item.extension.present)) &&
+    !chosen.item.claims.some(function (c) {
+      return c.values !== undefined;
+    });
+  var blocking = plain ? [] : plan.refusals.slice();
+  log.debug("Leaving planForRequest(). " + blocking.length +
+            " blocking.");
+  return { model: model, item: chosen.item, plan: plan,
+           blocking: blocking, plain: plain };
+}
+
+// The answer to a presentation_definition (OpenID4VP drafts): the vp_token
+// is the presentation itself and a presentation_submission maps the Input
+// Descriptor to it. An AnonCreds presentation in the W3C form is a
+// Verifiable Presentation (di_vp) carrying a di_vc.
+function peAnswer(model, item, built) {
+  log.debug("Entering peAnswer().");
+  var element = built.vpElement || built.presentation;
+  var entry = { id: item.id, format: built.format, path: "$" };
+  if (built.format === sdJwtVc.FORMAT_ANONCREDS) {
+    element = JSON.parse(built.presentation);
+    if (element && element.type && [].concat(element.type)
+        .indexOf("VerifiablePresentation") !== -1) {
+      entry.format = "di_vp";
+      entry.path_nested = { id: item.id, format: "di_vc",
+                            path: "$.verifiableCredential[0]" };
+    }
+  }
+  log.debug("Leaving peAnswer().");
+  return { vpToken: element, submission: vpQuery.buildSubmission(
+    model.definition.id, [entry]) };
 }
 
 // ---------------------------------------------------------------------------
@@ -915,7 +1061,8 @@ function presentAnoncreds(opts) {
   log.debug("Entering presentAnoncreds().");
   try {
     var made = anoncredsWallet.present(opts.credential, opts.selected || [],
-                                       opts.holderPrivateJwk, opts.nonce);
+                                       opts.holderPrivateJwk, opts.nonce,
+                                       opts.predicates || []);
     log.debug("Leaving presentAnoncreds().");
     return Promise.resolve({ presentation: JSON.stringify(made.presentation),
       prefix: "", sdHash: "", kb: null, vp: null,
@@ -1071,5 +1218,9 @@ module.exports = {
   buildMdocPresentation: buildMdocPresentation,
   signVpJwt: signVpJwt,
   vpToken: vpToken,
-  presentedClaims: presentedClaims
+  presentedClaims: presentedClaims,
+  requestQuery: requestQuery,
+  heldLookup: heldLookup,
+  planForRequest: planForRequest,
+  peAnswer: peAnswer
 };

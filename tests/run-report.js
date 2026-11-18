@@ -3956,6 +3956,18 @@ function buildJobs() {
     env: {},
   });
 
+  // Predicate queries (#474): DIF Presentation Exchange 2.1.1 and its
+  // Predicate Feature, OpenID4VP 1.0 section 6.4.1's values matching, the
+  // debugger's DCQL predicate extension and its crit rule, the fail-closed
+  // plans, and AnonCreds predicates through the new paths against
+  // anoncreds-rs both ways. No services; fails without the witness.
+  jobs.push({
+    name: "Predicate queries (Presentation Exchange, DCQL extension, " +
+        "AnonCreds against anoncreds-rs; in node)",
+    script: "vp_query_engine.js",
+    env: {},
+  });
+
   // VC Barcodes (#480, W3C Working Draft): CBOR-LD 1.0 and ecdsa-xi-2023 —
   // the specification's three printed payloads, its PDF417 and QR text, and
   // Digital Bazaar's released cborld 8.1.0 and ecdsa-xi-2023-cryptosuite
@@ -4220,6 +4232,17 @@ function buildJobs() {
     jobs.push({
       name: "VC Presentation — AnonCreds (anoncreds-rs issuer and verifier)",
       script: "anoncreds_presentation.js",
+      env: {},
+    });
+    // The predicate query page (#474): age >= 18 composed in Presentation
+    // Exchange and in the DCQL extension, proven by the wallet without
+    // revealing age, verified by anoncreds-rs and by the page; and the
+    // wallet's DCQL values matching (OpenID4VP 1.0 section 6.4.1). Needs
+    // the client and the anoncreds witness.
+    jobs.push({
+      name: "VC Predicates page — compose, prove in the wallet, verify; " +
+          "DCQL values matching",
+      script: "vc_predicates_browser.js",
       env: {},
     });
     // The VC Barcodes page (#480): the specification's two examples, a

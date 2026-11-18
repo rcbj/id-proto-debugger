@@ -45,6 +45,7 @@ var bbsBls2020 = require("./bbs_bls_2020");
 var ecdsaSd = require("./ecdsa_sd_2023");
 var didLib = require("./did");
 var vpProtocols = require("./vp_protocols");
+var vpQuery = require("./vp_query");
 var cbor = require("./cbor");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_2',
@@ -137,6 +138,20 @@ function loadState() {
       log.error("the stored credential could not be parsed: " + e.message);
     }
   }
+  // The query in either language, and what this credential makes of it
+  // (vp_query.js): the claims section 6.4.1 (or PE's Input Evaluation)
+  // selects, and the predicates — proven, not disclosed.
+  state.planned = sdJwtVp.planForRequest(state.request, state.parsed);
+  state.language = state.planned.model.language;
+  if (state.planned.plan && (!state.planned.plain ||
+      state.planned.plan.claims.satisfied)) {
+    state.requested = state.planned.plan.disclose.slice();
+  }
+  if (state.language === "pe" && state.planned.item) {
+    state.credentialQuery = null;
+  }
+  state.predicateNames = state.planned.plan ?
+    state.planned.plan.notRevealed.slice() : [];
   // Every Disclosure the credential carries, with whether this verifier asked
   // for it. The default choice is exactly what was asked for and nothing else —
   // a wallet should not have to be told to minimise.
@@ -155,6 +170,12 @@ function loadState() {
   // loud; collapsing the two loses the ability to explain it.
   state.heldFormat = (state.parsed && state.parsed.format) || "";
   state.requestedFormat = sdJwtVp.firstCredentialQueryFormat(state.dcql);
+  if (state.language === "pe" && state.planned.item) {
+    var fmts = state.planned.item.formats;
+    state.requestedFormat = fmts.indexOf(state.heldFormat) !== -1 ||
+      (state.heldFormat === sdJwtVc.FORMAT_ANONCREDS &&
+       fmts.indexOf("di_vc") !== -1) ? state.heldFormat : (fmts[0] || "");
+  }
   // With no format in the query there is nothing to disagree with, so the held
   // credential is the only sensible reading — and defaulting to dc+sd-jwt when
   // nothing is held preserves what this line did before.
@@ -177,14 +198,19 @@ function loadState() {
   state.rows = ldpBbs2020() ? bbs2020Rows(previously) :
       ((state.parsed && state.parsed.disclosures) || []).map(function (d) {
     var requested = state.requested.indexOf(d.name) !== -1;
+    // Proven by a predicate, so never disclosed: the row stays unchecked
+    // and cannot be checked (AnonCreds refuses revealing it as well).
+    var predicated = state.predicateNames.indexOf(d.name) !== -1;
     return {
+      predicated: predicated,
       encoded: d.encoded,
       name: d.error ? "(unreadable)" : (d.arrayElement ?
           "(array element)" : d.name),
       value: d.value,
       error: d.error,
       requested: requested,
-      checked: Object.prototype.toString.call(previously) === "[object Array]"
+      checked: predicated ? false :
+        Object.prototype.toString.call(previously) === "[object Array]"
         ? previously.indexOf(d.encoded) !== -1
         : requested
     };
@@ -430,12 +456,16 @@ function renderDisclosureTable() {
   var rows = state.rows.map(function (r, i) {
     var valueText = (r.value === undefined) ? "" :
       (typeof r.value === "object" ? JSON.stringify(r.value) : String(r.value));
-    var flag = r.requested
+    var flag = r.predicated
+      ? '<span class="vc-ok">proven by a predicate &mdash; not ' +
+        'revealed</span>'
+      : r.requested
       ? '<span class="vc-ok">asked for</span>'
       : '<span class="vc-bad">not asked for</span>';
     return "<tr>" +
       '<td><input type="checkbox" id="vp_disclose_' + i + '"' + (r.checked ?
-          ' checked="checked"' : '') +
+          ' checked="checked"' : '') + (r.predicated ?
+          ' disabled="disabled"' : '') +
       ' onchange="return vcpresentation2.onSelectionChange(' + i +
           ', this.checked);" /></td>' +
       "<td>" + esc(r.name) + "</td>" +
@@ -639,6 +669,20 @@ function buildPresentation() {
               ", holding " + state.heldFormat + ".");
     return Promise.resolve(false);
   }
+  // The query makes this credential unanswerable (a values mismatch, no
+  // claim_sets option, a predicate it cannot prove without disclosing):
+  // nothing is built, so nothing can be sent but a refusal.
+  if (state.planned && state.planned.blocking.length) {
+    state.built = null;
+    setValue("vp_presentation", "");
+    setValue("vp_kb_jwt", "");
+    setValue("vp_assembled_call", "");
+    status("vp_present_status", "This credential is not returned: " +
+      state.planned.blocking.join(" ") + " Refuse to tell the Verifier.",
+      "vc-bad");
+    log.debug("Leaving buildPresentation(). The query refuses it.");
+    return Promise.resolve(false);
+  }
   if (ldpBbs2020()) {
     // MATTR's derivation: frame the credential to the checked claims and
     // prove the issuer signed what is left. The derived proof's nonce is the
@@ -779,7 +823,10 @@ function buildPresentation() {
     // where the answer goes and, under direct_post.jwt, the key it is
     // encrypted to (OpenID4VP 1.0 Appendix B.2.6.1).
     responseUri: vpProtocols.responseTarget(params),
-    encryptionJwk: responseEncryptionKey()
+    encryptionJwk: responseEncryptionKey(),
+    // AnonCreds: the predicates the query asks to be proven (vp_query.js).
+    predicates: state.planned && state.planned.plan ?
+      state.planned.plan.anoncredsPredicates : []
   }).then(function (built) {
     state.built = built;
     setValue("vp_presentation", built.presentation);
@@ -1050,8 +1097,21 @@ function finishResponse() {
       var vpToken = built ? sdJwtVp.vpToken(
           sdJwtVp.firstCredentialQueryId(state.dcql),
           built.vpElement || built.presentation) : null;
+      // A presentation_definition (OpenID4VP drafts) is answered as the
+      // drafts did: the vp_token IS the presentation, and a
+      // presentation_submission maps the Input Descriptor to it.
+      var submission = null;
+      if (built && state.language === "pe" && state.planned.item) {
+        var pe = sdJwtVp.peAnswer(state.planned.model, state.planned.item,
+                                  built);
+        vpToken = pe.vpToken;
+        submission = pe.submission;
+      }
+      state.submission = submission;
+      setJson("vp_presentation_submission", submission);
       var fields = vpProtocols.responseFields({
         vpToken: vpToken, idToken: idToken ? idToken.jwt : "",
+        presentationSubmission: submission,
         state: params.state });
       setJson("vp_vp_token", vpToken);
       var mode = vpProtocols.responseMode(params);
@@ -1168,7 +1228,7 @@ function selectRequestedOnly() {
 
 function selectAll() {
   log.debug("Entering selectAll().");
-  state.rows.forEach(function (r) { r.checked = true; });
+  state.rows.forEach(function (r) { r.checked = !r.predicated; });
   sdJwtVc.setJson(sdJwtVp.KEYS.SELECTED, selectedEncoded());
   renderDisclosureTable();
   buildPresentation().then(function () {
@@ -1255,6 +1315,13 @@ function recordSent(response) {
     sdHash: built.sdHash || "",
     selected: selectedEncoded(),
     requested: state.idTokenOnly ? [] : state.requested,
+    // The query language, the AnonCreds request the presentation answers,
+    // and the predicates proven without disclosure (#474).
+    queryLanguage: state.language || "",
+    anoncredsRequest: built.anoncredsRequest || null,
+    presentationSubmission: state.submission || null,
+    predicates: state.planned && state.planned.plan ?
+      state.planned.plan.predicates : [],
     idToken: r.idToken ? r.idToken.jwt : "",
     idTokenPayload: r.idToken ? r.idToken.payload : null,
     idTokenHeader: r.idToken ? r.idToken.header : null,
@@ -1657,6 +1724,39 @@ function onHolderKeyPasted() {
   return false;
 }
 
+// The predicates being proven, and what is NOT revealed, above the
+// selection: the holder sees what a predicate claims about them before
+// anything is sent.
+function renderPredicateSummary() {
+  log.debug("Entering renderPredicateSummary().");
+  var plan = state.planned && state.planned.plan;
+  var box = el("vp_predicates_summary");
+  if (!box) {
+    log.debug("Leaving renderPredicateSummary(). No element.");
+    return;
+  }
+  if (!plan || !plan.predicates.length) {
+    box.style.display = "none";
+    log.debug("Leaving renderPredicateSummary(). None.");
+    return;
+  }
+  box.style.display = "";
+  var where = state.language === "pe" ? "DIF Presentation Exchange " +
+    vpQuery.PE_VERSION + " (" + vpQuery.LABEL_PE + ")" : vpQuery.LABEL_EXT;
+  setHtml("vp_predicates_summary", '<span class="vc-status ' +
+    (plan.ok ? "vc-ok" : "vc-bad") + '">Predicates (' + esc(where) +
+    "): " + plan.predicates.map(function (p) {
+      return esc(p.description) + " &mdash; " + (p.method === "zk" ?
+        "proven in zero knowledge" : p.method === "issuer-boolean" ?
+        "answered by the issuer's " + esc(p.disclose.join(", ")) :
+        p.method === "disclose" ? "<strong>the value is disclosed</strong>" :
+        "<strong>refused</strong>: " + esc(p.reason));
+    }).join("; ") + ". " + (plan.notRevealed.length ? "<strong>Not " +
+    "revealed:</strong> " + esc(plan.notRevealed.join(", ")) + "." : "") +
+    "</span>");
+  log.debug("Leaving renderPredicateSummary().");
+}
+
 function onload() {
   log.debug("Entering onload().");
   sdJwtVp.renderUseCaseBadge();
@@ -1668,6 +1768,7 @@ function onload() {
   });
 
   loadState();
+  renderPredicateSummary();
   // The DPoP note describes the credential in hand, so it is rendered here
   // rather than only from renderHolderKeyRow(): buildPresentation() returns
   // early when there is no verifier request, and a wallet holding a credential
