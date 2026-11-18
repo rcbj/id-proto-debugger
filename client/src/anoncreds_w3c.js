@@ -22,8 +22,15 @@
 //   * every big number from a decimal string to its big-endian bytes, the
 //     ids (schema_id, cred_def_id, rev_reg_id) and c_list (bytes already)
 //     excepted.
+//   * the REVOCATION members (a credential's r_credential, rev_reg and
+//     witness; a sub-proof's non_revoc_proof) carry amcl BN254 values, which
+//     the legacy JSON writes as amcl's text and the W3C form as bytes, by
+//     type: a G1 or a G2 point as 128 bytes (g1ToBytes / g2ToBytes, the
+//     bytes the challenge hash uses), a group-order element as 32 — so a
+//     member's type comes from its name (REV_SCHEMA), not its length.
 // So conversion is both ways, and the engine signs and verifies unchanged.
-// tests/anoncreds_engine.js holds the bytes to anoncreds-rs's.
+// tests/anoncreds_engine.js holds the bytes to anoncreds-rs's, revocable
+// credentials and presentations included.
 //
 // NO DOM.
 // ---------------------------------------------------------------------------
@@ -31,6 +38,7 @@
 var msgpack = require("./msgpack");
 var anoncreds = require("./anoncreds");
 var cbytes = require("./crypto_bytes");
+var bn = require("./amcl_bn254");
 
 // The log level comes from the same configuration everything else here
 // reads. A caller without one still has to be able to load this module,
@@ -58,6 +66,20 @@ var CONTEXT_V20 = ["https://www.w3.org/ns/credentials/v2",
                      "issuer-dependent#" }];
 var IDS = { schema_id: true, cred_def_id: true, rev_reg_id: true };
 var KIND = { CREDENTIAL: 1, SUB_PROOF: 2, AGGREGATED: 3 };
+// The amcl types of the revocation members, as anoncreds-clsignatures 0.3.2
+// declares them (RevocationSignature, RevocationRegistry, Witness,
+// NonRevocProof). "*goe": every member is a group-order element.
+var REV_SCHEMA = {
+  r_credential: { sigma: "g1", c: "goe", vr_prime_prime: "goe",
+                  witness_signature: { sigma_i: "g2", u_i: "g2",
+                                       g_i: "g1" },
+                  g_i: "g1", i: "int", m2: "goe" },
+  rev_reg: { accum: "g2" },
+  witness: { omega: "g2" },
+  non_revoc_proof: { x_list: "*goe",
+                     c_list: { e: "g1", d: "g1", a: "g1", g: "g1", w: "g2",
+                               s: "g2", u: "g2" } }
+};
 
 // ---------------------------------------------------------------------------
 // Numbers: decimal string <-> big-endian bytes.
@@ -94,6 +116,71 @@ function isByteArray(v) {
   return ok;
 }
 
+function g1FromBytes(b) {
+  log.debug("Entering g1FromBytes().");
+  if (b.length !== 128 || b[0] !== 4) {
+    log.debug("Leaving g1FromBytes(). Not 04||x||y.");
+    throw new Error("a G1 point in the W3C form is 128 bytes beginning " +
+                    "04; this is " + b.length + ".");
+  }
+  var x = BigInt("0x" + cbytes.bytesToHex(b.slice(1, 33)));
+  var y = BigInt("0x" + cbytes.bytesToHex(b.slice(33, 65)));
+  if (x === BigInt(0) && y === BigInt(1)) {
+    log.debug("Leaving g1FromBytes(). Infinity.");
+    return bn.G1.inf;
+  }
+  var pt = { x: bn.Fp.create(x), y: bn.Fp.create(y) };
+  if (!bn.G1.onCurve(pt)) {
+    log.debug("Leaving g1FromBytes(). Off the curve.");
+    throw new Error("a G1 point in the W3C form is not on the curve.");
+  }
+  log.debug("Leaving g1FromBytes().");
+  return pt;
+}
+
+// One revocation value, legacy text -> bytes ("to") or back ("from").
+function revValue(type, v, dir) {
+  log.debug("Entering revValue(). " + type + " " + dir);
+  var out;
+  if (type === "int") out = v;
+  else if (dir === "to") {
+    out = Array.from(type === "g1" ? bn.g1ToBytes(bn.g1FromString(v)) :
+      type === "g2" ? bn.g2ToBytes(bn.g2FromString(v)) :
+      bn.goeToBytes(bn.goeFromString(v)));
+  } else {
+    var b = Uint8Array.from(v);
+    out = type === "g1" ? bn.g1ToString(g1FromBytes(b)) :
+      type === "g2" ? bn.g2ToString(bn.g2FromBytes(b)) :
+      bn.goeToString(BigInt("0x" + cbytes.bytesToHex(b)));
+  }
+  log.debug("Leaving revValue().");
+  return out;
+}
+
+// A revocation member converted by REV_SCHEMA. A member the schema does not
+// name is refused: guessing its type would produce bytes anoncreds-rs
+// reads as something else.
+function revConvert(v, schema, dir, where) {
+  log.debug("Entering revConvert(). " + where);
+  if (v === null || v === undefined) {
+    log.debug("Leaving revConvert(). Absent.");
+    return v;
+  }
+  var out = {};
+  Object.keys(v).forEach(function (k) {
+    if (v[k] === null || v[k] === undefined) return;
+    var t = schema === "*goe" ? "goe" : schema[k];
+    if (t === undefined) {
+      throw new Error(where + "." + k + " is not a member this debugger " +
+                      "knows the amcl type of.");
+    }
+    out[k] = typeof t === "object" || t === "*goe" ?
+      revConvert(v[k], t, dir, where + "." + k) : revValue(t, v[k], dir);
+  });
+  log.debug("Leaving revConvert().");
+  return out;
+}
+
 // The legacy object, with its big numbers as bytes, null members dropped.
 function toWire(v, key) {
   log.debug("Entering toWire(). " + key);
@@ -105,7 +192,9 @@ function toWire(v, key) {
   } else if (v && typeof v === "object") {
     out = {};
     Object.keys(v).forEach(function (k) {
-      if (v[k] !== null && v[k] !== undefined) out[k] = toWire(v[k], k);
+      if (v[k] === null || v[k] === undefined) return;
+      out[k] = REV_SCHEMA[k] ? revConvert(v[k], REV_SCHEMA[k], "to", k) :
+        toWire(v[k], k);
     });
   } else if (typeof v === "string" && /^\d+$/.test(v) && !IDS[key]) {
     out = decToBytes(v);
@@ -127,7 +216,8 @@ function fromWire(v, key) {
   } else if (v && typeof v === "object") {
     out = {};
     Object.keys(v).forEach(function (k) {
-      out[k] = fromWire(v[k], k);
+      out[k] = REV_SCHEMA[k] ? revConvert(v[k], REV_SCHEMA[k], "from", k) :
+        fromWire(v[k], k);
     });
   }
   log.debug("Leaving fromWire().");
