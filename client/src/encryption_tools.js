@@ -41,6 +41,8 @@ var nobleScrypt = require("@noble/hashes/scrypt").scrypt;
 var nobleSha256 = require("@noble/hashes/sha256").sha256;
 var nobleSha512 = require("@noble/hashes/sha512");
 var bytes = require("./crypto_bytes");
+// Key generation and export by crypto_provider.js (#463): pure JS.
+var provider = require("./crypto_provider");
 var symmetric = require("./symmetric_crypto");
 var pk = require("./pk_encryption");
 var jose = require("./jose_jwe");
@@ -923,14 +925,16 @@ function jweGenerateKeys() {
     : { name: 'RSA-OAEP', modulusLength: 2048,
         publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' };
   status('jwe', 'Generating a key pair for ' + alg + '…');
-  crypto.subtle.generateKey(spec, true,
-      spec.name === 'ECDH' ? ['deriveBits'] : ['encrypt', 'decrypt'])
-    .then(async function (pair) {
-      var priv = bytes.derToPem(
-        await crypto.subtle.exportKey('pkcs8', pair.privateKey),
-        'PRIVATE KEY');
-      var pub = bytes.derToPem(
-        await crypto.subtle.exportKey('spki', pair.publicKey), 'PUBLIC KEY');
+  // crypto_provider.js generates the pair (#463): pure JS, every deployment.
+  new Promise(function (resolve) {
+    setTimeout(resolve, 0);
+  }).then(function () {
+    return spec.name === 'ECDH' ? provider.generateKeyPair('ec-p256')
+      : provider.generateKeyPair('rsa', { bits: spec.modulusLength });
+  })
+    .then(function (pair) {
+      var priv = provider.exportKey(pair, 'pkcs8-pem');
+      var pub = provider.exportKey(provider.publicKeyOf(pair), 'spki-pem');
       setField('jwe', 'private_key', priv);
       setField('jwe', 'public_key', pub);
       status('jwe', 'Generated a ' +
