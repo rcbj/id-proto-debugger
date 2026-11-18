@@ -3945,6 +3945,17 @@ function buildJobs() {
     env: {},
   });
 
+  // Gordian Envelope (#480, IETF drafts): dCBOR, the digest tree, UR, and
+  // Schnorr / ECDSA / Ed25519, reproducing bc-envelope 0.43.0's and dcbor
+  // 0.25.2's own test vectors byte for byte, signatures included. No
+  // services.
+  jobs.push({
+    name: "Gordian Envelope (dCBOR, digests, signatures, elision against " +
+        "the Rust crates' vectors, in node)",
+    script: "gordian_envelope_engine.js",
+    env: {},
+  });
+
   // SD-CWT (draft-ietf-spice-sd-cwt-09; #478): the working group's encoded
   // examples (issued, nested, decoys, both KBTs), our issuance and KBTs
   // checked by @auth0/cose and node's SHA-256, and what must fail.
@@ -4162,6 +4173,15 @@ function buildJobs() {
     jobs.push({
       name: "VC Presentation — AnonCreds (anoncreds-rs issuer and verifier)",
       script: "anoncreds_presentation.js",
+      env: {},
+    });
+    // The Gordian Envelope page (#480): issue bc-envelope's example,
+    // present four claims (the root digest unchanged, verified in the page
+    // and in node), another key refused, salted Ed25519. Needs only the
+    // client.
+    jobs.push({
+      name: "Gordian Envelope page — issue, verify and present by elision",
+      script: "gordian_envelope_browser.js",
       env: {},
     });
     // JPT and SD-CWT through the presentation pages (#478, drafts): the

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — Gordian Envelope</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+    <style>
+      .ge-claim { display: block; font-family: monospace; }
+      .ge-wide { width: 95%; font-family: monospace; }
+      .ge-pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; max-height: 420px; overflow: auto; }
+    </style>
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/gordian_envelope_page.js">
+</script>
+
+<p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="vc-title">Gordian Envelope &mdash; a credential you elide rather than re-sign</h3>
+
+<p class="vc-intro"><a href="https://datatracker.ietf.org/doc/draft-mcnally-envelope/" target="_blank" rel="noopener noreferrer">Gordian
+Envelope</a> (IETF <strong>draft</strong>-mcnally-envelope-12, over
+<a href="https://datatracker.ietf.org/doc/draft-mcnally-deterministic-cbor/" target="_blank" rel="noopener noreferrer">dCBOR</a>, draft-18)
+is a Merkle tree of digests: any claim can be <em>elided</em> &mdash; replaced by its digest &mdash; and every digest above it,
+so the issuer's signature over the root, stays the same. A holder presents by eliding; nothing is re-signed. Credentials
+are signed <em>wrapped</em>, so every claim is under the signature. Text form: <code>ur:envelope/&hellip;</code>.
+Held byte for byte to Blockchain Commons' Rust crates' own test vectors. <strong>Nothing on this page is stored.</strong></p>
+
+<div class="step0 dbg-pane" id="pane_ge_read">
+  <legend class="dbg-legend" onclick="return gordianenvelopepage.togglePane('ge_read_fieldset');">Read, Verify and Present</legend>
+  <fieldset name="ge_read_fieldset" id="ge_read_fieldset" style="display: block;">
+    <table border="0"><tbody>
+      <tr><td><div class="tooltip"><label for="ge_input">Envelope: </label><span class="tooltiptext">ur:envelope/&hellip; text, or the hex of its CBOR (d8c8&hellip;).</span></div></td>
+        <td><textarea id="ge_input" name="ge_input" rows="4" class="ge-wide"></textarea></td></tr>
+      <tr><td><input class="btn2" id="ge_read_button" type="button" value="Read" onclick="return gordianenvelopepage.readEnvelope();" /></td>
+        <td><div class="vc-status" id="ge_read_status">&nbsp;</div></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_public_key">Issuer key: </label><span class="tooltiptext">ur:signing-public-key/&hellip;, ur:crypto-pubkeys/&hellip;, or hex: 32 bytes for a Schnorr x-only key, 33 for a compressed ECDSA key.</span></div></td>
+        <td><input type="text" id="ge_public_key" name="ge_public_key" class="ge-wide" />
+          <input class="btn2" id="ge_verify_button" type="button" value="Verify" onclick="return gordianenvelopepage.verifyEnvelope();" /></td></tr>
+      <tr><td></td><td><div class="vc-status" id="ge_verify_status">&nbsp;</div></td></tr>
+      <tr><td><label>Notation: </label></td><td><pre class="ge-pre" id="ge_notation"></pre></td></tr>
+      <tr><td><label>Digest tree: </label></td><td><pre class="ge-pre" id="ge_tree"></pre></td></tr>
+      <tr><td><div class="tooltip"><label>Disclose: </label><span class="tooltiptext">The claims to keep in a presentation. Everything unticked is elided; the root digest, and so the issuer's signature, does not change.</span></div></td>
+        <td><div id="ge_claims"></div>
+          <input class="btn2" id="ge_present_button" type="button" value="Present" onclick="return gordianenvelopepage.presentEnvelope();" /></td></tr>
+      <tr><td></td><td><div class="vc-status" id="ge_present_status">&nbsp;</div></td></tr>
+      <tr><td><label for="ge_presentation">Presentation: </label></td>
+        <td><textarea id="ge_presentation" name="ge_presentation" rows="4" class="ge-wide" readonly></textarea>
+          <input class="btn2" id="ge_read_presentation_button" type="button" value="Verify It" onclick="return gordianenvelopepage.readPresentation();" /></td></tr>
+      <tr><td></td><td><pre class="ge-pre" id="ge_presentation_notation"></pre></td></tr>
+    </tbody></table>
+  </fieldset>
+</div>
+
+<div class="step0 dbg-pane" id="pane_ge_issue">
+  <legend class="dbg-legend" onclick="return gordianenvelopepage.togglePane('ge_issue_fieldset');">Issue a Credential</legend>
+  <fieldset name="ge_issue_fieldset" id="ge_issue_fieldset" style="display: block;">
+    <p class="vc-note"><a href="#" id="ge_example_link" onclick="return gordianenvelopepage.loadExample();">Load bc-envelope's Certificate of Completion example</a> (signed with the Rust tests' public "Alice" seed).</p>
+    <table border="0"><tbody>
+      <tr><td><div class="tooltip"><label for="ge_seed">Issuer seed: </label><span class="tooltiptext">A PrivateKeyBase seed (hex). The signing key is HKDF-SHA-256 of it with the salt "signing", as bc-components derives it.</span></div></td>
+        <td><input type="text" id="ge_seed" name="ge_seed" size="40" onchange="return gordianenvelopepage.showIssuerKey();" />
+          <select id="ge_scheme" name="ge_scheme" onchange="return gordianenvelopepage.showIssuerKey();"><option value="schnorr">Schnorr (BIP-340)</option><option value="ecdsa">ECDSA secp256k1</option><option value="ed25519">Ed25519</option></select>
+          <input class="btn2" id="ge_generate_button" type="button" value="Generate" onclick="return gordianenvelopepage.generateSeed();" /></td></tr>
+      <tr><td><label for="ge_issuer_public_key">Public key: </label></td>
+        <td><input type="text" id="ge_issuer_public_key" name="ge_issuer_public_key" class="ge-wide" readonly /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_subject_arid">Subject ARID: </label><span class="tooltiptext">The credential's subject: a 32-byte ARID (hex). Empty: a random one.</span></div></td>
+        <td><input type="text" id="ge_subject_arid" name="ge_subject_arid" class="ge-wide" /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_issue_claims">Claims: </label><span class="tooltiptext">One "predicate: value" per line. 'isA' in single quotes is a known value; "date 2020-01-01" is a Date; a whole number is a number; anything else is text.</span></div></td>
+        <td><textarea id="ge_issue_claims" name="ge_issue_claims" rows="8" class="ge-wide"></textarea></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_salt">Salt claims: </label><span class="tooltiptext">Give every claim its own salt, so an elided claim cannot be guessed from its digest.</span></div></td>
+        <td><input type="checkbox" id="ge_salt" name="ge_salt" /></td></tr>
+      <tr><td><label for="ge_note">Note: </label></td><td><input type="text" id="ge_note" name="ge_note" class="ge-wide" /></td></tr>
+      <tr><td><input class="btn2" id="ge_issue_button" type="button" value="Issue" onclick="return gordianenvelopepage.issueEnvelope();" /></td>
+        <td><div class="vc-status" id="ge_issue_status">&nbsp;</div></td></tr>
+      <tr><td><label for="ge_issue_output">Credential: </label></td>
+        <td><textarea id="ge_issue_output" name="ge_issue_output" rows="4" class="ge-wide" readonly></textarea>
+          <input class="btn2" id="ge_read_issued_button" type="button" value="Verify It" onclick="return gordianenvelopepage.readIssued();" /></td></tr>
+    </tbody></table>
+  </fieldset>
+</div>
+
+<!--#include file="/partials/vc_tools.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

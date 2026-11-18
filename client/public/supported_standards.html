@@ -879,6 +879,12 @@
               <span class="std-where">Hyperledger AnonCreds Specification v1.0</span></td>
             <td>CL signatures for the holder and the Verifier: the credential request with a blinded link secret, processing the issued credential, and zero-knowledge presentations revealing chosen attributes, proving predicates (&ge;, &le;, &gt;, &lt;) and linking several credentials under one link secret. Held to anoncreds-rs in every direction. Neither OpenID4VCI nor OpenID4VP defines AnonCreds, so the mapping of an OpenID4VP request onto an AnonCreds one is this debugger&rsquo;s. Revocation (non-revocation proofs) is not yet implemented and is refused by name.</td>
           </tr>
+          <tr>
+            <td><a href="https://datatracker.ietf.org/doc/draft-mcnally-envelope/"
+                   target="_blank" rel="noopener noreferrer">Gordian Envelope</a>
+              <span class="std-where">IETF draft (draft-mcnally-envelope-12), over dCBOR (draft-mcnally-deterministic-cbor-18)</span></td>
+            <td>The <a href="/gordian-envelope.html">Gordian Envelope page</a> reads a credential (<code>ur:envelope</code> or CBOR), shows its notation and digest tree, verifies the issuer&rsquo;s Schnorr (BIP-340), ECDSA or Ed25519 signature, presents it with chosen claims elided &mdash; the root digest, and so the signature, unchanged &mdash; and issues one, wrapped then signed, optionally with every claim salted. Held byte for byte to the test vectors of Blockchain Commons&rsquo; Rust crates (bc-envelope 0.43, dcbor 0.25), their signatures included. Not an OpenID4VCI or OpenID4VP format.</td>
+          </tr>
         </table>
 
         <!-- ===================== DID ===================== -->

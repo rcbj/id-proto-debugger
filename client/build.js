@@ -202,6 +202,7 @@ const BUNDLES = [
   ['vc_presentation_3', 'vcpresentation3'],
   ['vc_verifier', 'vcverifier'],
   ['did_tools', 'didtools'],
+  ['gordian_envelope_page', 'gordianenvelopepage'],
   ['webauthn_lab', 'webauthnlab'],
   ['webauthn_analyzer', 'webauthnanalyzer'],
   ['smartcard', 'smartcard'],
