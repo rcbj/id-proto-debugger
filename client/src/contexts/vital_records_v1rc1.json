@@ -1,0 +1,221 @@
+{
+  "@context": {
+    "@protected": true,
+    "id": "@id",
+    "type": "@type",
+    "Attendant": "https://w3id.org/vital-records#Attendant",
+    "BirthCertificate": "https://w3id.org/vital-records#BirthCertificate",
+    "BirthCertificateCredential": "https://w3id.org/vital-records#BirthCertificateCredential",
+    "Certifier": "https://w3id.org/vital-records#Certifier",
+    "Facility": "https://w3id.org/vital-records#Facility",
+    "Father": "https://w3id.org/vital-records#Father",
+    "Mother": "https://w3id.org/vital-records#Mother",
+    "Newborn": "https://w3id.org/vital-records#Newborn",
+    "PregnancyOutcome": "https://w3id.org/vital-records#PregnancyOutcome",
+    "PostalAddress": {
+      "@id": "https://schema.org/PostalAddress",
+      "@context": {
+        "streetAddress": "https://schema.org/streetAddress",
+        "addressRegion": "https://schema.org/addressRegion",
+        "addressLocality": "https://schema.org/addressLocality",
+        "addressCountry": "https://schema.org/addressCountry",
+        "postalCode": "https://schema.org/postalCode"
+      }
+    },
+    "Observation": {
+      "@id": "https://schema.org/Observation",
+      "@context": {
+        "observationDate": {
+          "@id": "https://schema.org/observationDate",
+          "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+        },
+        "variableMeasured": "https://schema.org/variableMeasured",
+        "value": {
+          "@id": "https://schema.org/value",
+          "@type": "http://www.w3.org/2001/XMLSchema#unsignedInt"
+        },
+        "unitCode": "https://schema.org/unitCode",
+        "description": "https://schema.org/description"
+      }
+    },
+    "abnormalCondition": {
+      "@id": "https://w3id.org/vital-records#abnormalCondition",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "apgarScore": "https://w3id.org/vital-records#apgarScore",
+    "attendant": "https://w3id.org/vital-records#attendant",
+    "birthDate": {
+      "@id": "https://w3id.org/vital-records#birthDate",
+      "@type": "http://www.w3.org/2001/XMLSchema#dateTimeStamp"
+    },
+    "birthLength": "https://w3id.org/vital-records#birthLength",
+    "birthLocationDescription": {
+      "@id": "https://w3id.org/vital-records#birthLocationDescription",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "birthOrder": {
+      "@id": "https://w3id.org/vital-records#birthOrder",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "birthPlace": "https://w3id.org/vital-records#birthPlace",
+    "birthPlurality": {
+      "@id": "https://w3id.org/vital-records#birthPlurality",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "birthWeight": "https://w3id.org/vital-records#birthWeight",
+    "breastfed": {
+      "@id": "https://w3id.org/vital-records#breastfed",
+      "@type": "http://www.w3.org/2001/XMLSchema#boolean"
+    },
+    "certificationDate": {
+      "@id": "https://w3id.org/vital-records#certificationDate",
+      "@type": "http://www.w3.org/2001/XMLSchema#dateTimeStamp"
+    },
+    "certifier": "https://w3id.org/vital-records#certifier",
+    "cigaretteUsage": {
+      "@id": "https://w3id.org/vital-records#cigaretteUsage",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "congenitalAnomaly": {
+      "@id": "https://w3id.org/vital-records#congenitalAnomaly",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "county": {
+      "@id": "https://w3id.org/vital-records#county",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "educationLevel": {
+      "@id": "https://w3id.org/vital-records#educationLevel",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "eventDate": {
+      "@id": "https://w3id.org/vital-records#eventDate",
+      "@type": "http://www.w3.org/2001/XMLSchema#dateTimeStamp"
+    },
+    "facility": "https://w3id.org/vital-records#facility",
+    "facilityIdentifier": {
+      "@id": "https://w3id.org/vital-records#facilityIdentifier",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "firstPrenatalVisitDate": {
+      "@id": "https://w3id.org/vital-records#firstPrenatalVisitDate",
+      "@type": "http://www.w3.org/2001/XMLSchema#dateTimeStamp"
+    },
+    "gender": {
+      "@id": "https://w3id.org/vital-records#gender",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "gestationEstimation": "https://w3id.org/vital-records#gestationEstimation",
+    "height": "https://w3id.org/vital-records#height",
+    "hispanicBackground": {
+      "@id": "https://w3id.org/vital-records#hispanicBackground",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "infectionPresentOrTreated": {
+      "@id": "https://w3id.org/vital-records#infectionPresentOrTreated",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "laborAndDeliveryCharacteristic": {
+      "@id": "https://w3id.org/vital-records#laborAndDeliveryCharacteristic",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "laborOnset": {
+      "@id": "https://w3id.org/vital-records#laborOnset",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "lastMensesDate": {
+      "@id": "https://w3id.org/vital-records#lastMensesDate",
+      "@type": "http://www.w3.org/2001/XMLSchema#date"
+    },
+    "lastPrenatalVisitDate": {
+      "@id": "https://w3id.org/vital-records#lastPrenatalVisitDate",
+      "@type": "http://www.w3.org/2001/XMLSchema#dateTimeStamp"
+    },
+    "liveBirth": {
+      "@id": "https://w3id.org/vital-records#liveBirth",
+      "@type": "http://www.w3.org/2001/XMLSchema#boolean"
+    },
+    "mailingAddress": "https://w3id.org/vital-records#mailingAddress",
+    "married": {
+      "@id": "https://w3id.org/vital-records#married",
+      "@type": "http://www.w3.org/2001/XMLSchema#boolean"
+    },
+    "maternalMorbidity": {
+      "@id": "https://w3id.org/vital-records#maternalMorbidity",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "maternalRiskFactor": {
+      "@id": "https://w3id.org/vital-records#maternalRiskFactor",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "medicalRecordNumber": {
+      "@id": "https://w3id.org/vital-records#medicalRecordNumber",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "methodOfDelivery": {
+      "@id": "https://w3id.org/vital-records#methodOfDelivery",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "name": "https://schema.org/name",
+    "namePriorToMarriage": {
+      "@id": "https://w3id.org/vital-records#namePriorToMarriage",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "newborn": "https://w3id.org/vital-records#newborn",
+    "obstetricProcedure": {
+      "@id": "https://w3id.org/vital-records#obstetricProcedure",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "otherOutcome": {
+      "@id": "https://w3id.org/vital-records#otherOutcome",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "parent": "https://w3id.org/vital-records#parent",
+    "paternityAcknowledgement": {
+      "@id": "https://w3id.org/vital-records#paternityAcknowledgement",
+      "@type": "http://www.w3.org/2001/XMLSchema#boolean"
+    },
+    "paymentSource": {
+      "@id": "https://w3id.org/vital-records#paymentSource",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "prePregnancyWeight": "https://w3id.org/vital-records#prePregnancyWeight",
+    "pregnancyOutcome": "https://w3id.org/vital-records#pregnancyOutcome",
+    "race": {
+      "@id": "https://w3id.org/vital-records#race",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "registrationDate": {
+      "@id": "https://w3id.org/vital-records#registrationDate",
+      "@type": "http://www.w3.org/2001/XMLSchema#dateTimeStamp"
+    },
+    "residenceAddress": "https://w3id.org/vital-records#residenceAddress",
+    "socialSecurityNumber": {
+      "@id": "https://w3id.org/vital-records#socialSecurityNumber",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "ssnRequested": {
+      "@id": "https://w3id.org/vital-records#ssnRequested",
+      "@type": "http://www.w3.org/2001/XMLSchema#boolean"
+    },
+    "status": {
+      "@id": "https://w3id.org/vital-records#status",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "title": {
+      "@id": "https://w3id.org/vital-records#title",
+      "@type": "http://www.w3.org/2001/XMLSchema#string"
+    },
+    "totalPrenatalVisits": {
+      "@id": "https://w3id.org/vital-records#totalPrenatalVisits",
+      "@type": "http://www.w3.org/2001/XMLSchema#positiveInteger"
+    },
+    "transferEvent": "https://w3id.org/vital-records#transferEvent",
+    "transferredToFacility": "https://w3id.org/vital-records#transferredToFacility",
+    "weightAtDelivery": "https://w3id.org/vital-records#weightAtDelivery",
+    "foodAssistanceDuringPregnancy": {
+      "@id": "https://w3id.org/vital-records#foodAssistanceDuringPregnancy",
+      "@type": "http://www.w3.org/2001/XMLSchema#boolean"
+    }
+  }
+}

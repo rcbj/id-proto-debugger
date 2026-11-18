@@ -3945,6 +3945,17 @@ function buildJobs() {
     env: {},
   });
 
+  // VC Barcodes (#480, W3C Working Draft): CBOR-LD 1.0 and ecdsa-xi-2023 —
+  // the specification's three printed payloads, its PDF417 and QR text, and
+  // Digital Bazaar's released cborld 8.1.0 and ecdsa-xi-2023-cryptosuite
+  // 1.2.0 byte for byte and both ways. No services.
+  jobs.push({
+    name: "VC Barcodes (CBOR-LD and ecdsa-xi-2023 against the spec's " +
+        "vectors and Digital Bazaar's library, in node)",
+    script: "vc_barcodes_engine.js",
+    env: {},
+  });
+
   // SD-CWT (draft-ietf-spice-sd-cwt-09; #478): the working group's encoded
   // examples (issued, nested, decoys, both KBTs), our issuance and KBTs
   // checked by @auth0/cose and node's SHA-256, and what must fail.
@@ -4162,6 +4173,16 @@ function buildJobs() {
     jobs.push({
       name: "VC Presentation — AnonCreds (anoncreds-rs issuer and verifier)",
       script: "anoncreds_presentation.js",
+      env: {},
+    });
+    // The VC Barcodes page (#480): the specification's two examples, a
+    // changed MRZ refused, and an MRZ and an AAMVA barcode issued in the
+    // page, the drawn QR code read back from its image. Needs only the
+    // client.
+    jobs.push({
+      name: "VC Barcodes page — read, verify and issue (MRZ QR code, " +
+          "AAMVA PDF417)",
+      script: "vc_barcodes_browser.js",
       env: {},
     });
     // JPT and SD-CWT through the presentation pages (#478, drafts): the

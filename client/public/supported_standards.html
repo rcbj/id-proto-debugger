@@ -879,6 +879,13 @@
               <span class="std-where">Hyperledger AnonCreds Specification v1.0</span></td>
             <td>CL signatures for the holder and the Verifier: the credential request with a blinded link secret, processing the issued credential, and zero-knowledge presentations revealing chosen attributes, proving predicates (&ge;, &le;, &gt;, &lt;) and linking several credentials under one link secret. Held to anoncreds-rs in every direction. Neither OpenID4VCI nor OpenID4VP defines AnonCreds, so the mapping of an OpenID4VP request onto an AnonCreds one is this debugger&rsquo;s. Revocation (non-revocation proofs) is not yet implemented and is refused by name.</td>
           </tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/vc-barcodes/"
+                   target="_blank" rel="noopener noreferrer">Verifiable Credential Barcodes v1.0</a>
+              <span class="std-where">W3C Working Draft (22 August 2026), with
+              <a href="https://www.w3.org/TR/cbor-ld/" target="_blank" rel="noopener noreferrer">CBOR-LD 1.0</a></span></td>
+            <td>The <a href="/vc-barcodes.html">VC Barcodes page</a> reads, verifies and issues a credential printed on a physical document: in a QR code beside an MRZ, or inside a driver&rsquo;s licence AAMVA PDF417. The proof is <code>ecdsa-xi-2023</code>, signed over the credential and the optical data the document prints (every MRZ line, or the AAMVA fields its <code>protectedComponentIndex</code> selects), so a copied barcode on another document fails. The credential is CBOR-LD 1.0, registry entry 100; the 7.x and 6.x framings are read too. Where the draft&rsquo;s prose and the published barcodes disagree &mdash; base45 is RFC 9285, P-384 hashes with SHA-256 &mdash; the barcodes are followed, and both are held byte for byte to Digital Bazaar&rsquo;s released library. Not an OpenID4VCI or OpenID4VP format: a barcode is printed, not presented.</td>
+          </tr>
         </table>
 
         <!-- ===================== DID ===================== -->
