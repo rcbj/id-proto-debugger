@@ -298,6 +298,10 @@ function vcSetAllPanes(expand) {
           </td>
         </tr>
         <tr>
+          <td><div class="tooltip"><label>Proof type</label><span class="tooltiptext">The key proof type the Credential Request will use (OID4VCI 1.0 section 8.2.1). jwt is a holder-signed proof of possession, one per holder key; attestation is a single Key Attestation JWT vouching for the holder keys. Only the types the issuer advertises in proof_types_supported are offered, and jwt is the default.</span></div></td>
+          <td><select id="vc_proof_type" onchange="return vcissuance2.onProofTypeChange();"></select></td>
+        </tr>
+        <tr>
           <td><div class="tooltip"><label>c_nonce</label><span class="tooltiptext">A fresh nonce from the issuer's Nonce Endpoint, carried by the proof so the issuer knows the proof was made for this request.</span></div></td>
           <td><code id="vc_nonce">&mdash;</code></td>
         </tr>

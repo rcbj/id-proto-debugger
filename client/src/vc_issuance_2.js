@@ -725,11 +725,12 @@ function holderKeysFor(count) {
 function signProof(nonce) {
   log.debug("Entering signProof().");
   var wanted = Math.min(requestedBatchSize(), issuerBatchSize());
-  log.debug("Leaving signProof(). Signing " + wanted + " proof(s).");
+  var proofType = selectedProofType();
+  log.debug("Leaving signProof(). " + proofType + ", " + wanted + " key(s).");
   return holderKeysFor(wanted)
     .then(function (keys) {
       request.holderKeys = keys;
-      return vciWallet.signProofs(keys, {
+      var opts = {
         clientId: sdJwtVc.get("client_id") || "",
         credentialIssuer: request.config.credentialIssuer,
         nonce: nonce,
@@ -737,7 +738,16 @@ function signProof(nonce) {
           .map(function (a) {
             return a.trim();
           }).filter(Boolean)
-      });
+      };
+      // The `attestation` proof type is ONE Key Attestation JWT vouching for
+      // every holder key; `jwt` is one proof of possession per key.
+      if (proofType === "attestation") {
+        return vciWallet.signAttestationProof(keys, opts)
+          .then(function (r) {
+            return r.proofs;
+          });
+      }
+      return vciWallet.signProofs(keys, opts);
     })
     .then(function (proofs) {
       request.proofs = proofs;
@@ -746,6 +756,76 @@ function signProof(nonce) {
       setValue("vc_proof_jwt", request.proof);
       return request.proof;
     });
+}
+
+// --- the key proof TYPE (OID4VCI 1.0 section 8.2.1) -------------------------
+// The proof types this request may use: the ones the issuer advertised in
+// proof_types_supported that this wallet can produce, jwt always among them
+// (it is the universal default, and an issuer that advertises none still
+// accepts it).
+function availableProofTypes() {
+  log.debug("Entering availableProofTypes().");
+  var advertised = String((request.config || {}).proofTypes || "")
+    .split(",").map(function (t) {
+      return t.trim();
+    }).filter(Boolean);
+  var out = vciWallet.PROOF_TYPES.filter(function (t) {
+    return !advertised.length || advertised.indexOf(t) !== -1;
+  });
+  if (out.indexOf(vciWallet.DEFAULT_PROOF_TYPE) === -1) {
+    out.unshift(vciWallet.DEFAULT_PROOF_TYPE);
+  }
+  log.debug("Leaving availableProofTypes(). " + out.join(","));
+  return out;
+}
+
+// The proof type chosen on the page, defaulting to jwt and never a type the
+// issuer did not advertise.
+function selectedProofType() {
+  log.debug("Entering selectedProofType().");
+  var sel = el("vc_proof_type");
+  var chosen = sel ? sel.value : "";
+  if (availableProofTypes().indexOf(chosen) === -1) {
+    chosen = vciWallet.DEFAULT_PROOF_TYPE;
+  }
+  log.debug("Leaving selectedProofType(). " + chosen);
+  return chosen;
+}
+
+// Fill the proof-type select from what the issuer advertises, keeping the
+// current choice when it is still available and jwt otherwise.
+function populateProofTypeSelect() {
+  log.debug("Entering populateProofTypeSelect().");
+  var sel = el("vc_proof_type");
+  if (!sel) {
+    log.debug("Leaving populateProofTypeSelect(). No select.");
+    return;
+  }
+  var avail = availableProofTypes();
+  var keep = avail.indexOf(sel.value) !== -1 ? sel.value :
+    vciWallet.DEFAULT_PROOF_TYPE;
+  while (sel.firstChild) {
+    sel.removeChild(sel.firstChild);
+  }
+  avail.forEach(function (t) {
+    var opt = document.createElement("option");
+    opt.value = t;
+    opt.textContent = t;
+    if (t === keep) {
+      opt.selected = true;
+    }
+    sel.appendChild(opt);
+  });
+  // A single advertised type is not a choice.
+  sel.disabled = avail.length < 2;
+  log.debug("Leaving populateProofTypeSelect().");
+}
+
+function onProofTypeChange() {
+  log.debug("Entering onProofTypeChange().");
+  prepareRequest();
+  log.debug("Leaving onProofTypeChange().");
+  return false;
 }
 
 function fetchNonce() {
@@ -866,6 +946,7 @@ function buildRequestBody() {
     credentialIdentifier: granted.length ? granted[0] : "",
     credentialConfigurationId: request.config.credentialConfigurationId,
     proofs: request.proofs,
+    proofType: selectedProofType(),
     encryption: request.encryption
   });
   request.body = body;
@@ -1053,7 +1134,11 @@ function onRequestOptionsChange() {
 // ---------------------------------------------------------------------------
 function renderProofJwt(body) {
   log.debug("Entering renderProofJwt().");
-  var jwt = body && body.proofs && body.proofs.jwt && body.proofs.jwt[0];
+  // The proof under whichever type this request carries (jwt or attestation):
+  // one object, one key, so the first array it holds is "the" proof shown.
+  var proofs = (body && body.proofs) || {};
+  var key = Object.keys(proofs)[0];
+  var jwt = key && proofs[key] && proofs[key][0];
   if (!jwt) {
     setValue("jwt_header", "");
     setValue("jwt_payload", "");
@@ -1877,6 +1962,8 @@ function showRequestConfig(idTokenClaims) {
   log.debug("Entering showRequestConfig().");
   var cfg = sdJwtVc.storedRequestConfig();
   request.config = cfg;
+  // The proof-type choices depend on this config, so refill the select now.
+  populateProofTypeSelect();
   setText("vc_credential_endpoint", cfg.credentialEndpoint || "—");
   setText("vc_credential_issuer", cfg.credentialIssuer || "—");
   setText("vc_credential_config",
@@ -1998,6 +2085,7 @@ module.exports = {
   showPreAuthorizedPane: showPreAuthorizedPane,
   pollDeferred: pollDeferred,
   renderProofJwt: renderProofJwt,
+  onProofTypeChange: onProofTypeChange,
   renderAssembledCall: renderAssembledCall,
   denyIssuance: denyIssuance,
   regenerateHolderKey: regenerateHolderKey,

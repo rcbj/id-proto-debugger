@@ -170,10 +170,59 @@ function choices() {
   log.debug("Leaving choices().");
 }
 
+// The key proof TYPES of a Credential Request (OpenID4VCI 1.0 section 8.2.1):
+// `jwt` (the default, one proof of possession per key) and `attestation` (one
+// Key Attestation JWT vouching for the holder keys). node's crypto is the
+// reference the attestation signature is held to.
+async function keyProofTypes() {
+  log.debug("Entering keyProofTypes().");
+  // buildRequestBody keys body.proofs by the proof type, defaulting to jwt.
+  const jwtBody = wallet.buildRequestBody({ credentialConfigurationId: "c",
+    proofs: ["a.b.c"] });
+  assert.deepStrictEqual(Object.keys(jwtBody.proofs), ["jwt"],
+    "the default proof type is jwt");
+  assert.deepStrictEqual(jwtBody.proofs.jwt, ["a.b.c"]);
+  const attBody = wallet.buildRequestBody({ credentialConfigurationId: "c",
+    proofs: ["x.y.z"], proofType: "attestation" });
+  assert.deepStrictEqual(Object.keys(attBody.proofs), ["attestation"],
+    "proofType attestation keys body.proofs by it");
+  const bogusBody = wallet.buildRequestBody({ credentialConfigurationId: "c",
+    proofs: ["x"], proofType: "cwt" });
+  assert.deepStrictEqual(Object.keys(bogusBody.proofs), ["jwt"],
+    "an unsupported proof type falls back to jwt");
+
+  // A Key Attestation JWT: typ keyattestation+jwt, the attester's key in the
+  // header, attested_keys the holder public JWKs, and the c_nonce as nonce.
+  const k1 = await wallet.generateHolderKeyPair("ES256");
+  const k2 = await wallet.generateHolderKeyPair("EdDSA");
+  const made = await wallet.signAttestationProof([k1, k2],
+    { nonce: "c-nonce-123" });
+  assert.strictEqual(made.proofs.length, 1,
+    "one Key Attestation JWT covers every holder key");
+  const att = made.proofs[0];
+  const header = JSON.parse(Buffer.from(att.split(".")[0], "base64url"));
+  const payload = JSON.parse(Buffer.from(att.split(".")[1], "base64url"));
+  assert.strictEqual(header.typ, wallet.KEY_ATTESTATION_TYP,
+    "typ is keyattestation+jwt");
+  assert.deepStrictEqual(header.jwk, made.attesterKey.publicJwk,
+    "the header carries the attester's public key");
+  assert.deepStrictEqual(payload.attested_keys, [k1.publicJwk, k2.publicJwk],
+    "attested_keys are the holder public JWKs");
+  assert.strictEqual(payload.nonce, "c-nonce-123",
+    "the c_nonce travels as the attestation's nonce");
+  assert.ok(typeof payload.iat === "number", "iat is present");
+  // The attestation verifies against the attester key in OpenSSL.
+  const r = verifyJwt(att, made.attesterKey.publicJwk);
+  assert.ok(r.ok, "the Key Attestation JWT verifies: " + r.alg);
+  log.info("PASS the key proof types: jwt (default) and attestation.");
+  log.debug("Leaving keyProofTypes().");
+}
+
 async function main() {
   log.debug("Entering main().");
   choices();
   await everyAlgorithm();
+  await keyProofTypes();
   log.info("holder_key_algs: all checks passed.");
   log.debug("Leaving main().");
 }
