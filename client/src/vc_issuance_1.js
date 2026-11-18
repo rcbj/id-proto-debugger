@@ -325,9 +325,14 @@ function buildConfigRows() {
         'credential_configurations_supported this run asks ' +
     'for. Choosing one rewrites every field in this section from the ' +
         'retrieved metadata, and it is ' +
-    'what step 2 names in the Credential Request. The list appears once a ' +
-        'credential issuer ' +
-    'metadata document has been retrieved.</span></div></td>' +
+    'what step 2 names in the Credential Request. The issuer\'s own ' +
+        'entries come first, once its metadata has been retrieved. Below ' +
+        'them is a built-in example for every format this wallet can ' +
+        'request, each a valid combination of format, type, binding, ' +
+        'signing algorithms and proof types. A built-in entry is NOT one ' +
+        'the issuer offers: OpenID4VCI 1.0 section 8.2 has a request name ' +
+        'an advertised configuration, so edit its id to the issuer\'s, or ' +
+        'expect the issuer to refuse it.</span></div></td>' +
     '<td><select id="vci_credential_configuration_select" ' +
     'onchange="return ' +
         'vcissuance1.onCredentialConfigurationChange();"></select>' +
@@ -479,6 +484,7 @@ function clearConfiguration() {
   opMetadata.clearStorage();
   vciMetadata.clearFields();
   vciMetadata.clearStorage();
+  renderCredentialConfigurations();
   updateHandoffSummary();
   // No credential is named any more, so there is nothing to offer claims for.
   renderClaimsPane();
@@ -497,6 +503,7 @@ function restoreDefaults() {
     opMetadata.markNotDefined(m.name, false);
   });
   vciMetadata.restoreDefaultFields();
+  renderCredentialConfigurations();
   saveConfiguration();
   // The credential configuration id is one of the defaults just restored, and
   // the pane's rows belong to whichever credential it now names.
@@ -531,31 +538,61 @@ function renderCredentialConfigurations() {
   }
   var configs = (vciInfo && vciInfo.credential_configurations_supported) || {};
   var ids = Object.keys(configs);
-  if (!ids.length) {
-    // The chooser now lives among the fields it fills, which are always on
-    // screen, so it cannot simply be hidden: say why it is empty instead.
-    select.innerHTML = "";
-    if (note) {
-      note.textContent = " Retrieve the credential issuer metadata above to see what this issuer offers.";
-      note.className = "vc-note vc-pending";
-    }
-    log.debug("Leaving renderCredentialConfigurations().");
+  var builtIns = vcFormats.builtInFormatIds();
+  var stored = val(vciMetadata.idFor("credential_configuration_id"));
+  var known = ids.indexOf(stored) !== -1 || !!vcFormats.builtInFormatOf(stored);
+  var chosen = known ? stored :
+      (ids[0] || vcFormats.BUILT_IN_PREFIX + builtIns[0]);
+  var option = function (value, label) {
+    return '<option value="' + esc(value) + '"' + (value === chosen ?
+        ' selected="selected"' : '') + '>' + esc(label) + '</option>';
+  };
+  var html = "";
+  if (ids.length) {
+    html += '<optgroup label="Offered by this issuer">' +
+      ids.map(function (id) {
+        var cfg = configs[id] || {};
+        return option(id, id + (cfg.format ? " (" + cfg.format + ")" : ""));
+      }).join("") + '</optgroup>';
+  }
+  html += '<optgroup label="Built in \u2014 not offered by this issuer">' +
+    builtIns.map(function (f) {
+      var row = vcFormats.format(f);
+      return option(vcFormats.BUILT_IN_PREFIX + f,
+                    f + " \u2014 " + (row ? row.name : f));
+    }).join("") + '</optgroup>';
+  select.innerHTML = html;
+  describeConfigurationChoice();
+  log.debug("Leaving renderCredentialConfigurations(). " + ids.length +
+            " offered, " + builtIns.length + " built in.");
+}
+
+// The note beside the chooser: how many the issuer offers, and, when a
+// built-in entry is chosen, that the issuer does not offer it.
+function describeConfigurationChoice() {
+  log.debug("Entering describeConfigurationChoice().");
+  var select = el("vci_credential_configuration_select");
+  var note = el("vci_configuration_note");
+  if (!select || !note) {
+    log.debug("Leaving describeConfigurationChoice().");
     return;
   }
-  var chosen = val(vciMetadata.idFor("credential_configuration_id")) || ids[0];
-  select.innerHTML = ids.map(function (id) {
-    var cfg = configs[id] || {};
-    var label = id + (cfg.format ? " (" + cfg.format + ")" : "");
-    return '<option value="' + esc(id) + '"' + (id === chosen ?
-        ' selected="selected"' : '') + '>' +
-           esc(label) + '</option>';
-  }).join("");
-  if (note) {
-    note.textContent = " " + ids.length + " offered by this issuer.";
-    note.className = "vc-note";
+  var configs = (vciInfo && vciInfo.credential_configurations_supported) || {};
+  var count = Object.keys(configs).length;
+  var offered = count ? " " + count + " offered by this issuer." :
+      " Retrieve the credential issuer metadata above to see what this " +
+      "issuer offers.";
+  if (vcFormats.builtInFormatOf(select.value)) {
+    note.textContent = offered + " The chosen entry is a built-in " +
+        "example, not one this issuer advertises: change " +
+        "credential_configuration_id to the issuer's id for this " +
+        "credential, or the issuer is expected to refuse the request.";
+    note.className = "vc-note vc-pending";
+  } else {
+    note.textContent = offered;
+    note.className = count ? "vc-note" : "vc-note vc-pending";
   }
-  log.debug("Leaving renderCredentialConfigurations(). " + ids.length +
-            " offered.");
+  log.debug("Leaving describeConfigurationChoice().");
 }
 
 // ---------------------------------------------------------------------------
@@ -799,9 +836,10 @@ function clearVciMetadata() {
   setVal(VCI_URL_KEY, "");
   el("vci_metadata_table").innerHTML = "";
   el("vci_metadata_populate").innerHTML = "";
-  el("vci_configuration_row").style.display = "none";
   vciMetadata.clearFields();
   vciMetadata.clearStorage();
+  // The issuer's entries go; the built-in ones stay on offer.
+  renderCredentialConfigurations();
   updateHandoffSummary();
   // The document the claims came from is gone, so the pane goes with it —
   // rows left behind would offer claims no retrieved metadata advertises.
@@ -817,7 +855,15 @@ function populateFromVciDocument() {
   log.debug("Entering populateFromVciDocument().");
   var select = el("vci_credential_configuration_select");
   var chosen = select && select.value ? select.value : "";
-  var used = vciMetadata.populateFromMetadata(vciInfo, chosen);
+  var builtIn = vcFormats.builtInFormatOf(chosen);
+  // The issuer-level half always comes from the document; a built-in choice
+  // then replaces the credential-configuration half.
+  var used = vciMetadata.populateFromMetadata(vciInfo, builtIn ? "" : chosen);
+  if (builtIn) {
+    used = vciMetadata.populateFromBuiltIn(builtIn);
+  }
+  renderSigningAlgChoices();
+  describeConfigurationChoice();
   updateHandoffSummary();
   // The claims a credential can carry come out of the document just applied, so
   // the pane is built from it here rather than only at load.
@@ -906,7 +952,17 @@ function onCredentialConfigurationChange() {
   log.debug("Entering onCredentialConfigurationChange().");
   // Only re-populate the credential-configuration half; the issuer-level values
   // are unaffected by which credential is chosen.
-  if (vciInfo && Object.keys(vciInfo).length) populateFromVci();
+  var select = el("vci_credential_configuration_select");
+  var builtIn = vcFormats.builtInFormatOf(select ? select.value : "");
+  if (vciInfo && Object.keys(vciInfo).length) {
+    populateFromVci();
+  } else if (builtIn) {
+    // No issuer document: the built-in entry is all there is to apply.
+    vciMetadata.populateFromBuiltIn(builtIn);
+    renderSigningAlgChoices();
+    describeConfigurationChoice();
+    updateHandoffSummary();
+  }
   // The format may have changed, and with it whether DIDs default on.
   renderDidEnabled();
   // A different credential advertises different claims, and keeps its own

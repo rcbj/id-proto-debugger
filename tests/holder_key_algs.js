@@ -285,12 +285,72 @@ async function keyProofTypes() {
   log.debug("Leaving keyProofTypes().");
 }
 
+// The built-in credential configurations issuance step 1 offers beside the
+// issuer's own: one per format an OpenID4VCI Credential Request can name, and
+// each a combination that format defines. AnonCreds has none: a CL
+// credential is issued against a blinded link secret, which a Credential
+// Request has no member for.
+function builtInConfigurations() {
+  log.debug("Entering builtInConfigurations().");
+  var ids = formats.builtInFormatIds();
+  formats.formatIds().forEach(function (f) {
+    assert.strictEqual(ids.indexOf(f) !== -1, f !== "anoncreds",
+      f + (f === "anoncreds" ? " has no" : " has a") +
+      " built-in configuration");
+  });
+  ids.forEach(function (f) {
+    var row = formats.format(f);
+    var cfg = formats.builtInConfiguration(f);
+    assert.strictEqual(cfg.format, f);
+    assert.strictEqual(formats.builtInFormatOf(cfg.id), f,
+      "the id names its format: " + cfg.id);
+    cfg.credential_signing_alg_values_supported.forEach(function (a) {
+      assert.ok(formats.isSigningAlgFor(f, a),
+        f + ": " + a + " is a signing algorithm the format defines");
+    });
+    assert.ok(cfg.credential_signing_alg_values_supported.length,
+      f + ": at least one signing algorithm");
+    cfg.cryptographic_binding_methods_supported.forEach(function (b) {
+      assert.ok(row.bindingMethods.indexOf(b) !== -1,
+        f + ": binding " + b + " is one the format defines");
+    });
+    cfg.proof_types_supported.forEach(function (t) {
+      assert.ok(row.proofTypes.indexOf(t) !== -1,
+        f + ": proof type " + t + " is one the format defines");
+    });
+  });
+  // The members each OpenID4VCI 1.0 format profile REQUIRES.
+  assert.ok(formats.builtInConfiguration("dc+sd-jwt").vct,
+    "dc+sd-jwt carries a vct (Appendix A.3)");
+  assert.ok(formats.builtInConfiguration("mso_mdoc").doctype,
+    "mso_mdoc carries a doctype (Appendix A.2)");
+  ["jwt_vc_json", "jwt_vc_json-ld", "ldp_vc"].forEach(function (f) {
+    var def = formats.builtInConfiguration(f).credential_definition;
+    assert.ok(def && Array.isArray(def.type) &&
+              def.type.indexOf("VerifiableCredential") !== -1,
+      f + ": credential_definition.type (Appendix A.1)");
+    assert.strictEqual(Array.isArray(def["@context"]), f !== "jwt_vc_json",
+      f + ": @context " + (f === "jwt_vc_json" ? "absent (A.1.1)" :
+                           "present (A.1.2, A.1.3)"));
+  });
+  assert.strictEqual(formats.builtInConfiguration("anoncreds"), null);
+  assert.strictEqual(formats.builtInFormatOf("IdentityCredential"), "",
+    "an issuer's own id is not a built-in one");
+  // Proof types follow the format in the pane's defaults too.
+  assert.strictEqual(formats.metadataDefaults("sd-cwt").proof_types_supported,
+    "cwt");
+  log.info("PASS built-in credential configurations: " + ids.length +
+           " formats, each a valid combination.");
+  log.debug("Leaving builtInConfigurations().");
+}
+
 async function main() {
   log.debug("Entering main().");
   choices();
   await everyAlgorithm();
   await transactionData();
   await keyProofTypes();
+  builtInConfigurations();
   log.info("holder_key_algs: all checks passed.");
   log.debug("Leaving main().");
 }

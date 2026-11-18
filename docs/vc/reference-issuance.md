@@ -228,17 +228,19 @@ metadata replaces all of them.
 
 | Field | id | What it is | Default |
 |---|---|---|---|
-| Credential to request | `vci_credential_configuration_select` | Which entry to request. Choosing an entry rewrites every row below from the metadata. The list is empty until the issuer metadata is retrieved. | — |
+| Credential to request | `vci_credential_configuration_select` | Which entry to request. **Offered by this issuer** lists the retrieved `credential_configurations_supported`. **Built in — not offered by this issuer** follows it and is always there, even before any metadata is retrieved or after **Clear**. It holds one example per format a Credential Request can name, each a valid combination (`vc_formats.builtInConfiguration()`). Choosing an entry rewrites every row below. A built-in entry's id is `builtin:<format>`. OpenID4VCI 1.0 section 8.2 has a request name a configuration the issuer advertises, so change that id to the issuer's own or expect a refusal. AnonCreds has no built-in entry: a CL credential is issued against a blinded link secret, and a Credential Request has no member for one. | — |
 | credential_configuration_id | `vci_credential_configuration_id` | What the Credential Request names | `IdentityCredential` |
 | format | `vci_format` | The credential format identifier. The field suggests every format the debugger knows: `dc+sd-jwt`, `jwt_vc_json`, `jwt_vc_json-ld`, `ldp_vc`, `vc+jwt`, `vc+sd-jwt`, `vc+cose`, `jpt`, `sd-cwt`, `anoncreds` and `mso_mdoc`. | `dc+sd-jwt` |
 | credential_definition | `vci_credential_definition` | Required for the W3C formats | empty |
 | vct | `vci_vct` | Required for `dc+sd-jwt` | `urn:idptools:sd-jwt-vc:identity` |
+| doctype | `vci_doctype` | Required for `mso_mdoc` (Appendix A.2). The built-in mdoc entry uses `org.iso.18013.5.1.mDL` | empty |
 | scope | `vci_scope` | The OAuth scope that asks for this credential | `identity_credential` |
 | cryptographic_binding_methods_supported | `vci_cryptographic_binding_methods_supported` | `jwk`, `did:jwk`, `did:key` or `cose_key` | **Depends on the format** (see below) |
 | credential_signing_alg_values_supported | `vci_credential_signing_alg_values_supported` | The format's own algorithm identifiers. The field suggests the ones the chosen format defines. | **Depends on the format** |
 | proof_signing_alg_values_supported | `vci_proof_signing_alg_values_supported` | From `proof_types_supported.jwt`: the algorithms the issuer accepts on the wallet's key proof | `ES256` |
+| proof_types_supported | `vci_proof_types_supported` | The key proof types the issuer accepts (section 8.2.1). Step 2 uses the type it offers, `jwt` by default | **Depends on the format** |
 
-The two rows marked as format-dependent take their placeholders from
+The rows marked as format-dependent take their placeholders from
 `client/src/vc_formats.js` (`metadataDefaults()`). When you change `format`,
 any of these fields that still holds the old format's default, or nothing,
 takes the new format's default. A value you typed yourself is left alone.

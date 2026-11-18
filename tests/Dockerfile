@@ -480,7 +480,7 @@ COPY tests/wallet_issuance.js ./
 COPY tests/cors_proxy_engine.js tests/cors-proxy/cors-proxy.js ./
 # The deferred and QR-image pre-authorized offers through the wallet pages
 # (#365); it collects with wallet_issuance.js above.
-COPY tests/vci_offer_modes.js ./
+COPY tests/vci_offer_modes.js tests/vci_configuration_chooser.js ./
 # common/crypto/ — the central crypto module of #463: crypto_bytes,
 # hash_tools, symmetric_crypto, pk_encryption, pqc, hbs and the facade beside
 # them. The WHOLE directory, twice, and both copies are load-bearing:

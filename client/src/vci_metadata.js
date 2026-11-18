@@ -92,12 +92,15 @@ var VCI_CONFIG_METADATA = [
         "Request asks for." },
   { name: "format", type: "string", dflt: "dc+sd-jwt",
     desc: "REQUIRED. The credential format. dc+sd-jwt is the SD-JWT VC " +
-        "format identifier (vc+sd-jwt in earlier drafts); jwt_vc_json is a " +
-        "W3C Verifiable Credential secured as a JWT, which has no selective " +
-        "disclosure; ldp_vc is one secured with a Data Integrity proof; " +
-        "mso_mdoc is an ISO/IEC 18013-5 mdoc. Changing it resets the " +
-        "binding method and signing algorithms below to ones that format " +
-        "defines, unless they were edited by hand." },
+        "format identifier; jwt_vc_json and jwt_vc_json-ld are a W3C " +
+        "Verifiable Credential secured as a JWT; ldp_vc is one secured " +
+        "with a Data Integrity proof; mso_mdoc is an ISO/IEC 18013-5 " +
+        "mdoc. vc+jwt, vc+sd-jwt and vc+cose (W3C VC-JOSE-COSE), jpt " +
+        "(JSON Proof Token, a draft) and sd-cwt (a draft) have no " +
+        "OpenID4VCI format profile, so their media type names are used. " +
+        "Changing it resets the binding method, signing algorithms and " +
+        "proof types below to ones that format defines, unless they were " +
+        "edited by hand." },
   { name: "credential_definition", type: "json", dflt: "",
     desc: "REQUIRED for jwt_vc_json. The W3C credential definition — its " +
         "`type` array is what identifies the credential in that format, in " +
@@ -106,6 +109,10 @@ var VCI_CONFIG_METADATA = [
     desc: "REQUIRED for dc+sd-jwt. The Verifiable Credential Type — what " +
         "kind of credential this is, and the vct claim the issued SD-JWT VC " +
         "will carry." },
+  { name: "doctype", type: "string", dflt: "",
+    desc: "REQUIRED for mso_mdoc (OpenID4VCI 1.0 Appendix A.2). The ISO/IEC " +
+        "18013-5 document type, such as org.iso.18013.5.1.mDL for a mobile " +
+        "driving licence." },
   { name: "scope", type: "string", dflt: "identity_credential",
     desc: "OPTIONAL. The OAuth 2.0 scope that asks the authorization server " +
         "for authorization to issue this credential." },
@@ -130,6 +137,7 @@ var VCI_CONFIG_METADATA = [
     desc: "From proof_types_supported.jwt: the algorithms the issuer accepts " +
         "on the wallet's JWT proof of possession." },
   { name: "proof_types_supported", type: "array", dflt: "jwt",
+    formatDependent: true,
     desc: "OPTIONAL. The key proof types the issuer accepts (OID4VCI 1.0 " +
         "section 8.2.1): jwt is a holder-signed proof of possession, " +
         "attestation is a Key Attestation JWT vouching for the holder keys. " +
@@ -337,6 +345,34 @@ function populateFromMetadata(info, configId) {
   return id;
 }
 
+// Fill the credential-configuration half of the pane from one of the
+// built-in configurations (vc_formats.builtInConfiguration()), for a format
+// the issuer does not advertise or before any metadata has been retrieved.
+// The issuer-level half is left as it is. Answers the id, or "" for a format
+// with no built-in configuration.
+function populateFromBuiltIn(formatId) {
+  log.debug("Entering populateFromBuiltIn(). " + formatId);
+  var cfg = vcFormats.builtInConfiguration(formatId);
+  if (!cfg) {
+    log.debug("Leaving populateFromBuiltIn(). None.");
+    return "";
+  }
+  VCI_CONFIG_METADATA.forEach(function (m) {
+    var v = m.name === "credential_configuration_id" ? cfg.id :
+        (cfg[m.name] === undefined ? "" : toField(cfg[m.name]));
+    setFieldValue(idFor(m.name), v);
+    // Not an issuer's document, so nothing in it is "not defined" by one.
+    opMetadata.markNotDefined(idFor(m.name), false);
+    try {
+      localStorage.setItem(idFor(m.name), v);
+    } catch (e) {
+      // No storage available in this context.
+    }
+  });
+  log.debug("Leaving populateFromBuiltIn().");
+  return cfg.id;
+}
+
 // What the rest of the workflow needs to make a Credential Request, read back
 // out of the pane (so a hand-edited override is honoured).
 function currentRequestConfig() {
@@ -365,6 +401,7 @@ module.exports = {
   clearFields: clearFields,
   clearStorage: clearStorage,
   populateFromMetadata: populateFromMetadata,
+  populateFromBuiltIn: populateFromBuiltIn,
   defaultValue: defaultValue,
   restoreDefaultFields: restoreDefaultFields,
   onFormatChange: onFormatChange,

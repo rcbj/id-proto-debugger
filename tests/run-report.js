@@ -4424,6 +4424,18 @@ function buildJobs() {
     });
   }
 
+  // The "Credential to request" chooser on vc-issuance-1.html: the issuer's
+  // entries, a built-in one per format, and Clear. Its issuer document is
+  // planted in localStorage, so it needs only the client.
+  {
+    jobs.push({
+      name: "VC Issuance — the Credential to request chooser (issuer and " +
+          "built-in entries)",
+      script: "vci_configuration_chooser.js",
+      env: {},
+    });
+  }
+
   // These four are registered UNCONDITIONALLY, unlike their SD-JWT siblings. A
   // gated job that does not register simply is not in the report, which is the
   // quietest possible way for a credential format to go untested — the run says

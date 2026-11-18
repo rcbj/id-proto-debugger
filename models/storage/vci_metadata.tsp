@@ -31,6 +31,9 @@ model VciMetadataKeys {
   vci_cryptographic_binding_methods_supported: unknown;
 
   @storageKey(#{ class: "ordinary" })
+  vci_doctype: unknown;
+
+  @storageKey(#{ class: "ordinary" })
   vci_display: unknown;
 
   @storageKey(#{ class: "ordinary" })
