@@ -1372,7 +1372,10 @@ function storedRequestConfig() {
     credentialConfigurationId: v("credential_configuration_id"),
     format: v("format"),
     vct: v("vct"),
-    proofAlgs: v("proof_signing_alg_values_supported")
+    proofAlgs: v("proof_signing_alg_values_supported"),
+    // The key proof types the issuer advertises (OID4VCI 1.0 section 8.2.1),
+    // which step 2 chooses among; empty means jwt, the universal default.
+    proofTypes: v("proof_types_supported")
   };
 }
 

@@ -55,6 +55,18 @@ var dpopLib = require("./dpop");
 var PROOF_TYP = "openid4vci-proof+jwt";
 var PROOF_ALG = "ES256";
 
+// The proof types OpenID4VCI 1.0 section 8.2.1 defines and this wallet
+// produces: `jwt` (a holder-signed proof of possession, the default and the
+// one every issuer in this repository advertises) and `attestation` (a Key
+// Attestation JWT the issuer trusts to vouch for the holder keys). Earlier
+// drafts also listed `cwt` and `ldp_vp`/`di_vp`, which the final 1.0 text
+// dropped, so they are not offered. A wallet only ever sends a type the
+// issuer advertised in proof_types_supported.
+var PROOF_TYPES = ["jwt", "attestation"];
+var DEFAULT_PROOF_TYPE = "jwt";
+// The media type of a Key Attestation JWT (OID4VCI 1.0 section 8.2.3).
+var KEY_ATTESTATION_TYP = "keyattestation+jwt";
+
 // ---------------------------------------------------------------------------
 // The holder key pair.
 //
@@ -217,6 +229,65 @@ function signProofs(keys, opts) {
   log.debug("Entering signProofs(). " + keys.length + " key(s).");
   log.debug("Leaving signProofs().");
   return Promise.all(keys.map(function (key) { return signProof(key, opts); }));
+}
+
+// ---------------------------------------------------------------------------
+// The `attestation` proof type (OpenID4VCI 1.0 section 8.2.1.3 / 8.2.3).
+//
+// A Key Attestation JWT vouches for the holder keys the credential is to be
+// bound to, rather than proving possession of each one with its own signature.
+// A real attestation is issued by a trusted attester (the wallet provider's
+// device attestation); in this debugger the attester is the wallet itself —
+// a key generated for the attestation — so it is a SELF-attestation, which is
+// what lets the whole shape be exercised without a trusted attester in the
+// stack. An issuer that advertises the attestation proof type and trusts this
+// wallet's attester would accept it.
+//
+// typ is keyattestation+jwt, the header carries the attester's public JWK,
+// and the payload is iat, attested_keys (the holder PUBLIC JWKs) and, when the
+// attestation is used as a proof, the request's c_nonce as `nonce`
+// (section 8.2.1.3).
+// ---------------------------------------------------------------------------
+function signKeyAttestation(keys, opts) {
+  log.debug("Entering signKeyAttestation(). " + keys.length + " key(s).");
+  var o = opts || {};
+  var ready = o.attesterKey ? Promise.resolve(o.attesterKey) :
+    generateHolderKeyPair(PROOF_ALG);
+  return ready.then(function (attester) {
+    var chosen = proofAlgFor(attester, o.proofAlgs);
+    var header = { typ: KEY_ATTESTATION_TYP, alg: chosen.headerAlg,
+                   jwk: attester.publicJwk };
+    var payload = {
+      iat: Math.floor(Date.now() / 1000),
+      attested_keys: (keys || []).map(function (k) { return k.publicJwk; })
+    };
+    if (o.nonce) payload.nonce = o.nonce;
+    if (o.exp) payload.exp = o.exp;
+    log.debug("Leaving signKeyAttestation(). alg=" + chosen.headerAlg);
+    // VERBATIM header, pure-JS backend: a Key Attestation is the base64url of
+    // these exact bytes, and the signer works on every deployment.
+    return jws.signJwsAsync({
+      algId: chosen.algId,
+      protectedHeader: header,
+      payload: payload,
+      privateKey: { jwk: attester.privateJwk },
+      backend: "js"
+    }).then(function (signed) {
+      return { attestation: signed.serialized, attesterKey: attester };
+    });
+  });
+}
+
+// The `attestation` proof type's contribution to a Credential Request: the
+// single Key Attestation JWT, in the one-element array proofs.attestation
+// takes. Returns the same { proofs } shape signProofs effectively produces, so
+// the caller keys buildRequestBody by the proof type and nothing else changes.
+function signAttestationProof(keys, opts) {
+  log.debug("Entering signAttestationProof().");
+  log.debug("Leaving signAttestationProof().");
+  return signKeyAttestation(keys, opts).then(function (r) {
+    return { proofs: [r.attestation], attesterKey: r.attesterKey };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -409,9 +480,14 @@ function buildRequestBody(opts) {
   } else {
     body.credential_configuration_id = opts.credentialConfigurationId;
   }
-  // OID4VCI 1.0: proofs is an object keyed by proof type, each an array — one
-  // entry per key the credential should be bound to.
-  body.proofs = { jwt: (opts.proofs || []).slice() };
+  // OID4VCI 1.0 section 8.2: proofs is an object keyed by proof type, each an
+  // array. For `jwt` there is one entry per key the credential should be bound
+  // to; for `attestation` the single Key Attestation JWT vouches for them all.
+  // The type defaults to jwt, which is what every issuer here advertises.
+  var proofType = PROOF_TYPES.indexOf(opts.proofType) !== -1 ?
+    opts.proofType : DEFAULT_PROOF_TYPE;
+  body.proofs = {};
+  body.proofs[proofType] = (opts.proofs || []).slice();
   if (opts.encryption) {
     // The wallet supplies the key and the content encryption algorithm; the
     // private half never leaves this browser.
@@ -821,11 +897,16 @@ module.exports = {
   fetchProtected: fetchProtected,
   PROOF_TYP: PROOF_TYP,
   PROOF_ALG: PROOF_ALG,
+  PROOF_TYPES: PROOF_TYPES,
+  DEFAULT_PROOF_TYPE: DEFAULT_PROOF_TYPE,
+  KEY_ATTESTATION_TYP: KEY_ATTESTATION_TYP,
   generateHolderKeyPair: generateHolderKeyPair,
   holderKeysFor: holderKeysFor,
   generateResponseEncryptionKey: generateResponseEncryptionKey,
   signProof: signProof,
   signProofs: signProofs,
+  signKeyAttestation: signKeyAttestation,
+  signAttestationProof: signAttestationProof,
   fetchNonce: fetchNonce,
   isStaleNonceError: isStaleNonceError,
   buildRequestBody: buildRequestBody,

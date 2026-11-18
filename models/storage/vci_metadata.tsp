@@ -43,6 +43,9 @@ model VciMetadataKeys {
   vci_proof_signing_alg_values_supported: unknown;
 
   @storageKey(#{ class: "ordinary" })
+  vci_proof_types_supported: unknown;
+
+  @storageKey(#{ class: "ordinary" })
   vci_scope: unknown;
 
   @storageKey(#{ class: "ordinary" })

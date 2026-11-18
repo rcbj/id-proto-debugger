@@ -128,7 +128,13 @@ var VCI_CONFIG_METADATA = [
   { name: "proof_signing_alg_values_supported", type: "array",
    dflt: "ES256, RS256",
     desc: "From proof_types_supported.jwt: the algorithms the issuer accepts " +
-        "on the wallet's JWT proof of possession." }
+        "on the wallet's JWT proof of possession." },
+  { name: "proof_types_supported", type: "array", dflt: "jwt",
+    desc: "OPTIONAL. The key proof types the issuer accepts (OID4VCI 1.0 " +
+        "section 8.2.1): jwt is a holder-signed proof of possession, " +
+        "attestation is a Key Attestation JWT vouching for the holder keys. " +
+        "The Credential Request uses the type chosen on step 2, defaulting " +
+        "to jwt." }
 ];
 
 var metadataClient = require("./metadata_client");
@@ -309,6 +315,10 @@ function populateFromMetadata(info, configId) {
     } else if (m.name === "proof_signing_alg_values_supported") {
       var jwtProof = (cfg.proof_types_supported || {}).jwt || {};
       v = toField(jwtProof.proof_signing_alg_values_supported);
+    } else if (m.name === "proof_types_supported") {
+      // The advertised key proof types are the KEYS of the object, not the
+      // object itself (each value is that type's own parameters).
+      v = toField(Object.keys(cfg.proof_types_supported || {}));
     } else {
       v = toField(cfg[m.name]);
     }
