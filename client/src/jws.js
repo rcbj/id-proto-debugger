@@ -77,10 +77,10 @@ var ed25519 = require("@noble/curves/ed25519").ed25519;
 var ed448 = require("@noble/curves/ed448").ed448;
 var nobleSha256 = require("@noble/hashes/sha256").sha256;
 var nobleSha512 = require("@noble/hashes/sha512");
-var nobleHmac = require("@noble/hashes/hmac").hmac;
 var bytesLib = require("./crypto_bytes");
 var pkEncryption = require("./pk_encryption");
 var pqc = require("./pqc");
+var provider = require("./crypto_provider");
 
 var strBytes = bytesLib.strBytes;
 var bytesToStr = bytesLib.bytesToStr;
@@ -101,22 +101,6 @@ var HASHES = {
   'SHA-384': { noble: nobleSha512.sha384, forge: forge.md.sha384, bytes: 48 },
   'SHA-512': { noble: nobleSha512.sha512, forge: forge.md.sha512, bytes: 64 }
 };
-
-function hashOf(hashName, bytes) {
-  log.debug("Entering hashOf().");
-  var h = HASHES[hashName];
-  if (!h) throw new Error('Unknown hash: ' + hashName);
-  log.debug("Leaving hashOf().");
-  return h.noble(bytes);
-}
-
-function forgeMd(hashName) {
-  log.debug("Entering forgeMd().");
-  var h = HASHES[hashName];
-  if (!h) throw new Error('Unknown hash: ' + hashName);
-  log.debug("Leaving forgeMd().");
-  return h.forge.create();
-}
 
 // ---------------------------------------------------------------------------
 // The algorithm table — RFC 7518 section 3.1 in full, plus the two extensions
@@ -338,18 +322,51 @@ function algForHeader(headerAlg, keyBytes) {
 // bytes, so signJws()/verifyJws() below are about the SERIALIZATION and
 // nothing else.
 // ---------------------------------------------------------------------------
-function rsaPssParams(hashName) {
-  log.debug("Entering rsaPssParams().");
-  // RFC 7518 §3.5: MGF1 with the SAME hash, and a salt of the hash's own
-  // length. Both are fixed by the specification; neither is a choice, and a
-  // salt of some other length verifies against nothing else on earth.
-  var pss = forge.pss.create({
-    md: forgeMd(hashName),
-    mgf: forge.mgf.mgf1.create(forgeMd(hashName)),
-    saltLength: HASHES[hashName].bytes
-  });
-  log.debug("Leaving rsaPssParams().");
-  return pss;
+
+// THE js BACKEND'S PRIMITIVES ARE crypto_provider.js's (#463, step 2b): the
+// one module the JOSE, XML and COSE layers are to share. What stays here is
+// JOSE's: the algorithm table, the key forms a caller hands in, and the
+// signing input. `key` arrives as resolveKey() leaves it (an RSA PEM, an EC
+// or OKP scalar or point, HMAC bytes, an AKP value) and is given to the
+// provider as its own key object. tests/jws_engine.js holds the bytes to what
+// they were, and against node's own crypto.
+var PROVIDER_EC = { 'P-256': ['ec-p256', 'ecdsa-p256-sha256'],
+                    'P-384': ['ec-p384', 'ecdsa-p384-sha384'],
+                    'P-521': ['ec-p521', 'ecdsa-p521-sha512'],
+                    'secp256k1': ['ec-secp256k1', 'ecdsa-secp256k1-sha256'] };
+var PROVIDER_OKP = { 'Ed25519': 'ed25519', 'Ed448': 'ed448' };
+
+// The provider's name for an RFC 7518 hash: "SHA-256" -> "sha256".
+function providerHash(hashName) {
+  log.debug("Entering providerHash().");
+  log.debug("Leaving providerHash().");
+  return String(hashName).replace('-', '').toLowerCase();
+}
+
+// { alg, key } for the provider: its algorithm id and its key object.
+function providerArgs(spec, key, wantPrivate) {
+  log.debug("Entering providerArgs(). alg=" + spec.alg);
+  if (spec.family === 'rsa') {
+    log.debug("Leaving providerArgs(). RSA.");
+    return { alg: 'rsa-' + (spec.pad === 'pss' ? 'pss' : 'pkcs1') + '-' +
+                  providerHash(spec.hash),
+             key: provider.importKey(String(key)) };
+  }
+  if (spec.family === 'ec') {
+    var ec = PROVIDER_EC[spec.crv];
+    if (!ec) throw new Error('No ECDSA curve ' + spec.crv + ' here.');
+    log.debug("Leaving providerArgs(). ECDSA.");
+    return { alg: ec[1], key: provider.importKey(key,
+      { format: 'raw', type: ec[0], private: !!wantPrivate }) };
+  }
+  if (spec.family === 'okp') {
+    var okp = PROVIDER_OKP[spec.crv];
+    if (!okp) throw new Error('No EdDSA curve ' + spec.crv + ' here.');
+    log.debug("Leaving providerArgs(). EdDSA.");
+    return { alg: okp, key: provider.importKey(key,
+      { format: 'raw', type: okp, private: !!wantPrivate }) };
+  }
+  throw new Error('Unsupported algorithm family: ' + spec.family);
 }
 
 function signOctets(spec, key, octets) {
@@ -360,27 +377,7 @@ function signOctets(spec, key, octets) {
   }
   if (spec.family === 'hmac') {
     log.debug("Leaving signOctets(). HMAC.");
-    return nobleHmac(HASHES[spec.hash].noble, key, octets);
-  }
-  if (spec.family === 'rsa') {
-    var priv = forge.pki.privateKeyFromPem(key);
-    var md = forgeMd(spec.hash);
-    md.update(forge.util.binary.raw.encode(octets));
-    var raw = spec.pad === 'pss' ? priv.sign(md, rsaPssParams(spec.hash))
-                                 : priv.sign(md);
-    log.debug("Leaving signOctets(). RSA.");
-    return forge.util.binary.raw.decode(raw);
-  }
-  if (spec.family === 'ec') {
-    // RFC 7518 §3.4: the JWS signature is R || S, each left-padded to the
-    // coordinate size — NOT the DER SEQUENCE every other API hands you.
-    var sig = spec.curve.sign(hashOf(spec.hash, octets), key);
-    log.debug("Leaving signOctets(). ECDSA.");
-    return sig.toCompactRawBytes();
-  }
-  if (spec.family === 'okp') {
-    log.debug("Leaving signOctets(). EdDSA.");
-    return spec.curve.sign(octets, key);
+    return provider.hmac(providerHash(spec.hash), key, octets);
   }
   if (spec.family === 'pq') {
     // `key` here is the AKP `priv` value, not necessarily the signing key —
@@ -389,7 +386,12 @@ function signOctets(spec, key, octets) {
     log.debug("Leaving signOctets(). Post-quantum.");
     return pqc.signWithPriv(spec.pqName, octets, key);
   }
-  throw new Error('Unsupported algorithm family: ' + spec.family);
+  // RFC 7518 §3.4: an ECDSA JWS signature is R || S, each left-padded to the
+  // coordinate size — the provider's default "raw" encoding, NOT DER. RSA-PSS
+  // uses MGF1 over the same hash and a salt of the hash's length (§3.5).
+  var a = providerArgs(spec, key, true);
+  log.debug("Leaving signOctets(). " + a.alg + ".");
+  return provider.sign(a.alg, a.key, octets);
 }
 
 function verifyOctets(spec, key, octets, signature) {
@@ -403,38 +405,14 @@ function verifyOctets(spec, key, octets, signature) {
     return signature.length === 0;
   }
   if (spec.family === 'hmac') {
-    var tag = nobleHmac(HASHES[spec.hash].noble, key, octets);
     log.debug("Leaving verifyOctets(). HMAC.");
-    return bytesLib.bytesEqual(tag, signature);
-  }
-  if (spec.family === 'rsa') {
-    var pub = forge.pki.publicKeyFromPem(key);
-    var md = forgeMd(spec.hash);
-    md.update(forge.util.binary.raw.encode(octets));
-    var raw = forge.util.binary.raw.encode(signature);
-    var ok = spec.pad === 'pss'
-      ? pub.verify(md.digest().getBytes(), raw, rsaPssParams(spec.hash))
-      : pub.verify(md.digest().getBytes(), raw);
-    log.debug("Leaving verifyOctets(). RSA.");
-    return ok;
-  }
-  if (spec.family === 'ec') {
-    // lowS:false on VERIFICATION only. @noble refuses a high-S secp256k1
-    // signature by default (a Bitcoin malleability rule), and JOSE has no such
-    // rule — so a perfectly valid ES256K signature from OpenSSL would be
-    // reported invalid. Signing keeps the default, which is always acceptable.
-    log.debug("Leaving verifyOctets(). ECDSA.");
-    return spec.curve.verify(signature, hashOf(spec.hash, octets), key,
-                             { lowS: false });
-  }
-  if (spec.family === 'okp') {
-    log.debug("Leaving verifyOctets(). EdDSA.");
-    return spec.curve.verify(signature, octets, key);
+    return provider.hmacVerify(providerHash(spec.hash), key, octets,
+                               signature);
   }
   if (spec.family === 'pq') {
     // A wrong-length signature or key is a FAILED verification here rather
-    // than an exception, matching every other branch above: @noble throws on
-    // a malformed input, and a JWS verifier that throws where it should
+    // than an exception, matching every other branch: @noble throws on a
+    // malformed input, and a JWS verifier that throws where it should
     // return false makes a forged token look like a bug in the tool.
     try {
       var pqOk = pqc.verifyWithPub(spec.pqName, signature, octets, key);
@@ -446,7 +424,19 @@ function verifyOctets(spec, key, octets, signature) {
       return false;
     }
   }
-  throw new Error('Unsupported algorithm family: ' + spec.family);
+  // The provider never throws on a bad signature, and accepts a high-S
+  // ECDSA signature on every curve (JOSE has no low-S rule; @noble's
+  // secp256k1 default does).
+  var a;
+  try {
+    a = providerArgs(spec, key, false);
+  } catch (e) {
+    log.debug("Leaving verifyOctets(). Unusable key: " + e.message);
+    return false;
+  }
+  var ok = provider.verify(a.alg, a.key, octets, signature);
+  log.debug("Leaving verifyOctets(). " + a.alg + " " + ok);
+  return ok;
 }
 
 // ---------------------------------------------------------------------------
