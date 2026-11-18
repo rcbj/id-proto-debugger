@@ -367,15 +367,75 @@ function responseMode(params) {
   return mode || "fragment";
 }
 
+// Whether a response mode is one of the Digital Credentials API pair
+// (OpenID4VP 1.0 Appendix A): dc_api in the clear, dc_api.jwt encrypted.
+function isDcApiMode(mode) {
+  log.debug("Entering isDcApiMode().");
+  log.debug("Leaving isDcApiMode().");
+  return mode === "dc_api" || mode === "dc_api.jwt";
+}
+
 // Where the answer goes. direct_post and direct_post.jwt name a
-// response_uri; every other mode returns to the redirect_uri.
+// response_uri; the DC API returns the answer to the caller of
+// navigator.credentials.get() and names no target at all; every other mode
+// returns to the redirect_uri.
 function responseTarget(params) {
   log.debug("Entering responseTarget().");
   var mode = responseMode(params);
-  var target = (mode === "direct_post" || mode === "direct_post.jwt") ?
-      (params.response_uri || "") : (params.redirect_uri || "");
+  var target;
+  if (mode === "direct_post" || mode === "direct_post.jwt") {
+    target = params.response_uri || "";
+  } else if (isDcApiMode(mode)) {
+    target = "";
+  } else {
+    target = params.redirect_uri || "";
+  }
   log.debug("Leaving responseTarget(). " + target);
   return target;
+}
+
+// The Origin a DC API answer is addressed to: the one the request names in
+// an origin: Client Identifier, else this page's own origin (the debugger's
+// Verifier and its wallet share an origin, so for a self-loop this is the
+// Origin the DC API caller would report). OpenID4VP 1.0 Appendix A.4: for an
+// unsigned request the KB-JWT aud is "origin:" + this.
+function dcApiOrigin(params) {
+  log.debug("Entering dcApiOrigin().");
+  var who = clientIdPrefix((params && params.client_id) || "");
+  if (who.prefix === "origin" && who.value) {
+    log.debug("Leaving dcApiOrigin(). From the Client Identifier.");
+    return who.value;
+  }
+  if (typeof window !== "undefined" && window.location &&
+      window.location.origin) {
+    log.debug("Leaving dcApiOrigin(). This page's origin.");
+    return window.location.origin;
+  }
+  log.debug("Leaving dcApiOrigin(). None.");
+  return "";
+}
+
+// The audience the holder binding carries — the KB-JWT's aud, a VP JWT's aud,
+// a Data Integrity proof's domain. For a signed request it is the Client
+// Identifier; for an UNSIGNED Digital Credentials API request (no client_id,
+// or an origin: one) it is origin:<origin> (Appendix A.4). `request` is the
+// stored request record, so its `signed` flag is read.
+function responseAudience(params, request) {
+  log.debug("Entering responseAudience().");
+  var mode = responseMode(params);
+  if (isDcApiMode(mode)) {
+    var who = clientIdPrefix((params && params.client_id) || "");
+    var signed = !!(request && request.signed) &&
+      !!(params && params.client_id) && who.prefix !== "origin";
+    if (!signed) {
+      var origin = dcApiOrigin(params);
+      log.debug("Leaving responseAudience(). DC API origin aud.");
+      return origin ? "origin:" + origin : ((params && params.client_id) ||
+        "");
+    }
+  }
+  log.debug("Leaving responseAudience(). Client Identifier.");
+  return (params && params.client_id) || "";
 }
 
 // ---------------------------------------------------------------------------
@@ -656,7 +716,7 @@ function oid4vpRules(params, ctx, out) {
     }
   }
   var known = ["direct_post", "direct_post.jwt", "fragment", "query",
-               "form_post", "post"];
+               "form_post", "post", "dc_api", "dc_api.jwt"];
   out.push(rule("response_mode", known.indexOf(mode) !== -1, "block",
     "response_mode " + mode + (known.indexOf(mode) !== -1 ?
     " — this wallet can deliver it." : " is not one this wallet can " +
@@ -665,12 +725,20 @@ function oid4vpRules(params, ctx, out) {
     out.push(rule("response_uri", !!params.response_uri, "block",
       params.response_uri ? "the answer is POSTed to " + params.response_uri +
       "." : mode + " needs a response_uri to post to."));
+  } else if (isDcApiMode(mode)) {
+    // The Digital Credentials API returns the answer to the caller of
+    // navigator.credentials.get() (Appendix A); there is no response_uri and
+    // no redirect_uri to name.
+    out.push(rule("response target", true, "block", "the Digital " +
+      "Credentials API returns the answer to the caller; no response_uri " +
+      "or redirect_uri is needed. The KB-JWT aud is " +
+      responseAudience(params, request) + "."));
   } else {
     out.push(rule("redirect_uri", !!params.redirect_uri, "block",
       params.redirect_uri ? "the answer returns to " + params.redirect_uri +
       "." : mode + " needs a redirect_uri to return to."));
   }
-  if (mode === "direct_post.jwt") {
+  if (mode === "direct_post.jwt" || mode === "dc_api.jwt") {
     var keys = encryptionKeys(request.clientMetadata, {
       protocol: ctx.protocol,
       needsThumbprint: (ctx.requestedFormat || ctx.heldFormat) === "mso_mdoc"
@@ -979,7 +1047,17 @@ function deliveryFor(params, fields, encryption) {
   var mode = responseMode(params);
   var target = responseTarget(params);
   var out = { mode: mode, target: target, fields: fields };
-  if (mode === "direct_post.jwt") {
+  if (isDcApiMode(mode)) {
+    // The Digital Credentials API answer (Appendix A) is a data OBJECT the
+    // wallet returns to the caller of navigator.credentials.get(), not a
+    // form POST or a redirect. dc_api.jwt wraps the same fields as one JWE
+    // under `response`; dc_api returns them in the clear.
+    out.kind = "dcapi";
+    out.target = "";
+    out.fields = mode === "dc_api.jwt" ? { response: encryption.jwe } : fields;
+    out.dataObject = out.fields;
+    out.body = JSON.stringify(out.fields);
+  } else if (mode === "direct_post.jwt") {
     out.kind = "post";
     out.fields = { response: encryption.jwe };
     out.body = formEncode(out.fields);
@@ -1003,7 +1081,13 @@ function deliveryFor(params, fields, encryption) {
 function describeDelivery(d) {
   log.debug("Entering describeDelivery().");
   var text;
-  if (d.kind === "redirect") {
+  if (d.kind === "dcapi") {
+    // Not an HTTP request at all: the data object the wallet returns to the
+    // caller of navigator.credentials.get() (Appendix A).
+    text = ["(the wallet RETURNS this to navigator.credentials.get() — the",
+            "Digital Credentials API carries no HTTP request)", "",
+            "response_mode: " + d.mode, "", d.body].join("\n");
+  } else if (d.kind === "redirect") {
     text = "HTTP/1.1 302 Found\nLocation: " + d.url;
   } else {
     text = ["POST " + (d.target || "(no target)"),
@@ -1059,7 +1143,8 @@ function walletMetadata() {
     response_types_supported: ["vp_token", "id_token",
                                "vp_token id_token"],
     response_modes_supported: ["direct_post", "direct_post.jwt", "fragment",
-                               "query", "form_post", "post"],
+                               "query", "form_post", "post", "dc_api",
+                               "dc_api.jwt"],
     subject_syntax_types_supported: SUBJECT_SYNTAXES
   };
 }
@@ -1196,6 +1281,9 @@ module.exports = {
   clientIdPrefix: clientIdPrefix,
   responseMode: responseMode,
   responseTarget: responseTarget,
+  isDcApiMode: isDcApiMode,
+  dcApiOrigin: dcApiOrigin,
+  responseAudience: responseAudience,
   verifyX509Request: verifyX509Request,
   encryptionKeys: encryptionKeys,
   encValues: encValues,

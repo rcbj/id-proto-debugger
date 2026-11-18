@@ -768,9 +768,18 @@ function buildPresentation() {
     parsed: state.parsed,
     selected: selectedEncoded(),
     holderPrivateJwk: priv,
-    aud: params.client_id,
+    // The holder binding's audience: the Client Identifier, or, for an
+    // unsigned Digital Credentials API request, origin:<origin> (Appendix
+    // A.4).
+    aud: vpProtocols.responseAudience(params, state.request),
     nonce: params.nonce,
     keyBinding: keyBinding,
+    // transaction_data (section 8.4): the request's own, and which DCQL
+    // credential query is being answered, so buildPresentation can bind the
+    // ones that name it into the KB-JWT.
+    params: params,
+    credentialQueryId: (state.credentialQuery && state.credentialQuery.id) ||
+      sdJwtVp.firstCredentialQueryId(state.dcql),
     // The holder a VC-JOSE-COSE presentation names: the DID the credential's
     // subject is, when it is one (#477).
     holderId: /^did:/.test(String((state.parsed || {}).subject || "")) ?
@@ -1055,7 +1064,8 @@ function finishResponse() {
         state: params.state });
       setJson("vp_vp_token", vpToken);
       var mode = vpProtocols.responseMode(params);
-      var encrypting = mode === "direct_post.jwt" ?
+      var encrypting = (mode === "direct_post.jwt" ||
+          mode === "dc_api.jwt") ?
         vpProtocols.encryptResponse({ fields: fields,
           clientMetadata: state.request.clientMetadata,
           key: responseEncryptionKey(),
@@ -1102,7 +1112,8 @@ function renderEncryption(encryption) {
 function responseEncryptionKey() {
   log.debug("Entering responseEncryptionKey().");
   var params = (state.request && state.request.params) || {};
-  if (vpProtocols.responseMode(params) !== "direct_post.jwt") {
+  var mode = vpProtocols.responseMode(params);
+  if (mode !== "direct_post.jwt" && mode !== "dc_api.jwt") {
     log.debug("Leaving responseEncryptionKey(). Not encrypted.");
     return null;
   }
@@ -1291,6 +1302,26 @@ function present() {
     return false;
   }
   var delivery = state.response.delivery;
+  if (delivery.kind === "dcapi") {
+    // The Digital Credentials API returns the answer to the caller of
+    // navigator.credentials.get(). This wallet is a page, not a platform
+    // wallet the browser can invoke, so it SHOWS the data object it would
+    // hand back rather than posting it anywhere (Appendix A).
+    recordSent(null);
+    var dcBox = el("vp_response_body");
+    if (dcBox) {
+      dcBox.style.display = "block";
+      dcBox.textContent = JSON.stringify(delivery.dataObject, null, 2);
+    }
+    recordSent({ ok: true, statusCode: 0, body: delivery.dataObject,
+                 raw: delivery.body });
+    status("vp_present_status", "This is the Digital Credentials API " +
+      "response object the wallet returns to the caller of " +
+      "navigator.credentials.get(). Opening step 3 …", "vc-ok");
+    window.location.href = sdJwtVp.STEP3_URL;
+    log.debug("Leaving present(). DC API data object.");
+    return false;
+  }
   if (!delivery.target) {
     status("vp_present_status", "The request names nowhere to send the " +
            "answer (" + delivery.mode + ").", "vc-bad");
