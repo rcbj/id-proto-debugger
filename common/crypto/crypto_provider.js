@@ -37,11 +37,11 @@
 // raw ECDSA signature conversion.
 //
 // SYNCHRONOUS WHERE THE PRIMITIVE IS. Every function returns its result
-// directly. A webcrypto backend, when one exists, will be the async one.
+// directly. The webcrypto backend is the async one, crypto_webcrypto.js.
 //
-// BACKENDS. `js` is the only backend in step 1 and is always present.
-// `webcrypto` is reserved: a later step may add it as an OPTIONAL second
-// backend, chosen per call or per page, and it must then produce output
+// BACKENDS. `js` is the default and is always present. `webcrypto` is the
+// OPTIONAL second backend (step 5), in crypto_webcrypto.js, chosen per call
+// or by setBackend(), falling back to `js`; it must produce output
 // byte-identical to `js` wherever the operation is deterministic (ECDSA is the
 // trap: both sign with fresh randomness — the `js` backend hedges RFC
 // 6979 unless opts.deterministic — so for ECDSA "identical" can only mean
@@ -106,21 +106,17 @@ function backend() {
   return currentBackend;
 }
 
-// Refuses "webcrypto" in step 1 rather than accepting it and quietly running
-// `js` anyway: a backend switch that switches nothing would make every
-// "both backends agree" check pass vacuously.
+// "webcrypto" is a PREFERENCE read by crypto_webcrypto.js's asynchronous
+// entry points (#463 step 5), which use the browser's engine where it exists
+// and fall back to `js` where it does not, reporting which engine answered.
+// Every synchronous function in THIS file stays `js` whatever is set here,
+// so no setting can take an operation away.
 function setBackend(name) {
   log.debug("Entering setBackend(). name=" + name);
   if (BACKENDS.indexOf(name) < 0) {
     log.debug("Leaving setBackend(). Unknown.");
     throw new Error("Unknown crypto backend: " + name + " (one of " +
                     BACKENDS.join(", ") + ").");
-  }
-  if (name !== "js") {
-    log.debug("Leaving setBackend(). Not implemented.");
-    throw new Error("The " + name + " backend has no implementations yet " +
-                    "(issue #463 adds it after the format layers move); " +
-                    "every operation runs on js.");
   }
   currentBackend = name;
   log.debug("Leaving setBackend().");
