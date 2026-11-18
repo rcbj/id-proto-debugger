@@ -176,20 +176,10 @@ function isEcdh(alg) {
 var kem = require("./jwe_kem");
 // EVERY PRIMITIVE BELOW IS crypto_provider.js's (#463, step 2): pure JS, and
 // the same in a page served over plain HTTP, in a secure context and in
-// node. Web Crypto is touched in exactly two places now: a CryptoKey a
-// caller hands in is exported to a JWK first (cryptoKeyToJwk()), and the
-// older deriveCek()/unwrapCek() entry points hand a CryptoKey back, because
-// that is what their callers asked for.
+// node. This file does not touch Web Crypto at all: a CryptoKey a caller
+// hands in is exported to a JWK by crypto_webcrypto.js (#463 step 5).
 var provider = require("./crypto_provider");
-
-// The AES key sizes a browser's Web Crypto imports. Only the CryptoKey-
-// shaped deriveCek()/unwrapCek() still need it: they hand a Web Crypto key
-// back, and AES-192 is the size every browser-grade Web Crypto refuses.
-function webCryptoDoesAes(keyBytes) {
-  log.debug("Entering webCryptoDoesAes().");
-  log.debug("Leaving webCryptoDoesAes().");
-  return keyBytes === 16 || keyBytes === 32;
-}
+var webcrypto = require("./crypto_webcrypto");
 
 // RFC 3394 key wrapping, by crypto_provider.js. Kept under these names
 // because tests/jose_jwe_encryption.js holds them to RFC 3394's own vectors.
@@ -239,53 +229,22 @@ function supportedEncs() {
 }
 
 // ---------------------------------------------------------------------------
-// What this browser's Web Crypto will actually do.
+// AES SUPPORT: ALL OF IT, EVERYWHERE.
 //
-// RFC 7518 defines AES-128, AES-192 and AES-256 for both key wrapping and
-// content encryption. Chrome's Web Crypto implements 128 and 256 and REJECTS
-// 192 — so ECDH-ES+A192KW and A192GCM cannot be performed there however
-// correctly they are coded. Node's Web Crypto does support them, which is a
-// good way to be misled by a unit test.
-//
-// So the algorithms are probed rather than assumed, once, and a caller can say
-// "not supported by this browser" instead of surfacing an OperationError from
-// somewhere deep in a key import.
+// This used to PROBE the browser's Web Crypto, because Chrome implements
+// AES-128 and -256 and refuses AES-192, so ECDH-ES+A192KW and A192GCM could
+// not be performed there. Since #463 every AES operation here is
+// crypto_provider.js's, in JavaScript, so there is nothing to probe: every
+// size works on every page, plain HTTP included. Kept, with the same shape,
+// because jwt_tools.js and the reasons below take its answer.
 // ---------------------------------------------------------------------------
-var aesSupportProbe = null;
-
 function probeAesSupport() {
   log.debug("Entering probeAesSupport().");
-  if (aesSupportProbe) {
-    log.debug("Leaving probeAesSupport(). Cached.");
-    return aesSupportProbe;
-  }
-  aesSupportProbe = (async function () {
-    var support = { 'AES-GCM': {}, 'AES-KW': {}, 'AES-CBC': {} };
-    // AES-CBC is probed at the same three sizes, which are the HALF-CEK sizes
-    // the CBC-HMAC family actually uses — so the loop needs no special case
-    // and only the reason string in encUnsupportedReason() does.
-    var names = ['AES-GCM', 'AES-KW', 'AES-CBC'];
-    var sizes = [128, 192, 256];
-    for (var n = 0; n < names.length; n++) {
-      for (var b = 0; b < sizes.length; b++) {
-        var usages = names[n] === 'AES-KW' ? ['wrapKey'] : ['encrypt'];
-        try {
-          await crypto.subtle.importKey('raw', new Uint8Array(sizes[b] / 8),
-            { name: names[n] }, false, usages);
-          support[names[n]][sizes[b]] = true;
-        } catch (e) {
-          support[names[n]][sizes[b]] = false;
-        }
-      }
-    }
-    log.debug("probeAesSupport(): AES-GCM " +
-              JSON.stringify(support['AES-GCM']) +
-              ", AES-KW " + JSON.stringify(support['AES-KW']) +
-              ", AES-CBC " + JSON.stringify(support['AES-CBC']));
-    return support;
-  })();
-  log.debug("Leaving probeAesSupport(). Probing.");
-  return aesSupportProbe;
+  var all = { 128: true, 192: true, 256: true };
+  log.debug("Leaving probeAesSupport().");
+  return Promise.resolve({ 'AES-GCM': Object.assign({}, all),
+                           'AES-KW': Object.assign({}, all),
+                           'AES-CBC': Object.assign({}, all) });
 }
 
 // ---------------------------------------------------------------------------
@@ -383,48 +342,13 @@ function stripJwkForImport(jwk) {
   return out;
 }
 
-// Import a key in any of the accepted forms. `format` is the PEM's DER format
-// ("spki" for a public key, "pkcs8" for a private one).
-function importKey(key, format, params, usages) {
-  log.debug("Entering importKey(). format=" + format);
-  if (isCryptoKey(key)) {
-    log.debug("Leaving importKey(). It was already a CryptoKey.");
-    return Promise.resolve(key);
-  }
-  var jwk = asJwk(key);
-  if (jwk) {
-    log.debug("Leaving importKey(). Importing a JWK.");
-    return crypto.subtle.importKey('jwk', stripJwkForImport(jwk), params, false,
-                                   usages);
-  }
-  log.debug("Leaving importKey(). Importing PEM as " + format + ".");
-  return crypto.subtle.importKey(format, pemToDer(String(key)), params, false,
-                                 usages);
-}
-
-// A CryptoKey a caller handed in, as a JWK. It must be extractable: the
-// cryptography here is crypto_provider.js's, which reads key bytes.
-async function cryptoKeyToJwk(key) {
-  log.debug("Entering cryptoKeyToJwk().");
-  try {
-    var jwk = await crypto.subtle.exportKey('jwk', key);
-    log.debug("Leaving cryptoKeyToJwk().");
-    return jwk;
-  } catch (e) {
-    log.debug("Leaving cryptoKeyToJwk(). Not extractable.");
-    throw new Error('this module performs JOSE encryption in JavaScript and ' +
-        'needs the key\'s bytes; the CryptoKey given is not extractable. ' +
-        'Pass a JWK or PEM, or an extractable key.');
-  }
-}
-
 // Any accepted key form (a JWK object or text, a PEM, a CryptoKey) as a
 // crypto_provider.js key.
 async function providerKey(key) {
   log.debug("Entering providerKey().");
   if (isCryptoKey(key)) {
     var fromCrypto = provider.importKey(stripJwkForImport(
-      await cryptoKeyToJwk(key)));
+      await webcrypto.exportCryptoKeyJwk(key)));
     log.debug("Leaving providerKey(). CryptoKey.");
     return fromCrypto;
   }
@@ -641,10 +565,6 @@ async function cbcHmacDecrypt(cekBytes, enc, iv, aad, ciphertext, tag) {
 // this layer to know which family it is serving, and would make a 48-byte
 // A192CBC-HS384 CEK unrepresentable — there is no 48-byte AES key to import it
 // as.
-//
-// `deriveCek()` / `unwrapCek()` below are the older CryptoKey-shaped entry
-// points, kept because jwt_tools.js has called them since before this file
-// existed. They are AES-GCM only and say so.
 // ---------------------------------------------------------------------------
 async function deriveCekBytes(alg, enc, protectedHeader, recipientPublicKey,
                               opts) {
@@ -850,61 +770,6 @@ async function unwrapCekBytes(alg, enc, protectedHeader, encryptedKey,
       await providerKey(recipientPrivateKey), b64uToBytes(encryptedKey));
   log.debug("Leaving unwrapCekBytes(). " + alg + ".");
   return cek;
-}
-
-// The CryptoKey-shaped entry points. AES-GCM only — a CBC-HMAC CEK is not one
-// AES key and cannot be returned this way, so it is refused by name rather than
-// truncated into something that would encrypt and never decrypt.
-function refuseCbcHmacHere(enc, where) {
-  log.debug("Entering refuseCbcHmacHere().");
-  if (!isCbcHmac(enc)) {
-    log.debug("Leaving refuseCbcHmacHere().");
-    return;
-  }
-  log.debug("Leaving refuseCbcHmacHere(). Refused.");
-  throw new Error(where + '() returns one AES-GCM key and ' + enc + ' needs ' +
-      'a MAC key and an AES key. Use encryptCompact()/decryptCompact(), or ' +
-      where + 'Bytes().');
-}
-
-// The CryptoKey-shaped entry points hand back a Web Crypto key, so they cannot
-// serve a size Web Crypto refuses to import however well this file can perform
-// it in JavaScript. encryptCompact()/decryptCompact() have no such limit.
-function refuseUnimportableSize(enc, where) {
-  log.debug("Entering refuseUnimportableSize().");
-  if (webCryptoDoesAes(ENC_KEY_BYTES[enc])) {
-    log.debug("Leaving refuseUnimportableSize().");
-    return;
-  }
-  log.debug("Leaving refuseUnimportableSize(). Refused.");
-  throw new Error(where + '() returns a Web Crypto key and this browser will ' +
-      'not import an AES-' + (ENC_KEY_BYTES[enc] * 8) + ' one. ' +
-      'encryptCompact()/decryptCompact() perform ' + enc + ' in JavaScript ' +
-      'instead — use those.');
-}
-
-async function deriveCek(alg, enc, protectedHeader, recipientPublicKey) {
-  log.debug("Entering deriveCek(). alg=" + alg + ", enc=" + enc);
-  refuseCbcHmacHere(enc, 'deriveCek');
-  refuseUnimportableSize(enc, 'deriveCek');
-  var derived = await deriveCekBytes(alg, enc, protectedHeader,
-      recipientPublicKey);
-  var cek = await crypto.subtle.importKey('raw', derived.cekBytes,
-      { name: 'AES-GCM' }, false, ['encrypt']);
-  log.debug("Leaving deriveCek().");
-  return { cek: cek, encryptedKey: derived.encryptedKey };
-}
-
-async function unwrapCek(alg, enc, protectedHeader, encryptedKey,
-                         recipientPrivateKey) {
-  log.debug("Entering unwrapCek(). alg=" + alg + ", enc=" + enc);
-  refuseCbcHmacHere(enc, 'unwrapCek');
-  refuseUnimportableSize(enc, 'unwrapCek');
-  var cekBytes = await unwrapCekBytes(alg, enc, protectedHeader, encryptedKey,
-      recipientPrivateKey);
-  log.debug("Leaving unwrapCek().");
-  return crypto.subtle.importKey('raw', cekBytes, { name: 'AES-GCM' }, false,
-      ['decrypt']);
 }
 
 // ---------------------------------------------------------------------------
@@ -1155,19 +1020,15 @@ module.exports = {
   algUnsupportedReason: algUnsupportedReason,
   encUnsupportedReason: encUnsupportedReason,
   // keys
-  importKey: importKey,
   stripJwkForImport: stripJwkForImport,
   curveOf: curveOf,
   // the pieces
   concatKdf: concatKdf,
-  deriveCek: deriveCek,
-  unwrapCek: unwrapCek,
   deriveCekBytes: deriveCekBytes,
   unwrapCekBytes: unwrapCekBytes,
   isCbcHmac: isCbcHmac,
   // The JavaScript AES paths, exported so tests/jose_jwe_encryption.js can
   // check them against Web Crypto directly rather than only through a JWE.
-  webCryptoDoesAes: webCryptoDoesAes,
   aesKwWrapJs: aesKwWrapJs,
   aesKwUnwrapJs: aesKwUnwrapJs,
   CBC_HMAC: CBC_HMAC,
