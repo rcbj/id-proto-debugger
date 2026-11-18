@@ -423,9 +423,17 @@ function checkSignatures() {
          label + ": a garbage signature did not return false");
     });
     if (c.ecdsa) {
-      // RFC 6979: the js backend's ECDSA is deterministic.
-      eq(P.sign(c.alg, key, message), P.sign(c.alg, key, message),
-         c.alg + ": ECDSA signing is not deterministic");
+      // RFC 6979 when asked for; hedged (section 3.6) by default, so two
+      // signatures of one message differ, as a Web Crypto pair does and as
+      // a replay check (GNAP jwsd) requires.
+      const det = { deterministic: true };
+      eq(P.sign(c.alg, key, message, det), P.sign(c.alg, key, message, det),
+         c.alg + ": ECDSA signing with deterministic is not deterministic");
+      const h1 = P.sign(c.alg, key, message);
+      const h2 = P.sign(c.alg, key, message);
+      ok(hex(h1) !== hex(h2), c.alg + ": two hedged signatures are equal");
+      ok(P.verify(c.alg, pub, message, h1) && P.verify(c.alg, pub, message, h2),
+         c.alg + ": a hedged signature does not verify");
       // raw <-> DER helpers agree with what node writes.
       const size = (key.publicKey.length - 1) / 2;
       for (let i = 0; i < 4; i++) {
@@ -1017,9 +1025,6 @@ function checkTableAndBackends() {
   ok(P.backend() === "js", "default backend is " + P.backend());
   ok(P.BACKENDS.join() === "js,webcrypto", "BACKENDS is " + P.BACKENDS);
   throwsLike(function () {
-    P.setBackend("webcrypto");
-  }, /no implementations/, "setBackend(webcrypto) did not refuse");
-  throwsLike(function () {
     P.setBackend("openssl");
   }, /Unknown/, "setBackend(unknown) did not refuse");
   ok(P.backend() === "js", "a refused setBackend changed the backend");
@@ -1088,7 +1093,103 @@ function checkRsaSigningPaths() {
   log.debug("Leaving checkRsaSigningPaths().");
 }
 
-function test() {
+// ---------------------------------------------------------------------------
+// The optional Web Crypto backend (#463 step 5), crypto_webcrypto.js. Node
+// has a real crypto.subtle, so here it is the BROWSER engine that answers,
+// and node's crypto (OpenSSL) checks it. What must hold:
+//  * off by default: without opting in, the answer is js;
+//  * opted in, every algorithm Web Crypto names is answered by it, and the
+//    signature verifies under node AND under the js backend (the bytes are
+//    the js backend's exactly where the algorithm is deterministic);
+//  * every algorithm Web Crypto does not name (secp256k1, Ed448) still
+//    works, answered by js, so opting in loses nothing;
+//  * with no crypto.subtle at all (a plain-HTTP page), everything is js.
+// ---------------------------------------------------------------------------
+const DETERMINISTIC = /^(rsa-pkcs1-|ed25519$)/;
+async function checkWebcryptoBackend() {
+  log.debug("Entering checkWebcryptoBackend().");
+  const W = paths.requireCryptoModule("crypto_webcrypto.js");
+  const data = new TextEncoder().encode("#463 step 5");
+  const keysBySpec = {};
+  for (const c of SIG_CASES) {
+    const key = keysBySpec[c.spec] ||
+        (keysBySpec[c.spec] = P.generateKeyPair(c.spec));
+    const expected = W.paramsFor(c.alg) ? "webcrypto" : "js";
+    const off = await W.sign(c.alg, key, data);
+    ok(off.engine === "js", c.alg + ": answered by " + off.engine +
+       " without opting in");
+    const on = await W.sign(c.alg, key, data, { backend: "webcrypto" });
+    ok(on.engine === expected, c.alg + ": answered by " + on.engine +
+       ", expected " + expected);
+    const pub = crypto.createPublicKey(P.exportKey(P.publicKeyOf(key),
+                                                   "spki-pem"));
+    ok(crypto.verify(c.hash, Buffer.from(data), nodeSignOpts(c, pub, "raw"),
+                     Buffer.from(on.signature)),
+       c.alg + " (" + on.engine + "): node does not verify it");
+    ok(P.verify(c.alg, key, data, on.signature),
+       c.alg + " (" + on.engine + "): the js backend does not verify it");
+    if (DETERMINISTIC.test(c.alg)) {
+      ok(hex(on.signature) === hex(P.sign(c.alg, key, data)),
+         c.alg + ": Web Crypto's bytes differ from the js backend's");
+    }
+    const jsSig = P.sign(c.alg, key, data);
+    const v = await W.verify(c.alg, key, data, jsSig,
+                             { backend: "webcrypto" });
+    ok(v.valid && v.engine === expected, c.alg + ": " + v.engine +
+       " does not verify the js backend's signature");
+    const bad = Uint8Array.from(jsSig);
+    bad[bad.length - 1] ^= 1;
+    const vb = await W.verify(c.alg, key, data, bad, { backend: "webcrypto" });
+    ok(!vb.valid, c.alg + ": " + vb.engine + " accepts a damaged signature");
+    if (c.ecdsa) {
+      const der = await W.sign(c.alg, key, data,
+                               { backend: "webcrypto", encoding: "der" });
+      ok(crypto.verify(c.hash, Buffer.from(data),
+                       nodeSignOpts(c, pub, "der"),
+                       Buffer.from(der.signature)),
+         c.alg + ": the DER encoding does not verify under node");
+      const vd = await W.verify(c.alg, key, data, der.signature,
+                                { backend: "webcrypto", encoding: "der" });
+      ok(vd.valid, c.alg + ": a DER signature does not verify");
+    }
+  }
+  // The provider-wide preference, and back.
+  P.setBackend("webcrypto");
+  try {
+    const d = await W.digest("SHA-256", data);
+    ok(d.engine === "webcrypto" && hex(d.digest) ===
+       crypto.createHash("sha256").update(data).digest("hex"),
+       "SHA-256 under setBackend(webcrypto): " + d.engine);
+    const d3 = await W.digest("sha3-256", data);
+    ok(d3.engine === "js" && hex(d3.digest) ===
+       crypto.createHash("sha3-256").update(data).digest("hex"),
+       "SHA3-256, which Web Crypto lacks, did not fall back to js");
+    ok(hex(P.digest("sha256", data)) === hex(d.digest),
+       "the synchronous digest changed under setBackend(webcrypto)");
+  } finally {
+    P.setBackend("js");
+  }
+  // No crypto.subtle at all, as on a plain-HTTP page: still works, on js.
+  const key = keysBySpec["ec-p256"];
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  const real = globalThis.crypto;
+  Object.defineProperty(globalThis, "crypto", { configurable: true,
+    writable: true, value: { getRandomValues: function (a) {
+      return real.getRandomValues(a);
+    } } });
+  try {
+    const r = await W.sign("ecdsa-p256-sha256", key, data,
+                           { backend: "webcrypto" });
+    ok(r.engine === "js" && P.verify("ecdsa-p256-sha256", key, data,
+                                     r.signature),
+       "with no crypto.subtle the signature came from " + r.engine);
+  } finally {
+    Object.defineProperty(globalThis, "crypto", descriptor);
+  }
+  log.debug("Leaving checkWebcryptoBackend().");
+}
+
+async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. common/crypto/crypto_provider.js against " +
            "node's crypto (OpenSSL " + process.versions.openssl + ").");
@@ -1107,6 +1208,13 @@ function test() {
   section("thumbprints", checkThumbprints);
   section("post-quantum / hash-based", checkPostQuantum);
   section("table / backends / certificates", checkTableAndBackends);
+  const beforeWeb = checks;
+  try {
+    await checkWebcryptoBackend();
+  } catch (e) {
+    ok(false, "[webcrypto backend] threw: " + (e.stack || e.message));
+  }
+  log.info("[webcrypto backend] " + (checks - beforeWeb) + " checks");
   ok(checks >= MIN_CHECKS, "only " + checks + " checks ran; the floor is " +
      MIN_CHECKS);
   if (failures.length) {
@@ -1119,4 +1227,7 @@ function test() {
   log.debug("Leaving test().");
 }
 
-test();
+test().catch(function (e) {
+  log.error(e.stack || e.message);
+  process.exitCode = 1;
+});

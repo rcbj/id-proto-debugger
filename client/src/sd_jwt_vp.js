@@ -46,6 +46,8 @@ var log = bunyan.createLogger({
 });
 
 var metadataClient = require("./metadata_client");
+// Digests by crypto_provider.js (#463): pure JS, on every deployment.
+var provider = require("./crypto_provider");
 var jws = require("./jws");
 var sdJwtVc = require("./sd_jwt_vc");
 var vpProtocols = require("./vp_protocols");
@@ -630,9 +632,10 @@ function sdHash(prefix, sdAlg) {
   for (var i = 0; i < prefix.length; i++) { bytes[i] =
        prefix.charCodeAt(i) & 0xff; }
   log.debug("Leaving sdHash().");
-  return crypto.subtle.digest(webcrypto, bytes).then(function (buf) {
-    return metadataClient.bytesToB64u(buf);
-  });
+  return Promise.resolve(provider.digest(webcrypto, bytes))
+    .then(function (buf) {
+      return metadataClient.bytesToB64u(buf);
+    });
 }
 
 // The Key Binding JWT (RFC 9901 section 4.3): typ kb+jwt, and a payload of

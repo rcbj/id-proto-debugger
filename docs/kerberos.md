@@ -125,7 +125,7 @@ Two consequences worth knowing before proposing a change:
 | Module | Holds |
 |---|---|
 | `krb5_primitives.js` | MD4, MD5, HMAC-MD5, RC4, n-fold, UTF-16LE — the things neither Web Crypto nor Node's OpenSSL 3 will do |
-| `krb5_crypto.js` | RFC 3961's framework and etypes 17, 18, 19, 20, 23: unpadded CBC and CTS over Web Crypto, string-to-key, the key-usage table |
+| `krb5_crypto.js` | RFC 3961's framework and etypes 17, 18, 19, 20, 23: unpadded CBC and CTS, string-to-key, the key-usage table, all on `common/crypto/crypto_provider.js` (pure JS since #463) |
 | `krb5_asn1.js` | DER for Kerberos's ASN.1, plus the generic TLV tree the decoder needs for bytes it cannot identify |
 | `krb5_messages.js` | Every message, the error catalogue with diagnostic meanings, and `KRB-CRED` |
 | `krb5_gss.js` | RFC 4121: the InitialContextToken, the 0x8003 checksum, MIC and Wrap |
@@ -160,7 +160,7 @@ Two consequences worth knowing before proposing a change:
 
 **Two flag tables share their names and not their values.** [MS-SAMR]'s `USER_ACCOUNT` codes are what a PAC carries; LDAP's `userAccountControl` bits are not (`NORMAL_ACCOUNT` is 0x10 in one and 0x200 in the other). And [MS-PAC]'s bit diagrams number the **leftmost** cell bit 0 with the **rightmost** as least significant, so `UserFlags` D is 0x20 and `SE_GROUP_RESOURCE` is 0x20000000.
 
-**Web Crypto cannot do most of this.** No MD5, no unpadded CBC, no CTS; Node's OpenSSL 3 has no MD4 or RC4. Hence `krb5_primitives.js`. And `globalThis.crypto` is used rather than `require("crypto")`, because browserify substitutes the latter with a shim that drags in `elliptic` — see `client/CLAUDE.md`.
+**Web Crypto cannot do most of this.** No MD5, no unpadded CBC, no CTS; Node's OpenSSL 3 has no MD4 or RC4. Hence `krb5_primitives.js`. Since #463 the AES, HMAC and PBKDF2 are `crypto_provider.js`'s as well, so the Kerberos pages derive keys and open tickets on a plain-HTTP origin too, and show no secure-context warning. `require("crypto")` is never used, because browserify substitutes it with a shim that drags in `elliptic` — see `client/CLAUDE.md`.
 
 ---
 

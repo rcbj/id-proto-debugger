@@ -373,8 +373,8 @@ function saveIdentityChanged() {
 async function downloadIdentity() {
   log.debug("Entering downloadIdentity().");
   try {
-    var canRoot = typeof crypto !== "undefined" && !!crypto.subtle;
-    await ensureIdentity(canRoot);
+    // The root CA is pure JS since #463, so it can always be made.
+    await ensureIdentity(true);
     var text = JSON.stringify(verifier.verifierIdentityFile(identity),
                               null, 2) + "\n";
     var blob = new Blob([text], { type: "application/json" });
@@ -855,17 +855,8 @@ async function makeSigner(prefix, dnsName, caIssuersUrl) {
     return signer;
   }
   if (X509_PREFIXES.indexOf(prefix) >= 0) {
-    // THE CERTIFICATE NEEDS WEB CRYPTO until #463 moves x509.js and
-    // key_material.js onto the pure-JS module. Said here by name rather
-    // than left to fail as "Cannot read properties of undefined".
-    if (typeof crypto === "undefined" || !crypto.subtle) {
-      log.debug("Leaving makeSigner(). No secure context.");
-      throw new Error("This page is not in a secure context (https or " +
-        "localhost), so the browser offers no Web Crypto, and the " +
-        "certificate an x509 Client Identifier is signed with cannot be " +
-        "made (#463). The decentralized_identifier, verifier_attestation " +
-        "and pre-registered prefixes need no certificate.");
-    }
+    // The certificate is made by x509.js on crypto_provider.js, pure JS
+    // since #463, so this works on a plain-HTTP page as well.
     // The ROOT is the identity's, kept across runs; the leaf is this
     // request's (#470, B4).
     var held = await ensureIdentity(true);

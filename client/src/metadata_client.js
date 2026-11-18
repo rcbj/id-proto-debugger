@@ -38,6 +38,8 @@ var log = bunyan.createLogger({
     }
   })()
 });
+// JWS verification against a JWKS is crypto_provider.js's (#463).
+var provider = require("./crypto_provider");
 
 // --- escaping ---------------------------------------------------------------
 // Every table below is built by string concatenation from a document fetched
@@ -288,6 +290,14 @@ function candidateKeys(keys, kid) {
 // does not name one (common for a single-key authorization server). `label`
 // names the token in any error, since the same code verifies signed_metadata,
 // an SD-JWT VC, and a proof JWT.
+var PROVIDER_JWS_ALG = {
+  RS256: "rsa-pkcs1-sha256", RS384: "rsa-pkcs1-sha384",
+  RS512: "rsa-pkcs1-sha512", PS256: "rsa-pss-sha256",
+  PS384: "rsa-pss-sha384", PS512: "rsa-pss-sha512",
+  ES256: "ecdsa-p256-sha256", ES384: "ecdsa-p384-sha384",
+  ES512: "ecdsa-p521-sha512"
+};
+
 async function verifyJwsWithJwks(token, jwks, label) {
   log.debug("Entering verifyJwsWithJwks().");
   label = label || "the JWT";
@@ -312,9 +322,11 @@ async function verifyJwsWithJwks(token, jwks, label) {
     var material = jwkForImport(candidates[i]);
     if (!material) continue;
     try {
-      var key = await crypto.subtle.importKey("jwk", material, params.imp,
-          false, ["verify"]);
-      if (await crypto.subtle.verify(params.ver, key, sig, data)) {
+      // crypto_provider.js verifies (#463): pure JS, every deployment. JWS
+      // ECDSA is raw r || s and RSA-PSS's salt is the hash length, which
+      // are the provider's defaults.
+      if (provider.verify(PROVIDER_JWS_ALG[header.alg],
+                          provider.importKey(material), data, sig)) {
         log.debug("Leaving verifyJwsWithJwks().");
         return { valid: true, header: header, kid: candidates[i].kid ||
                 "(no kid)" };

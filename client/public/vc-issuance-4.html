@@ -132,6 +132,15 @@ function vcSetAllPanes(expand) {
 </div>
 
 <!-- ====== Pane 2: the Refresh Token call (RFC 6749 section 6) ====== -->
+<!-- ============ Client authentication at the token endpoint ============ -->
+<div class="step0 dbg-pane" id="pane_client_auth">
+  <legend class="dbg-legend">Client Authentication (token endpoint)</legend>
+  <fieldset>
+    <p class="vc-note">The method chosen on step 1. A refresh by a confidential client must authenticate (RFC 6749 section 6); type the secret here, for this page load only.</p>
+    <div id="vc_client_auth_pane"></div>
+  </fieldset>
+</div>
+
 <div class="step0 dbg-pane" id="pane_refresh">
   <legend class="dbg-legend" id="refresh_expand_button" onclick="return vcissuance4.togglePane('refresh_fieldset');">Refresh the Access Token</legend>
   <fieldset name="refresh_fieldset" id="refresh_fieldset" style="display: block;">

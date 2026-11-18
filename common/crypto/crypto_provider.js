@@ -37,15 +37,15 @@
 // raw ECDSA signature conversion.
 //
 // SYNCHRONOUS WHERE THE PRIMITIVE IS. Every function returns its result
-// directly. A webcrypto backend, when one exists, will be the async one.
+// directly. The webcrypto backend is the async one, crypto_webcrypto.js.
 //
-// BACKENDS. `js` is the only backend in step 1 and is always present.
-// `webcrypto` is reserved: a later step may add it as an OPTIONAL second
-// backend, chosen per call or per page, and it must then produce output
+// BACKENDS. `js` is the default and is always present. `webcrypto` is the
+// OPTIONAL second backend (step 5), in crypto_webcrypto.js, chosen per call
+// or by setBackend(), falling back to `js`; it must produce output
 // byte-identical to `js` wherever the operation is deterministic (ECDSA is the
-// trap: the `js` backend signs RFC 6979 deterministically, Web Crypto signs
-// with fresh randomness, so for ECDSA "identical" can only mean "each
-// verifies the other's"). THIS FILE NEVER TOUCHES WEB CRYPTO — the test
+// trap: both sign with fresh randomness — the `js` backend hedges RFC
+// 6979 unless opts.deterministic — so for ECDSA "identical" can only mean
+// "each verifies the other's"). THIS FILE NEVER TOUCHES WEB CRYPTO — the test
 // asserts its text does not even name it — so it works outside a secure
 // context, which is the point of the whole issue.
 //
@@ -106,21 +106,17 @@ function backend() {
   return currentBackend;
 }
 
-// Refuses "webcrypto" in step 1 rather than accepting it and quietly running
-// `js` anyway: a backend switch that switches nothing would make every
-// "both backends agree" check pass vacuously.
+// "webcrypto" is a PREFERENCE read by crypto_webcrypto.js's asynchronous
+// entry points (#463 step 5), which use the browser's engine where it exists
+// and fall back to `js` where it does not, reporting which engine answered.
+// Every synchronous function in THIS file stays `js` whatever is set here,
+// so no setting can take an operation away.
 function setBackend(name) {
   log.debug("Entering setBackend(). name=" + name);
   if (BACKENDS.indexOf(name) < 0) {
     log.debug("Leaving setBackend(). Unknown.");
     throw new Error("Unknown crypto backend: " + name + " (one of " +
                     BACKENDS.join(", ") + ").");
-  }
-  if (name !== "js") {
-    log.debug("Leaving setBackend(). Not implemented.");
-    throw new Error("The " + name + " backend has no implementations yet " +
-                    "(issue #463 adds it after the format layers move); " +
-                    "every operation runs on js.");
   }
   currentBackend = name;
   log.debug("Leaving setBackend().");
@@ -204,8 +200,9 @@ var SIGNERS = {
       keyType: s.family === "ecdsa" ? "ec"
              : s.family === "eddsa" ? "okp" : "rsa",
       curve: s.curve || null, hash: s.hash || null,
-      // RFC 6979 makes the js backend's ECDSA deterministic; PSS salts.
-      deterministic: s.family !== "rsa-pss"
+      // ECDSA is hedged unless opts.deterministic asks for RFC 6979; PSS
+      // salts.
+      deterministic: s.family !== "rsa-pss" && s.family !== "ecdsa"
     });
   }
   var pq = Object.keys(pqc.SIGNATURE_ALGS);
@@ -603,8 +600,14 @@ function rsaSignBackend() {
 //
 //   ECDSA: opts.encoding "raw" (r || s, the default — JOSE and COSE) or
 //          "der" (XML DSig's ECDSA URIs say raw too; X.509 and CMS use DER).
-//          Deterministic RFC 6979 nonces, low-S on secp256k1 and not on the
-//          NIST curves — exactly what jws.js's js backend emits today.
+//          HEDGED nonces by default: RFC 6979 section 3.6 with fresh
+//          randomness as the additional data, so every signature is
+//          unique, as a Web Crypto one is. A protocol with a replay check
+//          (GNAP's jwsd, a DPoP proof) refuses a second proof that is
+//          byte-identical to the first, and two identical requests in one
+//          second were exactly that with plain RFC 6979.
+//          opts.deterministic: true gives plain RFC 6979, for its vectors.
+//          Low-S on secp256k1 and not on the NIST curves.
 //   HSS-LMS / XMSS / XMSSMT: THE KEY IS MUTATED. key.privateKey is replaced
 //          by the advanced state hbs.js returns, and the caller MUST persist
 //          it before using the signature; signing again from a stale copy
@@ -618,7 +621,12 @@ function sign(alg, key, data, opts) {
   var msg = asBytes(data);
   if (signer.family === "ecdsa") {
     var c = keys.ecCurve(signer.curve);
-    var sig = c.noble.sign(digest(signer.hash, msg), key.privateKey);
+    // opts.hash: X.509's ecdsa-with-SHA* pair any curve with any hash (a
+    // P-384 key may sign SHA-256), so the curve's usual hash can be
+    // overridden. JOSE and COSE never pass it.
+    var sig = c.noble.sign(digest(o.hash || signer.hash, msg),
+                           key.privateKey,
+                           { extraEntropy: !o.deterministic });
     var raw = concatBytes(bytes.bigToBytes(sig.r, c.size),
                           bytes.bigToBytes(sig.s, c.size));
     log.debug("Leaving sign(). ECDSA.");
@@ -698,7 +706,8 @@ function verifyInner(alg, signer, key, msg, sigBytes, o) {
     // as DER would be read as something else.
     var rs = { r: bytes.bytesToBig(raw.slice(0, c.size)),
                s: bytes.bytesToBig(raw.slice(c.size)) };
-    var good = c.noble.verify(rs, digest(signer.hash, msg), key.publicKey,
+    var good = c.noble.verify(rs, digest(o.hash || signer.hash, msg),
+                              key.publicKey,
                               { lowS: false });
     log.debug("Leaving verifyInner(). ECDSA.");
     return good;

@@ -158,6 +158,53 @@ function withoutVolatile(answer, volatile) {
   return copy;
 }
 
+// A NAME THAT CANNOT RESOLVE, however this machine's resolver says so. The
+// fixtures send every unreachable target to an RFC 6761 `.invalid` name and
+// recorded "getaddrinfo ENOTFOUND <name>". A resolver may instead answer
+// EAI_AGAIN, or take long enough that the api's own connectionTimeout fires
+// first ("Connection to <name>:<port> timed out after Nms
+// (connectionTimeout)", code ECONNECTTIMEOUT); after a network failover on
+// the integrator's host it did exactly that. All three mean the one thing
+// the case is about, that the host is unreachable, so in both the recording
+// and the answer each spelling is replaced by one token before comparing.
+// Only for `.invalid` names, so a real target's failure is still compared
+// exactly, and the status is never rewritten.
+const UNREACHABLE = "<unreachable>";
+const UNREACHABLE_TEXT = new RegExp(
+  "getaddrinfo (?:ENOTFOUND|EAI_AGAIN) ([a-z0-9.-]+\\.invalid)" +
+  "|Connection to ([a-z0-9.-]+\\.invalid)(?::\\d+)? timed out after " +
+  "\\d+ms \\(connectionTimeout\\)\\.?", "g");
+const UNREACHABLE_CODES = ["ENOTFOUND", "EAI_AGAIN", "ECONNECTTIMEOUT"];
+
+function normalizeUnreachable(value) {
+  log.debug("Entering normalizeUnreachable().");
+  if (typeof value === "string") {
+    log.debug("Leaving normalizeUnreachable(). String.");
+    return value.replace(UNREACHABLE_TEXT, function (m, a, b) {
+      return UNREACHABLE + " " + (a || b);
+    });
+  }
+  if (Array.isArray(value)) {
+    log.debug("Leaving normalizeUnreachable(). Array.");
+    return value.map(normalizeUnreachable);
+  }
+  if (!value || typeof value !== "object") {
+    log.debug("Leaving normalizeUnreachable(). Scalar.");
+    return value;
+  }
+  const out = {};
+  Object.keys(value).forEach(function (k) {
+    out[k] = normalizeUnreachable(value[k]);
+  });
+  // The error code beside such a message, and only beside one.
+  if (UNREACHABLE_CODES.indexOf(out.code) >= 0 &&
+      JSON.stringify(out).indexOf(UNREACHABLE) >= 0) {
+    out.code = UNREACHABLE;
+  }
+  log.debug("Leaving normalizeUnreachable(). Object.");
+  return out;
+}
+
 async function record(families) {
   log.debug("Entering record().");
   for (const family of families) {
@@ -202,9 +249,10 @@ async function replay(families, model) {
       const got = await send(testCase);
       count = count + 1;
       try {
-        assert.deepStrictEqual(withoutVolatile(got, testCase.volatile),
-                               withoutVolatile(testCase.expect,
-                                               testCase.volatile));
+        assert.deepStrictEqual(
+            normalizeUnreachable(withoutVolatile(got, testCase.volatile)),
+            normalizeUnreachable(withoutVolatile(testCase.expect,
+                                                 testCase.volatile)));
       } catch (e) {
         failures.push(label + ": the answer is not the recorded one.\n" +
           "    recorded: " + JSON.stringify(testCase.expect) + "\n" +

@@ -54,6 +54,9 @@ var log = bunyan.createLogger({
 });
 
 var bytes = require("./crypto_bytes");
+// Digests, key generation and export by crypto_provider.js (#463): pure JS,
+// on every deployment.
+var provider = require("./crypto_provider");
 var jws = require("./jws");
 var joseJwe = require("./jose_jwe");
 var jweKem = require("./jwe_kem");
@@ -257,9 +260,10 @@ function x509Hash(derInput) {
   log.debug("Entering x509Hash().");
   var der = bytes.asBytes(derInput);
   log.debug("Leaving x509Hash().");
-  return crypto.subtle.digest("SHA-256", der).then(function (d) {
-    return bytes.bytesToB64u(new Uint8Array(d));
-  });
+  return Promise.resolve(provider.digest("sha256", der))
+    .then(function (d) {
+      return bytes.bytesToB64u(d);
+    });
 }
 
 // The leaf certificate's public key as a JWK, for verifying the Request
@@ -280,16 +284,26 @@ function certificatePublicJwk(derInput, alg) {
     return Promise.reject(new Error("this wallet cannot verify a Request " +
         "Object signed with " + alg + " against a certificate."));
   }
+  // crypto_provider.js reads the SubjectPublicKeyInfo (#463). The key must
+  // be the kind `alg` names, which Web Crypto's import used to check.
+  var key;
+  try {
+    key = provider.importKey(spki, { format: "spki-der" });
+  } catch (e) {
+    log.debug("Leaving certificatePublicJwk(). Unreadable key.");
+    return Promise.reject(e);
+  }
+  var fits = params.name === "ECDSA"
+    ? key.type === "ec" && key.curve === params.namedCurve
+    : key.type === "rsa";
+  if (!fits) {
+    log.debug("Leaving certificatePublicJwk(). Key does not fit " + alg);
+    return Promise.reject(new Error("the certificate's key is " + key.type +
+        (key.curve ? " " + key.curve : "") + ", which cannot verify " + alg +
+        "."));
+  }
   log.debug("Leaving certificatePublicJwk().");
-  return crypto.subtle.importKey("spki", spki, params, true, ["verify"])
-    .then(function (key) {
-      return crypto.subtle.exportKey("jwk", key);
-    })
-    .then(function (jwk) {
-      delete jwk.key_ops;
-      delete jwk.ext;
-      return jwk;
-    });
+  return Promise.resolve(provider.exportKey(key, "jwk"));
 }
 
 // ---------------------------------------------------------------------------
@@ -869,16 +883,9 @@ function selfIssuedIdToken(opts) {
 function generateSubjectKey() {
   log.debug("Entering generateSubjectKey().");
   log.debug("Leaving generateSubjectKey().");
-  return crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" },
-                                   true, ["sign", "verify"])
-    .then(function (pair) {
-      return crypto.subtle.exportKey("jwk", pair.privateKey);
-    })
-    .then(function (jwk) {
-      delete jwk.key_ops;
-      delete jwk.ext;
-      return jwk;
-    });
+  // A fresh P-256 pair by crypto_provider.js (#463), as a private JWK.
+  return Promise.resolve(provider.exportKey(
+    provider.generateKeyPair("ec-p256"), "jwk"));
 }
 
 // ---------------------------------------------------------------------------

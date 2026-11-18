@@ -534,14 +534,19 @@ async function theJavaScriptAesPathMatchesWebCrypto() {
     return Buffer.from(bytes).toString("hex");
   };
 
-  // The routing rule. 192 is the size Web Crypto refuses; the other two must
-  // keep using it.
-  assert.strictEqual(jose.webCryptoDoesAes(24), false,
-    "AES-192 must take the JavaScript path — it is the size Chrome refuses.");
-  assert.strictEqual(jose.webCryptoDoesAes(16), true,
-    "AES-128 must keep using Web Crypto.");
-  assert.strictEqual(jose.webCryptoDoesAes(32), true,
-    "AES-256 must keep using Web Crypto.");
+  // Every AES size is JavaScript since #463, so there is no routing rule
+  // left to check: the module must not name Web Crypto at all.
+  var joseFile = [__dirname + "/../client/src/jose_jwe.js",
+    __dirname + "/jose_jwe.js"].filter(function (f) {
+    return require("fs").existsSync(f);
+  })[0];
+  var joseCode = require("fs").readFileSync(joseFile, "utf8")
+    .split("\n").filter(function (line) {
+      return !/^\s*\/\//.test(line);
+    }).join("\n");
+  assert.ok(!/crypto\.subtle\b/.test(joseCode),
+    "jose_jwe.js calls crypto.subtle again; Web Crypto belongs in " +
+    "crypto_webcrypto.js, opt-in (#463).");
 
   // RFC 3394 section 4's published vectors, all three KEK sizes.
   var vectors = [
@@ -619,8 +624,8 @@ async function theJavaScriptAesPathMatchesWebCrypto() {
   assert.ok(/unknown/.test(jose.encUnsupportedReason("A999GCM", support)),
     "an enc this module does not implement must still be named as such.");
   log.info("[js aes] OK — RFC 3394 reproduces at all three sizes and agrees " +
-           "with Web Crypto; AES-192 routes to JavaScript and 128/256 do " +
-           "not; and the three AES-192 algorithms report as usable.");
+           "with Web Crypto; jose_jwe.js names no Web Crypto; and the " +
+           "three AES-192 algorithms report as usable.");
   log.debug("Leaving theJavaScriptAesPathMatchesWebCrypto().");
 }
 

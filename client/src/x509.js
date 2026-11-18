@@ -50,6 +50,11 @@
 var bunyan = require("bunyan");
 var jose = require("./jose_jwe");
 var keys = require("./key_material");
+// Every classical signature, verification and digest here is
+// crypto_provider.js's (#463): pure JS, so a CA is built and a chain checked
+// on a plain-HTTP page as well. pkijs still writes and reads the ASN.1; it no
+// longer signs.
+var provider = require("./crypto_provider");
 var pqx = require("./pqc_x509");
 var pkijs = require("pkijs");
 var asn1js = require("asn1js");
@@ -706,9 +711,9 @@ async function keyIdentifier(spkiDer) {
   log.debug("Entering keyIdentifier().");
   var spki = pkijs.PublicKeyInfo.fromBER(spkiDer);
   var bits = spki.subjectPublicKey.valueBlock.valueHexView;
-  var digest = await crypto.subtle.digest('SHA-1', bits);
+  var digest = provider.digest('sha1', new Uint8Array(bits));
   log.debug("Leaving keyIdentifier().");
-  return new Uint8Array(digest);
+  return digest;
 }
 
 function buildBasicConstraints(spec) {
@@ -1727,9 +1732,9 @@ async function issueCertificate(spec) {
   // descriptor, and the classical path imports it exactly as it always did.
   // Passing the pair for BOTH kinds is what keeps one signing function rather
   // than two that can drift.
-  var signer = sig.kind === 'pqc'
-    ? { pem: issuerPrivatePem, desc: signerDesc }
-    : await keys.importPrivateKey(issuerPrivatePem, signerDesc);
+  // Every algorithm is signed from the PEM and the descriptor now, the
+  // classical ones by crypto_provider.js (#463), so there is one shape.
+  var signer = { pem: issuerPrivatePem, desc: signerDesc };
   if (spec.altSignature || spec.subjectAltPublicKey) {
     await addAlternativeSignature(cert, spec, signerDesc);
   }
@@ -1901,26 +1906,14 @@ async function certificationRequest(spec) {
       signatureAlg: sig.id
     };
   }
-  var privateKey = await keys.importPrivateKey(spec.privateKeyPem, signerDesc);
-  if (sig.kind !== 'okp') {
-    await request.sign(privateKey, sig.hash);
-    if (sig.kind === 'ec') {
-      var normalized = minimalEcdsaSignature(
-        request.signatureValue.valueBlock.valueHexView);
-      request.signatureValue = new asn1js.BitString({
-        valueHex: normalized.buffer.slice(
-          normalized.byteOffset,
-          normalized.byteOffset + normalized.byteLength)
-      });
-    }
-  } else {
-    request.signatureAlgorithm = new pkijs.AlgorithmIdentifier({
-      algorithmId: ED25519_OID });
-    var tbs = request.encodeTBS().toBER(false);
-    var signature = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey,
-      tbs);
-    request.signatureValue = new asn1js.BitString({ valueHex: signature });
-  }
+  // Signed by hand, as signCertificate() does (#463).
+  request.signatureAlgorithm = new pkijs.AlgorithmIdentifier({
+    schema: signatureAlgorithmIdentifier(sig) });
+  var tbs = request.encodeTBS().toBER(false);
+  var signature = await signBytes(sig, spec.privateKeyPem, signerDesc, tbs);
+  request.signatureValue = new asn1js.BitString({
+    valueHex: signature.buffer.slice(signature.byteOffset,
+        signature.byteOffset + signature.byteLength) });
 
   var der = request.toSchema(true).toBER(false);
   log.debug("Leaving certificationRequest().");
@@ -2109,26 +2102,56 @@ async function signBytes(sig, privatePem, keyDesc, data) {
     log.debug("Leaving signBytes(). Post-quantum.");
     return new Uint8Array(pqSig);
   }
-  var desc = signerDescriptor(sig, keyDesc || {});
-  var key = await keys.importPrivateKey(privatePem, desc);
+  // crypto_provider.js signs (#463). ECDSA comes back raw r || s and is
+  // written as the DER SEQUENCE X.509 carries; PSS uses MGF1 over the same
+  // hash and a salt as long as the digest (HASH_LENGTHS, below).
+  var key = provider.importKey(String(privatePem));
+  var a = providerSignArgs(sig, key);
+  var out = provider.sign(a.alg, key, new Uint8Array(data), a.opts);
+  if (sig.kind === 'ec') {
+    log.debug("Leaving signBytes(). ECDSA.");
+    return ecdsaRawToDer(out);
+  }
+  log.debug("Leaving signBytes(). " + a.alg + ".");
+  return out;
+}
+
+// The provider's algorithm (and options) for a classical SIG_ALGS entry and
+// the key it is used with. ECDSA takes its curve from the key and the hash
+// from the signature algorithm, because X.509 pairs them freely.
+var PROVIDER_EC = { 'P-256': 'ecdsa-p256-sha256', 'P-384': 'ecdsa-p384-sha384',
+                    'P-521': 'ecdsa-p521-sha512',
+                    'secp256k1': 'ecdsa-secp256k1-sha256' };
+
+function providerSignArgs(sig, key) {
+  log.debug("Entering providerSignArgs(). " + sig.id);
+  var h = String(sig.hash || '').replace('-', '').toLowerCase();
   if (sig.kind === 'okp') {
-    var eddsa = await crypto.subtle.sign({ name: sig.name || 'Ed25519' }, key,
-        data);
-    log.debug("Leaving signBytes(). EdDSA.");
-    return new Uint8Array(eddsa);
+    var okp = String(sig.name || 'Ed25519').toLowerCase();
+    if (key.type !== 'okp' || key.curve.toLowerCase() !== okp) {
+      log.debug("Leaving providerSignArgs(). Wrong key.");
+      throw new Error(sig.label + ' needs an ' + (sig.name || 'Ed25519') +
+          ' key; this one is ' + (key.curve || key.type) + '.');
+    }
+    log.debug("Leaving providerSignArgs(). EdDSA.");
+    return { alg: okp, opts: {} };
   }
   if (sig.kind === 'ec') {
-    var raw = await crypto.subtle.sign({ name: 'ECDSA', hash: sig.hash }, key,
-        data);
-    log.debug("Leaving signBytes(). ECDSA.");
-    return ecdsaRawToDer(raw);
+    if (key.type !== 'ec' || !PROVIDER_EC[key.curve]) {
+      log.debug("Leaving providerSignArgs(). Wrong key.");
+      throw new Error(sig.label + ' needs an EC key; this one is ' +
+          key.type + '.');
+    }
+    log.debug("Leaving providerSignArgs(). ECDSA.");
+    return { alg: PROVIDER_EC[key.curve], opts: { hash: h } };
   }
-  var params = sig.pss
-    ? { name: 'RSA-PSS', saltLength: HASH_LENGTHS[sig.hash] }
-    : { name: 'RSASSA-PKCS1-v1_5' };
-  var rsa = await crypto.subtle.sign(params, key, data);
-  log.debug("Leaving signBytes(). RSA.");
-  return new Uint8Array(rsa);
+  if (key.type !== 'rsa') {
+    log.debug("Leaving providerSignArgs(). Wrong key.");
+    throw new Error(sig.label + ' needs an RSA key; this one is ' +
+        key.type + '.');
+  }
+  log.debug("Leaving providerSignArgs(). RSA.");
+  return { alg: 'rsa-' + (sig.pss ? 'pss' : 'pkcs1') + '-' + h, opts: {} };
 }
 
 // The salt length for RSASSA-PSS. RFC 4055 section 3.1's recommendation, and
@@ -2151,38 +2174,28 @@ async function verifyBytes(sig, publicSpkiPem, signature, data) {
     log.debug("Leaving verifyBytes(). Post-quantum says " + ok);
     return !!ok;
   }
-  var desc = await keys.describePublicPem(publicSpkiPem);
-  if (!desc) {
-    log.debug("Leaving verifyBytes(). Unreadable public key.");
+  var a;
+  var pub;
+  try {
+    pub = provider.importKey(String(publicSpkiPem));
+    a = providerSignArgs(sig, pub);
+  } catch (e) {
+    log.debug("Leaving verifyBytes(). " + e.message);
     return false;
   }
-  var key = await keys.importPublicKey(publicSpkiPem,
-      signerDescriptor(sig, desc));
-  if (sig.kind === 'okp') {
-    var eddsa = await crypto.subtle.verify({ name: sig.name || 'Ed25519' },
-        key, signature, data);
-    log.debug("Leaving verifyBytes(). EdDSA says " + eddsa);
-    return eddsa;
-  }
+  var sigBytes = new Uint8Array(signature);
   if (sig.kind === 'ec') {
-    var raw;
     try {
-      raw = ecdsaDerToRaw(signature, EC_FIELD_LEN[desc.curve] || 32);
+      sigBytes = ecdsaDerToRaw(signature, EC_FIELD_LEN[pub.curve] || 32);
     } catch (e) {
       log.debug("Leaving verifyBytes(). " + e.message);
       return false;
     }
-    var ecOk = await crypto.subtle.verify({ name: 'ECDSA', hash: sig.hash },
-        key, raw, data);
-    log.debug("Leaving verifyBytes(). ECDSA says " + ecOk);
-    return ecOk;
   }
-  var params = sig.pss
-    ? { name: 'RSA-PSS', saltLength: HASH_LENGTHS[sig.hash] }
-    : { name: 'RSASSA-PKCS1-v1_5' };
-  var rsaOk = await crypto.subtle.verify(params, key, signature, data);
-  log.debug("Leaving verifyBytes(). RSA says " + rsaOk);
-  return rsaOk;
+  var ok2 = provider.verify(a.alg, pub, new Uint8Array(data), sigBytes,
+                            a.opts);
+  log.debug("Leaving verifyBytes(). " + a.alg + " says " + ok2);
+  return ok2;
 }
 
 // Sign the TBS. Everything but Ed25519 goes through pkijs; Ed25519 is done by
@@ -2557,32 +2570,22 @@ async function signCertificate(cert, privateKey, sig) {
     log.debug("Leaving signCertificate(). Signed as " + sig.pqc + ".");
     return cert;
   }
-  if (sig.kind !== 'okp') {
-    await cert.sign(privateKey, sig.hash);
-    // ECDSA only, and only because pkijs's (r, s) encoding is not always
-    // minimal — see minimalDerInteger() above. RSA signatures are a single
-    // octet string and are left exactly as they were produced.
-    if (sig.kind === 'ec') {
-      var normalized = minimalEcdsaSignature(
-        cert.signatureValue.valueBlock.valueHexView);
-      cert.signatureValue = new asn1js.BitString({
-        valueHex: normalized.buffer.slice(
-          normalized.byteOffset,
-          normalized.byteOffset + normalized.byteLength)
-      });
-    }
-    log.debug("Leaving signCertificate(). Signed by pkijs.");
-    return cert;
-  }
-  cert.signature = new pkijs.AlgorithmIdentifier({
-      algorithmId: ED25519_OID });
+  // CLASSICAL, by hand like the post-quantum path above (#463): the
+  // AlgorithmIdentifier from signatureAlgorithmIdentifier() (RSA with its
+  // NULL parameters, RSASSA-PSS with RFC 4055's, ECDSA and Ed25519 with
+  // none), then the TBS signed by crypto_provider.js. pkijs's cert.sign()
+  // signed with a Web Crypto key, which a plain-HTTP page does not have.
+  var algId = new pkijs.AlgorithmIdentifier({
+    schema: signatureAlgorithmIdentifier(sig) });
+  cert.signature = algId;
   cert.signatureAlgorithm = new pkijs.AlgorithmIdentifier({
-      algorithmId: ED25519_OID });
+    schema: signatureAlgorithmIdentifier(sig) });
   var tbs = cert.encodeTBS().toBER(false);
-  var signature = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey,
-      tbs);
-  cert.signatureValue = new asn1js.BitString({ valueHex: signature });
-  log.debug("Leaving signCertificate(). Signed as Ed25519.");
+  var signature = await signBytes(sig, privateKey.pem, privateKey.desc, tbs);
+  cert.signatureValue = new asn1js.BitString({
+    valueHex: signature.buffer.slice(signature.byteOffset,
+        signature.byteOffset + signature.byteLength) });
+  log.debug("Leaving signCertificate(). Signed as " + sig.id + ".");
   return cert;
 }
 
@@ -3045,16 +3048,9 @@ async function describeCertificate(pemOrDer) {
 async function fingerprintsOf(der) {
   log.debug("Entering fingerprintsOf().");
   var out = { sha1: null, sha256: null };
-  if (typeof crypto === 'undefined' || !crypto.subtle) {
-    log.warn('fingerprintsOf(): no Web Crypto here, so no fingerprints.');
-    log.debug("Leaving fingerprintsOf(). No Web Crypto.");
-    return out;
-  }
   try {
-    var sha1 = await crypto.subtle.digest('SHA-1', der);
-    var sha256 = await crypto.subtle.digest('SHA-256', der);
-    out.sha1 = colonHex(new Uint8Array(sha1));
-    out.sha256 = colonHex(new Uint8Array(sha256));
+    out.sha1 = colonHex(provider.digest('sha1', new Uint8Array(der)));
+    out.sha256 = colonHex(provider.digest('sha256', new Uint8Array(der)));
   } catch (e) {
     log.warn('fingerprintsOf(): ' + e.message);
   }
@@ -3163,19 +3159,47 @@ async function verifySignature(cert, issuerCert) {
     log.debug("Leaving verifySignature(). " + pqcAlg.id + " says " + pqcOk);
     return pqcOk;
   }
-  if (cert.signatureAlgorithm.algorithmId !== ED25519_OID) {
-    var ok = await cert.verify(issuerCert);
-    log.debug("Leaving verifySignature(). pkijs says " + ok);
-    return ok;
+  // Classical, by crypto_provider.js (#463): the algorithm read from the
+  // certificate's own AlgorithmIdentifier, never assumed.
+  var classical = sigFromAlgorithmIdentifier(cert.signatureAlgorithm);
+  if (!classical) {
+    log.debug("Leaving verifySignature(). Unknown algorithm.");
+    return false;
   }
   var spkiPem = derToPem(issuerCert.subjectPublicKeyInfo.toSchema()
       .toBER(false), 'PUBLIC KEY');
-  var key = await keys.importPublicKey(spkiPem, { kind: 'okp',
-      name: 'Ed25519' });
-  var verified = await crypto.subtle.verify({ name: 'Ed25519' }, key,
+  var verified = await verifyBytes(classical, spkiPem,
       cert.signatureValue.valueBlock.valueHexView, cert.tbsView);
-  log.debug("Leaving verifySignature(). Ed25519 says " + verified);
+  log.debug("Leaving verifySignature(). " + classical.id + " says " +
+            verified);
   return verified;
+}
+
+// The SIG_ALGS entry an AlgorithmIdentifier names, or null. RSASSA-PSS names
+// its hash in its parameters (RFC 4055 section 3.1), absent meaning SHA-1,
+// for which this build has no PSS entry.
+function sigFromAlgorithmIdentifier(algId) {
+  log.debug("Entering sigFromAlgorithmIdentifier().");
+  var oid = algId.algorithmId;
+  var pssHash = null;
+  if (oid === '1.2.840.113549.1.1.10') {
+    try {
+      var params = new pkijs.RSASSAPSSParams({ schema: algId.algorithmParams });
+      var hashOid = params.hashAlgorithm && params.hashAlgorithm.algorithmId;
+      Object.keys(DIGEST_OIDS).forEach(function (h) {
+        if (DIGEST_OIDS[h] === hashOid) pssHash = h;
+      });
+    } catch (e) {
+      log.debug("Leaving sigFromAlgorithmIdentifier(). Bad PSS params.");
+      return null;
+    }
+  }
+  var id = Object.keys(SIG_ALG_OIDS).filter(function (k) {
+    return SIG_ALG_OIDS[k].oid === oid &&
+      (!SIG_ALG_OIDS[k].pss || SIG_ALG_OIDS[k].pss === pssHash);
+  })[0];
+  log.debug("Leaving sigFromAlgorithmIdentifier(). " + (id || "none"));
+  return id ? sigAlg(id) : null;
 }
 
 // ---------------------------------------------------------------------------

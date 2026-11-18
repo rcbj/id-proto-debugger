@@ -34,6 +34,8 @@ var vciMetadata = require("./vci_metadata");
 // suggestions on this page (#475).
 var vcFormats = require("./vc_formats");
 var sdJwtVc = require("./sd_jwt_vc");
+// Client authentication at the token endpoint (#vc-client-auth).
+var clientAuthPane = require("./vc_client_auth_pane");
 var vciClaims = require("./vci_claims");
 var didLib = require("./did");
 var urlSafety = require("./url_safety");
@@ -2142,6 +2144,8 @@ function clickLink() {
 
 function onload() {
   log.debug("Entering onload().");
+  // Client authentication at the token endpoint (vc_client_auth_pane.js).
+  clientAuthPane.render("vc_client_auth_pane", "settings");
   if (el("scan_offer_input")) {
     el("scan_offer_input").addEventListener("paste", pasteOfferImage);
   }

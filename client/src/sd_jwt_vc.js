@@ -38,6 +38,8 @@ var log = bunyan.createLogger({
 });
 
 var metadataClient = require("./metadata_client");
+// Digests by crypto_provider.js (#463): pure JS, on every deployment.
+var provider = require("./crypto_provider");
 var vciMetadata = require("./vci_metadata");
 var mdoc = require("./mdoc");
 // Which proofs make a JSON object an ldp_vc, and which of them the holder
@@ -2128,9 +2130,10 @@ function digestForDisclosure(encoded, sdAlg) {
   for (var i = 0; i < encoded.length; i++) { bytes[i] =
        encoded.charCodeAt(i) & 0xff; }
   log.debug("Leaving digestForDisclosure().");
-  return crypto.subtle.digest(webcrypto, bytes).then(function (buf) {
-    return metadataClient.bytesToB64u(buf);
-  });
+  return Promise.resolve(provider.digest(webcrypto, bytes))
+    .then(function (buf) {
+      return metadataClient.bytesToB64u(buf);
+    });
 }
 
 // Every _sd digest in the payload, at any nesting depth, plus the {"...": digest}

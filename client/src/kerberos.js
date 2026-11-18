@@ -946,12 +946,8 @@ function reportEnvironment() {
     return;
   }
 
-  if (!(window.crypto && window.crypto.subtle)) {
-    note.appendChild(make("p", "krb-note krb-bad",
-      "This page is not in a secure context, so Web Crypto is unavailable " +
-          "and no key can be " +
-      "derived. Load it over https, or from localhost."));
-  }
+  // No secure-context warning: key derivation is crypto_provider.js's, pure
+  // JS, since #463.
 
   // What the relay will and will not do, fetched so the page can say so before
   // a call fails rather than reporting its own limits as the KDC's fault.

@@ -15,6 +15,10 @@
 //   W3C VC Data Integrity ECDSA Cryptosuites v1.0
 //     ecdsa-rdfc-2019     RDFC-1.0, P-256/SHA-256 or P-384/SHA-384
 //     ecdsa-jcs-2019      JCS, likewise
+//   W3C Verifiable Credential Barcodes v1.0 (Working Draft)
+//     ecdsa-xi-2023       ecdsa-rdfc-2019 plus a hash of "extra information"
+//                         from outside the document (a barcode's optical
+//                         data); SHA-256 on both curves (#480)
 //   The Linked Data Signatures proof types that preceded Data Integrity, and
 //   that a great many deployed credentials still carry:
 //     Ed25519Signature2018          detached JWS, EdDSA
@@ -126,6 +130,19 @@ var SUITES = {
     vmType: "Multikey",
     spec: "W3C VC Data Integrity ECDSA Cryptosuites v1.0, section 3.3"
   },
+  // ecdsa-rdfc-2019 with a THIRD hash appended: of the optical data printed
+  // on the document the barcode is on (vc_barcodes.js computes it), passed
+  // as `extraInformation`. SHA-256 for all three hashes on either curve —
+  // the TR says ecdsa-rdfc-2019's hash, which on P-384 is SHA-384, and
+  // Digital Bazaar's ecdsa-xi-2023-cryptosuite (every published barcode)
+  // uses SHA-256; the published barcodes decide [#480].
+  "ecdsa-xi-2023": {
+    proofType: DATA_INTEGRITY_PROOF, cryptosuite: "ecdsa-xi-2023",
+    canon: "rdfc", encoding: "proofValue", keys: ECDSA_CURVES,
+    vmType: "Multikey", hash: "sha256", extraInformation: true,
+    spec: "W3C Verifiable Credential Barcodes v1.0 (Working Draft), " +
+      "section 3.2.4"
+  },
   "Ed25519Signature2018": {
     proofType: "Ed25519Signature2018", canon: "rdfc", encoding: "jws",
     keys: EDDSA_CURVES, legacy: true,
@@ -203,8 +220,12 @@ function isRecognisedProof(proof) {
 function suitesForKey(jwk) {
   log.debug("Entering suitesForKey().");
   var name = keyName(jwk);
+  // A suite that also signs data from outside the document (ecdsa-xi-2023,
+  // the optical data of a barcode) is for the caller that has that data,
+  // and is not offered for an ordinary credential.
   var out = Object.keys(SUITES).filter(function (id) {
-    return SUITES[id].keys.indexOf(name) !== -1;
+    return SUITES[id].keys.indexOf(name) !== -1 &&
+      !SUITES[id].extraInformation;
   });
   log.debug("Leaving suitesForKey(). " + out.join(", "));
   return out;
@@ -321,6 +342,10 @@ function canonicalize(row, doc, loader) {
 // P-384; every legacy type and every other key is SHA-256.
 function hashFor(row, jwk) {
   log.debug("Entering hashFor().");
+  if (row.hash) {
+    log.debug("Leaving hashFor(). Fixed by the suite.");
+    return row.hash;
+  }
   var big = !row.legacy && row.keys === ECDSA_CURVES &&
       keyName(jwk) === "P-384";
   log.debug("Leaving hashFor().");
@@ -446,17 +471,23 @@ function proofOptions(row, proof, unsecured, variant) {
   return opts;
 }
 
-// hash(canonical options) || hash(canonical document).
-async function verifyData(row, proof, unsecured, jwk, variant, loader) {
+// hash(canonical options) || hash(canonical document), and for a suite that
+// takes extra information, || hash(extra).
+async function verifyData(row, proof, unsecured, jwk, variant, loader,
+                          extra) {
   log.debug("Entering verifyData().");
   var hash = hashFor(row, jwk);
   var options = proofOptions(row, proof, unsecured, variant);
   var texts = await Promise.all([canonicalize(row, options, loader),
                                  canonicalize(row, unsecured, loader)]);
+  var parts = [provider.digest(hash, cbytes.strBytes(texts[0])),
+               provider.digest(hash, cbytes.strBytes(texts[1]))];
+  if (row.extraInformation) {
+    parts.push(provider.digest(hash, cbytes.asBytes(extra)));
+  }
   log.debug("Leaving verifyData().");
   return {
-    data: cbytes.concatBytes(provider.digest(hash, cbytes.strBytes(texts[0])),
-                             provider.digest(hash, cbytes.strBytes(texts[1]))),
+    data: cbytes.concatBytes.apply(null, parts),
     canonicalOptions: texts[0],
     canonicalDocument: texts[1],
     hash: hash
@@ -543,7 +574,8 @@ function xsdDateTime(when) {
 // algorithm under JsonWebSignature2020), proofPurpose ("assertionMethod"
 // by default), created (a Date, a millisecond count, or false for none),
 // challenge, domain, expires, nonce, addContext (default true),
-// documentLoader }. Answers the secured document: a NEW object with the
+// documentLoader, extraInformation (bytes; ecdsa-xi-2023 only) }. Answers
+// the secured document: a NEW object with the
 // suite's context added when it was missing and `proof` set (appended to an
 // existing proof as a proof set).
 async function createProof(doc, opts) {
@@ -559,6 +591,11 @@ async function createProof(doc, opts) {
   if (!o.privateJwk || !o.verificationMethod) {
     log.debug("Leaving createProof(). Missing key or method.");
     throw new Error("A proof needs a private key and a verificationMethod.");
+  }
+  if (row.extraInformation && !o.extraInformation) {
+    log.debug("Leaving createProof(). No extra information.");
+    throw new Error(o.suite + " also signs data from outside the document " +
+        "(extraInformation), and none was given.");
   }
   var prim = primitiveFor(row, o.privateJwk,
                           row.encoding === "jws" ? o.jwsAlg : undefined);
@@ -580,16 +617,20 @@ async function createProof(doc, opts) {
     proof["@context"] = unsecured["@context"];
   }
   var vd = await verifyData(row, proof, unsecured, o.privateJwk, "document",
-                            o.documentLoader);
+                            o.documentLoader, o.extraInformation);
   var key = importJwk(o.privateJwk);
+  // ECDSA is hedged by default (crypto_provider.js); opts.deterministic
+  // asks for plain RFC 6979, which only a known-answer test needs.
+  var signOpts = { deterministic: !!o.deterministic };
   if (row.encoding === "jws") {
     var encoded = cbytes.bytesToB64u(cbytes.strBytes(
         JSON.stringify(jwsHeader(prim.jws))));
-    var sig = provider.sign(prim.alg, key, jwsSigningInput(encoded, vd.data));
+    var sig = provider.sign(prim.alg, key, jwsSigningInput(encoded, vd.data),
+                            signOpts);
     proof.jws = encoded + ".." + cbytes.bytesToB64u(sig);
   } else {
     proof.proofValue = "z" + didLib.base58Encode(
-        provider.sign(prim.alg, key, vd.data));
+        provider.sign(prim.alg, key, vd.data, signOpts));
   }
   var out = Object.assign({}, base);
   var existing = toArray(doc.proof);
@@ -774,11 +815,12 @@ var DIAGNOSES = {
 
 // Canonicalize, hash and check the signature under one reading.
 async function readSignature(row, prim, jwk, proof, unsecured, variant,
-                             loader) {
+                             loader, extra) {
   log.debug("Entering readSignature(). " + variant);
   var vd;
   try {
-    vd = await verifyData(row, proof, unsecured, jwk, variant, loader);
+    vd = await verifyData(row, proof, unsecured, jwk, variant, loader,
+                          extra);
   } catch (e) {
     log.debug("Leaving readSignature(). Canonicalization failed.");
     return { valid: false, reason: "canonicalization failed (every " +
@@ -791,7 +833,8 @@ async function readSignature(row, prim, jwk, proof, unsecured, variant,
 }
 
 // One proof on one document. opts: { resolveKey(vm) -> Promise<JWK>,
-// documentLoader, fetch (for the default resolver) }. Answers
+// documentLoader, fetch (for the default resolver), extraInformation
+// (ecdsa-xi-2023) }. Answers
 //   { valid, unsupported, reason, suite, proofType, verificationMethod,
 //     proofPurpose, challenge, domain, created, expires, jwk, alg,
 //     diagnosis, spec }
@@ -821,6 +864,12 @@ async function verifyOneProof(doc, proof, opts) {
         Object.keys(SUITES).join(", ") + ")." });
   }
   out.spec = row.spec;
+  if (row.extraInformation && !o.extraInformation) {
+    log.debug("Leaving verifyOneProof(). No extra information.");
+    return Object.assign(out, { reason: id + " also signs data from " +
+      "outside the credential (for VC Barcodes, the optical data printed " +
+      "on the document), and none was given to check it against." });
+  }
   if (row.proofType !== p.type) {
     log.debug("Leaving verifyOneProof(). Type/suite mismatch.");
     return Object.assign(out, { reason: id + " is a " + row.proofType +
@@ -877,7 +926,7 @@ async function verifyOneProof(doc, proof, opts) {
   // reason names the defect (#475; the debugger implements the spec, and
   // compatibility with such signers is not its job).
   var spec = await readSignature(row, prim, jwk, p, unsecured, "document",
-                                 o.documentLoader);
+                                 o.documentLoader, o.extraInformation);
   Object.assign(out, spec);
   if (!out.valid) {
     var alternatives = row.legacy ? ["security-v2"] :

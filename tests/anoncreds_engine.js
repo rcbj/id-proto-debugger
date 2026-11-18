@@ -65,6 +65,9 @@ const paths = require("./module_paths.js");
 const ours = paths.requireSharedModule([path.join(repoRoot(), "client",
   "src", "anoncreds.js")], "client/src/anoncreds.js");
 const witness = require("./anoncreds_witness.js");
+const rev = paths.requireSharedModule([path.join(repoRoot(), "client", "src",
+  "anoncreds_revocation.js")], "client/src/anoncreds_revocation.js");
+const os = require("os");
 
 const ISSUER = "did:example:issuer";
 const VECTORS = [
@@ -327,10 +330,152 @@ function negatives(ac, mine, ctx, opts, person, a) {
   log.debug("Leaving negatives().");
 }
 
+// --- revocation: the CKS accumulator and the non-revocation proof -------
+// A revocable registry from anoncreds-rs, for each of its two issuance
+// modes: our holder requests (ur), processes (three pairing checks), builds
+// its revocation state from the tails file and presents with a
+// non-revocation proof that anoncreds-rs verifies; anoncreds-rs's own
+// presentation verifies here; and after revocation our holder refuses and
+// a proof against the later accumulator fails.
+async function revocation() {
+  log.debug("Entering revocation().");
+  var ac = (await witness.load()).ac;
+  var tailsDir = fs.mkdtempSync(path.join(os.tmpdir(), "ac-tails-"));
+  var I = ISSUER;
+  for (const byDefault of [true, false]) {
+    var tag = byDefault ? "default" : "ondemand";
+    var sid = I + "/schema/rev-" + tag;
+    var cid = I + "/creddef/rev-" + tag;
+    var rid = I + "/revreg/rev-" + tag;
+    var schema = ac.Schema.create({ name: "rev-" + tag, version: "1.0",
+      issuerId: I, attributeNames: ["name", "age"] });
+    var made = ac.CredentialDefinition.create({ schemaId: sid, issuerId: I,
+      schema: schema, signatureType: "CL", tag: tag, supportRevocation: true });
+    var cdO = made.credentialDefinition;
+    var cd = cdO.toJson();
+    var reg = ac.RevocationRegistryDefinition.create({
+      credentialDefinition: cdO, credentialDefinitionId: cid, tag: tag,
+      issuerId: I, revocationRegistryType: "CL_ACCUM",
+      maximumCredentialNumber: 8, tailsDirectoryPath: tailsDir });
+    var rrdO = reg.revocationRegistryDefinition;
+    var rrdp = reg.revocationRegistryDefinitionPrivate;
+    var rrd = rrdO.toJson();
+    var t0 = 1700000000;
+    var slO = ac.RevocationStatusList.create({ credentialDefinition: cdO,
+      revocationRegistryDefinitionId: rid, revocationRegistryDefinition: rrdO,
+      revocationRegistryDefinitionPrivate: rrdp, issuerId: I,
+      issuanceByDefault: byDefault, timestamp: t0 });
+    var offer = ac.CredentialOffer.create({ schemaId: sid,
+      credentialDefinitionId: cid,
+      keyCorrectnessProof: made.keyCorrectnessProof }).toJson();
+    var ls = ours.createLinkSecret();
+    var req = ours.createCredentialRequest({ credentialOffer: offer,
+      credentialDefinition: cd, linkSecret: ls, linkSecretId: "ls",
+      entropy: "rev-" + tag });
+    assert.ok(req.credentialRequest.blinded_ms.ur, tag + ": ur is sent");
+    var issued = ac.Credential.create({ credentialDefinition: cdO,
+      credentialDefinitionPrivate: made.credentialDefinitionPrivate,
+      credentialOffer: offer, credentialRequest: req.credentialRequest,
+      attributeRawValues: { name: "Bob", age: "40" },
+      revocationConfiguration: new ac.CredentialRevocationConfig({
+        registryDefinition: rrdO, registryDefinitionPrivate: rrdp,
+        statusList: slO, registryIndex: 5 }) }).toJson();
+    if (!byDefault) {
+      slO.update({ credentialDefinition: cdO, revocationRegistryDefinition:
+        rrdO, revocationRegistryDefinitionPrivate: rrdp, issued: [5],
+        timestamp: t0 });
+    }
+    var mine = ours.processCredential(issued, { credentialRequestMetadata:
+      req.credentialRequestMetadata, linkSecret: ls, credentialDefinition: cd,
+      revocationRegistryDefinition: rrd });
+    var tails = new Uint8Array(fs.readFileSync(rrdO.getTailsLocation()));
+    var sl = Object.assign({ revRegDefId: rid }, slO.toJson());
+    var state = rev.revocationState({ credential: mine,
+      credentialDefinition: cd, revocationRegistryDefinition: rrd,
+      revocationStatusList: sl, tailsBytes: tails });
+    var preq = { nonce: ours.createNonce(), name: "pr", version: "1.0",
+      requested_attributes: { a1: { name: "name" } },
+      requested_predicates: { p1: { name: "age", p_type: ">=",
+                                    p_value: 18 } },
+      non_revoked: { from: t0, to: t0 + 10 } };
+    var schemas = {};
+    schemas[sid] = schema.toJson();
+    var cds = {};
+    cds[cid] = cd;
+    var rrds = {};
+    rrds[rid] = rrd;
+    var ctx = { presentationRequest: preq, schemas: schemas,
+                credentialDefinitions: cds,
+                revocationRegistryDefinitions: rrds,
+                revocationStatusLists: [sl] };
+    var prove = [
+      { entryIndex: 0, referent: "a1", isPredicate: false, reveal: true },
+      { entryIndex: 0, referent: "p1", isPredicate: true, reveal: true }];
+    var pres = ours.createPresentation({ presentationRequest: preq,
+      credentials: [{ credential: mine, timestamp: t0,
+                      revocationState: state }],
+      credentialsProve: prove, selfAttest: {}, linkSecret: ls,
+      schemas: schemas, credentialDefinitions: cds });
+    assert.ok(pres.proof.proofs[0].non_revoc_proof, tag + ": a " +
+              "non-revocation proof is made");
+    var rrdsO = {};
+    rrdsO[rid] = rrdO;
+    var theirCtx = Object.assign({}, ctx, { revocationRegistryDefinitions:
+      rrdsO, revocationStatusLists: [slO] });
+    assert.strictEqual(theyAccept(ac, pres, theirCtx), true, tag +
+                       ": anoncreds-rs verifies our non-revocation proof");
+    var v = ours.verifyPresentation(pres, ctx);
+    assert.ok(v.valid, tag + ": and so do we: " + v.errors.join("; "));
+    if (byDefault) {
+      var theirState = ac.CredentialRevocationState.create({
+        revocationRegistryDefinition: rrdO, revocationStatusList: slO,
+        revocationRegistryIndex: 5, tailsPath: rrdO.getTailsLocation() });
+      var proc = ac.Credential.fromJson(issued).process({
+        credentialRequestMetadata: req.credentialRequestMetadata,
+        linkSecret: ls, credentialDefinition: cdO,
+        revocationRegistryDefinition: rrdO });
+      var theirs = ac.Presentation.create({ presentationRequest: preq,
+        credentials: [{ credential: proc, timestamp: t0,
+                        revocationState: theirState }],
+        credentialsProve: prove, selfAttest: {}, linkSecret: ls,
+        schemas: schemas, credentialDefinitions: cds }).toJson();
+      v = ours.verifyPresentation(theirs, ctx);
+      assert.ok(v.valid, "we verify anoncreds-rs's non-revocation proof: " +
+                v.errors.join("; "));
+      var stripped = JSON.parse(JSON.stringify(theirs));
+      stripped.proof.proofs[0].non_revoc_proof = null;
+      assert.ok(/carries no non-revocation proof/.test(
+        ours.verifyPresentation(stripped, ctx).errors.join(" ")),
+        "a stripped non-revocation proof is named (anoncreds-rs 0.2.3 " +
+        "would verify the rest as if none had been asked for)");
+    }
+    slO.update({ credentialDefinition: cdO, revocationRegistryDefinition:
+      rrdO, revocationRegistryDefinitionPrivate: rrdp, revoked: [5],
+      timestamp: t0 + 100 });
+    var revoked = Object.assign({ revRegDefId: rid }, slO.toJson());
+    assert.throws(function () {
+      rev.revocationState({ credential: mine, credentialDefinition: cd,
+        revocationRegistryDefinition: rrd, revocationStatusList: revoked,
+        tailsBytes: tails });
+    }, /no witness/, tag + ": a revoked credential gets no state");
+    var later = Object.assign({}, sl, { currentAccumulator:
+      revoked.currentAccumulator });
+    assert.ok(!ours.verifyPresentation(pres, Object.assign({}, ctx,
+      { revocationStatusLists: [later] })).valid, tag + ": the proof " +
+      "fails against the accumulator after revocation");
+    log.info("PASS revocation, issuance " + (byDefault ? "by default" :
+      "on demand") + ": our request, processing, witness and non-" +
+      "revocation proof against anoncreds-rs; revoked refused.");
+  }
+  fs.rmSync(tailsDir, { recursive: true, force: true });
+  log.debug("Leaving revocation().");
+}
+
 async function main() {
   log.debug("Entering main().");
   vectors();
   await interop();
+  await revocation();
   log.info("anoncreds_engine: all checks passed.");
   log.debug("Leaving main().");
 }

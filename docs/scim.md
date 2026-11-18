@@ -966,8 +966,8 @@ own.
 
 **`scim_page.js` covers only what needs a browser** — the browser call path
 (which no other job exercises and which is the *only* one the hosted site has),
-the DPoP proof and HOBA key signed with Web Crypto (`scim_protocol.js` signs with
-node's crypto, a different implementation), the two schemes that lock the call
+the DPoP proof and HOBA key signed in the browser by `crypto_provider.js`
+(`scim_protocol.js` signs with node's crypto, a different implementation), the two schemes that lock the call
 path, the runner actually running, and what does and does not reach
 `localStorage`.
 

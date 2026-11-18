@@ -352,7 +352,7 @@ async function secp256k1Vector() {
     suite: "EcdsaSecp256k1Signature2019",
     privateJwk: Object.assign({ d: d }, pubJwk), verificationMethod: kp.id,
     created: Date.parse("2021-04-20T00:00:00Z"), documentLoader: fxLoader,
-    addContext: false });
+    addContext: false, deterministic: true });
   assert.strictEqual(out.proof.jws, want, "Blockcerts' expected JWS");
   var r = await di.verifyProof(out, { resolveKey: async function () {
     return pubJwk;
@@ -508,12 +508,24 @@ async function ownRoundTrips() {
       var pub = provider.exportKey(kp, "jwk", { publicOnly: true });
       var vm = "did:example:own#" + id + "-" + k;
       jwks[vm] = pub;
+      // ecdsa-xi-2023 (#480) also signs bytes from outside the document;
+      // tests/vc_barcodes_engine.js is its own test, and here it is only
+      // made to round-trip like the rest, with different bytes refused.
+      var extra = di.SUITES[id].extraInformation ?
+          new Uint8Array(nodeCrypto.randomBytes(32)) : undefined;
       var signed = await di.createProof(credential(false), { suite: id,
-        privateJwk: priv, verificationMethod: vm });
-      var r = await di.verifyProof(signed, { resolveKey: resolveKey });
+        privateJwk: priv, verificationMethod: vm, extraInformation: extra });
+      var r = await di.verifyProof(signed, { resolveKey: resolveKey,
+                                             extraInformation: extra });
       assert.ok(r.valid, id + " " + k + ": " + r.reason);
       assert.ok(!(await di.verifyProof(tampered(signed),
-        { resolveKey: resolveKey })).valid, id + " " + k + ": tamper");
+        { resolveKey: resolveKey, extraInformation: extra })).valid,
+        id + " " + k + ": tamper");
+      if (extra) {
+        assert.ok(!(await di.verifyProof(signed, { resolveKey: resolveKey,
+          extraInformation: new Uint8Array(32) })).valid, id + " " + k +
+          ": other extra information");
+      }
       count++;
     }
   }

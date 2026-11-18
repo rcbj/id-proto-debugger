@@ -25,7 +25,8 @@
 // node-forge and @noble, and it is the default: crypto.subtle has no secp256k1
 // and no Ed448 — both registered JOSE algorithms — and it does not exist
 // outside a secure context, which the containerized test origin is not. The
-// `webcrypto` backend is crypto.subtle, and it exists because four workflows
+// `webcrypto` backend is crypto.subtle, opt-in, through crypto_webcrypto.js
+// since #463 step 5 (falling back to js), and it exists because four workflows
 // were already signing with it when this module absorbed them: DPoP proofs,
 // OID4VCI credential proofs, SD-JWT VC Key Binding JWTs and the JWT Tools Sign
 // pane. Routing those through here makes the JOSE half single-sourced — one
@@ -81,6 +82,7 @@ var bytesLib = require("./crypto_bytes");
 var pkEncryption = require("./pk_encryption");
 var pqc = require("./pqc");
 var provider = require("./crypto_provider");
+var webcrypto = require("./crypto_webcrypto");
 
 var strBytes = bytesLib.strBytes;
 var bytesToStr = bytesLib.bytesToStr;
@@ -822,149 +824,115 @@ function secretBytes(secret, encoding) {
   return b64uToBytes(text);
 }
 
+// THE WEB CRYPTO BACKEND is common/crypto/crypto_webcrypto.js (#463 step 5).
+// It is OPT-IN (backend: "webcrypto", or a CryptoKey), asynchronous, and
+// falls back to the provider's pure JS for any algorithm Web Crypto has no
+// name for (secp256k1, Ed448, every post-quantum one) and anywhere there is
+// no crypto.subtle, reporting which engine answered. A BACKEND IS AN
+// IMPLEMENTATION CHOICE AND MUST NEVER DECIDE WHETHER AN ALGORITHM WORKS.
+// This file no longer touches Web Crypto itself.
 // ---------------------------------------------------------------------------
-// THE WEB CRYPTO BACKEND
-//
-// One table drives it, and that table is ALGS above. Every one of the four
-// call sites this replaced carried its own two-line map from `alg` to an
-// importKey algorithm and a sign algorithm — four copies of the same fact,
-// and the reason it was copied four times is that getting it wrong produces a
-// Web Crypto DataError naming neither the algorithm nor the key.
-// ---------------------------------------------------------------------------
-var WEBCRYPTO_HASH = { 'SHA-256': 'SHA-256', 'SHA-384': 'SHA-384',
-                       'SHA-512': 'SHA-512' };
 
-// ---------------------------------------------------------------------------
-// WHETHER WEB CRYPTO CAN REPRESENT THIS ALGORITHM AT ALL — which is a property
-// of the ALGORITHM and not of the runtime, so it is a fixed rule rather than a
-// probe.
-//
-// `crypto.subtle` has no identifier for secp256k1 and none for Ed448, in any
-// browser and in node: they are not missing from one implementation, they are
-// absent from the specification's registry of names. Asking for either gets
-// "Unrecognized namedCurve" out of an import, several frames from anything that
-// names the algorithm.
-//
-// This module implements both in JavaScript, so a caller that asked for the
-// webcrypto backend gets the JavaScript one for these two and a correct answer
-// either way. A BACKEND IS AN IMPLEMENTATION CHOICE AND MUST NEVER DECIDE
-// WHETHER AN ALGORITHM WORKS — the same rule jose_jwe.js follows for the
-// AES-192 sizes Chrome refuses. Before this existed, verifying an ES256K token
-// against a JWKS failed outright wherever the caller had asked for Web Crypto,
-// which on the UserInfo page is every time.
-// ---------------------------------------------------------------------------
-function webCryptoKnowsAlg(spec) {
-  log.debug("Entering webCryptoKnowsAlg().");
-  if (!spec || spec.family === 'none') {
-    log.debug("Leaving webCryptoKnowsAlg(). Unsecured.");
-    return false;
-  }
-  if (spec.family === 'ec' && spec.crv === 'secp256k1') {
-    log.debug("Leaving webCryptoKnowsAlg(). No secp256k1 in Web Crypto.");
-    return false;
-  }
-  if (spec.family === 'okp' && spec.crv === 'Ed448') {
-    log.debug("Leaving webCryptoKnowsAlg(). No Ed448 in Web Crypto.");
-    return false;
-  }
-  if (spec.family === 'pq') {
-    // The post-quantum and hybrid signatures. Web Crypto has no name for any
-    // of them in any runtime — webCryptoImportParams() throws "has no Web
-    // Crypto equivalent" — and this module implements every one of them, so a
-    // caller that asked for the webcrypto backend gets the JavaScript one and
-    // a correct answer rather than a refusal.
-    log.debug("Leaving webCryptoKnowsAlg(). Post-quantum.");
-    return false;
-  }
-  log.debug("Leaving webCryptoKnowsAlg().");
-  return true;
-}
-
-function webCryptoImportParams(spec) {
-  log.debug("Entering webCryptoImportParams().");
+// The provider's algorithm name for a JWS spec, without a key: what a
+// CryptoKey is used under. HMAC is "hmac-<hash>".
+function providerAlgOf(spec) {
+  log.debug("Entering providerAlgOf(). alg=" + spec.alg);
   if (spec.family === 'hmac') {
-    log.debug("Leaving webCryptoImportParams(). HMAC.");
-    return { name: 'HMAC', hash: { name: WEBCRYPTO_HASH[spec.hash] } };
+    log.debug("Leaving providerAlgOf(). HMAC.");
+    return 'hmac-' + providerHash(spec.hash);
   }
   if (spec.family === 'rsa') {
-    log.debug("Leaving webCryptoImportParams(). RSA.");
-    return { name: spec.pad === 'pss' ? 'RSA-PSS' : 'RSASSA-PKCS1-v1_5',
-             hash: { name: WEBCRYPTO_HASH[spec.hash] } };
+    log.debug("Leaving providerAlgOf(). RSA.");
+    return 'rsa-' + (spec.pad === 'pss' ? 'pss' : 'pkcs1') + '-' +
+        providerHash(spec.hash);
   }
-  if (spec.family === 'ec') {
-    log.debug("Leaving webCryptoImportParams(). ECDSA.");
-    return { name: 'ECDSA', namedCurve: spec.crv };
+  if (spec.family === 'ec' && PROVIDER_EC[spec.crv]) {
+    log.debug("Leaving providerAlgOf(). ECDSA.");
+    return PROVIDER_EC[spec.crv][1];
   }
-  if (spec.family === 'okp') {
-    log.debug("Leaving webCryptoImportParams(). EdDSA.");
-    return { name: spec.crv };
+  if (spec.family === 'okp' && PROVIDER_OKP[spec.crv]) {
+    log.debug("Leaving providerAlgOf(). EdDSA.");
+    return PROVIDER_OKP[spec.crv];
   }
+  log.debug("Leaving providerAlgOf(). None.");
   throw new Error('alg=' + spec.alg + ' has no Web Crypto equivalent.');
 }
 
-function webCryptoSignParams(spec) {
-  log.debug("Entering webCryptoSignParams().");
-  if (spec.family === 'hmac') {
-    log.debug("Leaving webCryptoSignParams(). HMAC.");
-    return { name: 'HMAC' };
-  }
-  if (spec.family === 'rsa') {
-    log.debug("Leaving webCryptoSignParams(). RSA.");
-    return spec.pad === 'pss'
-      ? { name: 'RSA-PSS', saltLength: HASHES[spec.hash].bytes }
-      : { name: 'RSASSA-PKCS1-v1_5' };
-  }
-  if (spec.family === 'ec') {
-    log.debug("Leaving webCryptoSignParams(). ECDSA.");
-    return { name: 'ECDSA', hash: { name: WEBCRYPTO_HASH[spec.hash] } };
-  }
-  if (spec.family === 'okp') {
-    log.debug("Leaving webCryptoSignParams(). EdDSA.");
-    return { name: spec.crv };
-  }
-  throw new Error('alg=' + spec.alg + ' has no Web Crypto equivalent.');
-}
-
-// Import whatever the caller gave into a CryptoKey. A CryptoKey passes
-// straight through — a non-extractable key generated by the page is the whole
-// reason this backend exists.
-function webCryptoImport(spec, input, usage) {
-  log.debug("Entering webCryptoImport(). usage=" + usage);
-  var usages = [usage];
-  if (typeof CryptoKey !== 'undefined' && input instanceof CryptoKey) {
-    log.debug("Leaving webCryptoImport(). Already a CryptoKey.");
-    return Promise.resolve(input);
+// The CryptoKey a key input carries, bare or wrapped as { cryptoKey }.
+function cryptoKeyOf(input) {
+  log.debug("Entering cryptoKeyOf().");
+  if (webcrypto.isCryptoKey(input)) {
+    log.debug("Leaving cryptoKeyOf(). Bare.");
+    return input;
   }
   if (input && input.cryptoKey) {
-    log.debug("Leaving webCryptoImport(). Wrapped CryptoKey.");
-    return Promise.resolve(input.cryptoKey);
+    log.debug("Leaving cryptoKeyOf(). Wrapped.");
+    return input.cryptoKey;
   }
-  var params = webCryptoImportParams(spec);
-  var jwk = input && (input.jwk || (input.kty ? input : null));
-  if (jwk) {
-    log.debug("Leaving webCryptoImport(). From a JWK.");
-    return crypto.subtle.importKey('jwk', jwk, params, false, usages);
+  log.debug("Leaving cryptoKeyOf(). None.");
+  return null;
+}
+
+// Sign `octets` on the webcrypto backend: a CryptoKey directly, anything
+// else resolved as for js and handed to crypto_webcrypto.js, which falls
+// back. Resolves to { signature, engine }.
+function webSign(spec, keyInput, header, octets) {
+  log.debug("Entering webSign(). alg=" + spec.alg);
+  var ck = cryptoKeyOf(keyInput);
+  if (ck) {
+    log.debug("Leaving webSign(). CryptoKey.");
+    return webcrypto.signWithCryptoKey(providerAlgOf(spec), ck, octets);
   }
-  if (input && input.secret !== undefined) {
-    log.debug("Leaving webCryptoImport(). From a secret.");
-    return crypto.subtle.importKey('raw',
-      secretBytes(input.secret, input.encoding), params, false, usages);
+  var resolved = resolveKey(spec, keyInput, 'sign', header);
+  if (spec.family === 'hmac') {
+    log.debug("Leaving webSign(). HMAC.");
+    return webcrypto.hmac(providerHash(spec.hash), resolved.key, octets,
+                          { backend: 'webcrypto' })
+      .then(function (r) {
+        return { signature: r.mac, engine: r.engine };
+      });
   }
-  if (input instanceof Uint8Array) {
-    log.debug("Leaving webCryptoImport(). Raw.");
-    return crypto.subtle.importKey('raw', input, params, false, usages);
+  if (spec.family === 'none' || spec.family === 'pq') {
+    log.debug("Leaving webSign(). js only.");
+    return Promise.resolve({ signature: signOctets(spec, resolved.key, octets),
+                             engine: 'js' });
   }
-  if (typeof input === 'string') {
-    var label = bytesLib.pemLabel(input) || '';
-    var pem = /CERTIFICATE/.test(label) ? spkiFromCertificatePem(input)
-                                        : input;
-    var form = usage === 'sign' ? 'pkcs8' : 'spki';
-    log.debug("Leaving webCryptoImport(). From a PEM as " + form + ".");
-    return crypto.subtle.importKey(form, bytesLib.pemToDer(pem), params, false,
-                                   usages);
+  var a = providerArgs(spec, resolved.key, true);
+  log.debug("Leaving webSign(). " + a.alg + ".");
+  return webcrypto.sign(a.alg, a.key, octets, { backend: 'webcrypto' });
+}
+
+// Verify on the webcrypto backend. Resolves to { valid, engine }; an
+// unusable key is { valid: false } rather than a rejection, as in js.
+function webVerify(spec, keyInput, header, octets, signature) {
+  log.debug("Entering webVerify(). alg=" + spec.alg);
+  var ck = cryptoKeyOf(keyInput);
+  if (ck) {
+    log.debug("Leaving webVerify(). CryptoKey.");
+    return webcrypto.verifyWithCryptoKey(providerAlgOf(spec), ck, octets,
+                                         signature);
   }
-  return Promise.reject(new Error('Unrecognised key material for alg=' +
-      spec.alg + '.'));
+  var resolved = resolveKey(spec, keyInput, 'verify', header);
+  if (spec.family === 'hmac') {
+    log.debug("Leaving webVerify(). HMAC.");
+    return webcrypto.hmacVerify(providerHash(spec.hash), resolved.key, octets,
+                                signature, { backend: 'webcrypto' });
+  }
+  if (spec.family === 'none' || spec.family === 'pq') {
+    log.debug("Leaving webVerify(). js only.");
+    return Promise.resolve({ valid: verifyOctets(spec, resolved.key, octets,
+                                                 signature), engine: 'js' });
+  }
+  var a;
+  try {
+    a = providerArgs(spec, resolved.key, false);
+  } catch (e) {
+    log.debug("Leaving webVerify(). Unusable key: " + e.message);
+    return Promise.resolve({ valid: false, engine: 'js' });
+  }
+  log.debug("Leaving webVerify(). " + a.alg + ".");
+  return webcrypto.verify(a.alg, a.key, octets, signature,
+                          { backend: 'webcrypto' });
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,12 +1145,8 @@ function backendFor(requested, keyInput) {
     log.debug("Leaving backendFor(). Requested " + requested + ".");
     return requested;
   }
-  if (typeof CryptoKey !== 'undefined' && keyInput instanceof CryptoKey) {
+  if (cryptoKeyOf(keyInput)) {
     log.debug("Leaving backendFor(). CryptoKey implies webcrypto.");
-    return 'webcrypto';
-  }
-  if (keyInput && keyInput.cryptoKey) {
-    log.debug("Leaving backendFor(). Wrapped CryptoKey implies webcrypto.");
     return 'webcrypto';
   }
   log.debug("Leaving backendFor(). Default js.");
@@ -1349,23 +1313,15 @@ function signJwsAsync(opts) {
   var prep, signing;
   try {
     prep = prepareSign(options);
-    if (backend === 'webcrypto' && !webCryptoKnowsAlg(prep.spec)) {
-      // Asked for Web Crypto, and Web Crypto has no name for this algorithm.
-      // The JavaScript engine does it instead — see webCryptoKnowsAlg().
-      backend = 'js';
-    }
     if (backend === 'webcrypto') {
-      signing = webCryptoImport(prep.spec, options.privateKey, 'sign')
-        .then(function (key) {
-          return crypto.subtle.sign(webCryptoSignParams(prep.spec), key,
-                                    prep.input);
-        })
-        .then(function (sig) {
-          // Web Crypto returns an ECDSA signature as the raw R||S pair, which
-          // is already the JWS encoding of RFC 7518 section 3.4 — there is no
-          // DER to unwrap. Every call site this module absorbed carried that
-          // sentence as a comment; now one place knows it.
-          return new Uint8Array(sig);
+      // crypto_webcrypto.js answers, or falls back to js for an algorithm
+      // Web Crypto has no name for; `backend` reports the engine that did.
+      // An ECDSA signature is raw R || S either way (RFC 7518 3.4).
+      signing = webSign(prep.spec, options.privateKey, prep.header,
+                        prep.input)
+        .then(function (r) {
+          backend = r.engine;
+          return r.signature;
         });
     } else {
       var resolved = resolveKey(prep.spec, options.privateKey, 'sign',
@@ -1614,14 +1570,14 @@ function verifyJwsAsync(opts) {
     // JWS may carry two signatures whose algorithms do not take the same
     // engine — an ES256K one falls back to JavaScript while an RS256 one
     // beside it stays on Web Crypto.
-    e.verdict.backend = webCryptoKnowsAlg(e.spec) ? backend : 'js';
+    e.verdict.backend = 'js';
     var work;
     try {
-      if (backend === 'webcrypto' && webCryptoKnowsAlg(e.spec)) {
-        work = webCryptoImport(e.spec, e.keyInput, 'verify')
-          .then(function (key) {
-            return crypto.subtle.verify(webCryptoSignParams(e.spec), key,
-                                        e.signature, e.input);
+      if (backend === 'webcrypto') {
+        work = webVerify(e.spec, e.keyInput, e.header, e.input, e.signature)
+          .then(function (r) {
+            e.verdict.backend = r.engine;
+            return r.valid;
           });
       } else {
         var resolved = resolveKey(e.spec, e.keyInput, 'verify', e.header);
@@ -1757,9 +1713,6 @@ module.exports = {
   narrowToOneKey: narrowToOneKey,
   resolveKey: resolveKey,
   secretBytes: secretBytes,
-  webCryptoKnowsAlg: webCryptoKnowsAlg,
-  webCryptoImportParams: webCryptoImportParams,
-  webCryptoSignParams: webCryptoSignParams,
-  webCryptoImport: webCryptoImport,
+  providerAlgOf: providerAlgOf,
   payloadText: payloadText
 };

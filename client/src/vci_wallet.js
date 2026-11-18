@@ -120,31 +120,26 @@ function holderKeysFor(first, count) {
 
 // ---------------------------------------------------------------------------
 // The key an encrypted Credential Response is encrypted to (OID4VCI section
-// 8.2). RSA, because RSA-OAEP-256 is what Web Crypto can unwrap directly and
-// what the mock issuer advertises; the private half is generated
-// non-extractable so it cannot leave the page even by accident.
+// 8.2). RSA, because RSA-OAEP-256 is what the issuers advertise. Generated
+// by crypto_provider.js (#463), in pure JS, so it works on a plain-HTTP page.
+// A pure-JS key cannot be non-extractable as the Web Crypto one was; it is
+// made per request, held in memory only and never stored.
 // ---------------------------------------------------------------------------
 function generateResponseEncryptionKey(enc) {
   log.debug("Entering generateResponseEncryptionKey(). enc=" + enc);
   log.debug("Leaving generateResponseEncryptionKey().");
-  return crypto.subtle.generateKey({
-    name: "RSA-OAEP",
-    modulusLength: 2048,
-    publicExponent: new Uint8Array([1, 0, 1]),
-    hash: "SHA-256"
-  }, false, ["encrypt", "decrypt"])
-    .then(function (pair) {
-      return crypto.subtle.exportKey("jwk",
-                                     pair.publicKey).then(function (jwk) {
-        log.debug("Leaving generateResponseEncryptionKey().");
-        return {
-          publicJwk: { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: "RSA-OAEP-256",
-                      use: "enc" },
-          privateKey: pair.privateKey,
-          enc: enc
-        };
-      });
-    });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, 0);
+  }).then(function () {
+    var pair = cryptoProvider.generateKeyPair("rsa", { bits: 2048 });
+    var jwk = cryptoProvider.exportKey(cryptoProvider.publicKeyOf(pair), "jwk");
+    return {
+      publicJwk: { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: "RSA-OAEP-256",
+                   use: "enc" },
+      privateKey: pair,
+      enc: enc
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -309,8 +304,10 @@ function fetchProtected(opts) {
       url: opts.url, nonce: nonce
     }).then(function (built) {
       var headers = Object.assign({}, opts.headers || {}, built.headers);
+      // opts.signal lets a caller bound the wait (vc_client_auth_pane.js
+      // does, for the token request).
       return fetch(opts.url, { method: method, headers: headers,
-                   body: opts.body })
+                   body: opts.body, signal: opts.signal })
         .then(function (response) {
           return response.text().then(function (text) {
             var body = null;
@@ -496,28 +493,22 @@ function decryptJweResponse(compact, encryption) {
   var bits = header.enc === "A128GCM" ? 128 : 256;
   log.debug("Leaving decryptJweResponse(). alg=" + header.alg + ", enc=" +
             header.enc);
-  return crypto.subtle.decrypt({ name: "RSA-OAEP" }, encryption.privateKey,
-      metadataClient.b64uToBytes(parts[1]))
-    .then(function (cek) {
-      return crypto.subtle.importKey("raw", cek, { name: "AES-GCM",
-                                     length: bits }, false, ["decrypt"]);
-    })
-    .then(function (key) {
-      // RFC 7516: the protected header is the additional authenticated data,
-      // and the authentication tag is appended to the ciphertext for Web
-      // Crypto.
-      var ciphertext = metadataClient.b64uToBytes(parts[3]);
-      var tag = metadataClient.b64uToBytes(parts[4]);
-      var joined = new Uint8Array(ciphertext.length + tag.length);
-      joined.set(ciphertext, 0);
-      joined.set(tag, ciphertext.length);
-      return crypto.subtle.decrypt({
-        name: "AES-GCM",
-        iv: metadataClient.b64uToBytes(parts[2]),
-        additionalData: new TextEncoder().encode(parts[0]),
-        tagLength: tag.length * 8
-      }, key, joined);
-    })
+  // RSA-OAEP-256 unwraps the CEK and AES-GCM opens the content, both by
+  // crypto_provider.js (#463). RFC 7516: the protected header, as sent, is
+  // the additional authenticated data.
+  return Promise.resolve().then(function () {
+    var cek = cryptoProvider.rsaDecrypt("rsa-oaep-sha256",
+        encryption.privateKey, metadataClient.b64uToBytes(parts[1]));
+    if (cek.length * 8 !== bits) {
+      throw new Error("the unwrapped content key is " + (cek.length * 8) +
+                      " bits and " + header.enc + " takes " + bits + ".");
+    }
+    return cryptoProvider.aesGcmDecrypt(cek,
+        metadataClient.b64uToBytes(parts[2]),
+        metadataClient.b64uToBytes(parts[3]),
+        metadataClient.b64uToBytes(parts[4]),
+        new TextEncoder().encode(parts[0]));
+  })
     .then(function (plaintext) {
       return JSON.parse(new TextDecoder().decode(plaintext));
     });
@@ -658,36 +649,29 @@ function encryptRequestBody(body, offer) {
   if (offer.kid) header.kid = offer.kid;
   var headerB64 = metadataClient.utf8ToB64u(JSON.stringify(header));
   var plaintext = new TextEncoder().encode(JSON.stringify(body));
-  var cek = crypto.getRandomValues(new Uint8Array(bits / 8));
-  var iv = crypto.getRandomValues(new Uint8Array(12));
+  var cek = cryptoProvider.randomBytes(bits / 8);
+  var iv = cryptoProvider.randomBytes(12);
 
   log.debug("Leaving encryptRequestBody().");
-  return crypto.subtle.importKey("jwk",
-      { kty: offer.jwk.kty, n: offer.jwk.n, e: offer.jwk.e, alg: "RSA-OAEP-256",
-       ext: true },
-      { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"])
-    .then(function (publicKey) {
-      return crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, cek);
-    })
+  // RSA-OAEP-256 wraps the CEK and AES-GCM seals the request, both by
+  // crypto_provider.js (#463).
+  return Promise.resolve().then(function () {
+    return cryptoProvider.rsaEncrypt("rsa-oaep-sha256",
+      cryptoProvider.importKey({ kty: offer.jwk.kty, n: offer.jwk.n,
+                                 e: offer.jwk.e }), cek);
+  })
     .then(function (encryptedKey) {
-      return crypto.subtle.importKey("raw", cek, { name: "AES-GCM",
-                                     length: bits }, false, ["encrypt"])
-        .then(function (contentKey) {
+      return Promise.resolve()
+        .then(function () {
           // RFC 7516: the AAD is ASCII(BASE64URL(protected header)), so
           // altering the header — the kid, say — breaks the tag rather than
           // going unnoticed.
-          return crypto.subtle.encrypt({
-            name: "AES-GCM", iv: iv,
-            additionalData: new TextEncoder().encode(headerB64),
-            tagLength: 128
-          }, contentKey, plaintext);
+          return cryptoProvider.aesGcmEncrypt(cek, iv, plaintext,
+                                        new TextEncoder().encode(headerB64));
         })
         .then(function (sealed) {
-          // Web Crypto appends the 16-byte tag to the ciphertext; the compact
-          // serialization keeps them as separate segments.
-          var all = new Uint8Array(sealed);
-          var ciphertext = all.slice(0, all.length - 16);
-          var tag = all.slice(all.length - 16);
+          var ciphertext = sealed.ciphertext;
+          var tag = sealed.tag;
           var compact = [
             headerB64,
             metadataClient.bytesToB64u(encryptedKey),
