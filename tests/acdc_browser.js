@@ -14,7 +14,11 @@
 //      checked there.
 //   3. The page revokes it: REVOKED.
 //   4. A changed attribute: INVALID, naming the SAID.
-//   5. Nothing is stored.
+//   5. Version 2: three weighted keys, two witnesses, a delegated issuer and
+//      an aggregate: VALID; a selective disclosure of it: VALID, in node too.
+//   6. Version 1 chained to a parent credential: VALID; its IPEX grant:
+//      VALID.
+//   7. Nothing is stored.
 //
 // Needs only the client.
 // ---------------------------------------------------------------------------
@@ -47,7 +51,9 @@ async function loadSignify() {
   var file = null;
   (require.resolve.paths("signify-ts") || []).some(function (dir) {
     var candidate = path.join(dir, "signify-ts", "dist", "index.js");
-    if (fs.existsSync(candidate)) file = candidate;
+    if (fs.existsSync(candidate)) {
+      file = candidate;
+    }
     return !!file;
   });
   if (!file) {
@@ -65,6 +71,8 @@ async function loadSignify() {
 }
 
 const text = function (b) {
+  log.debug("Entering text().");
+  log.debug("Leaving text().");
   return Buffer.from(b).toString("utf8");
 };
 
@@ -94,6 +102,8 @@ function signifyStream(s) {
     s: iss.s, d: iss.d }], dig: ixn1.sad.d, version: undefined,
     kind: undefined });
   var signed = function (serder) {
+    log.debug("Entering signed().");
+    log.debug("Leaving signed().");
     return text(s.messagize(serder, [signer.sign(new TextEncoder()
       .encode(serder.raw), 0)]));
   };
@@ -111,6 +121,13 @@ async function setValue(driver, id, v) {
   await driver.executeScript("document.getElementById(arguments[0]).value " +
                              "= arguments[1];", id, v);
   log.debug("Leaving setValue().");
+}
+
+async function setChecked(driver, id, on) {
+  log.debug("Entering setChecked(). " + id);
+  await driver.executeScript("document.getElementById(arguments[0])" +
+                             ".checked = arguments[1];", id, on);
+  log.debug("Leaving setChecked().");
 }
 
 async function click(driver, id) {
@@ -137,7 +154,9 @@ async function test() {
   log.debug("Entering test().");
   var s = await loadSignify();
   var options = new chrome.Options();
-  if (headless) options.addArguments("--headless=new");
+  if (headless) {
+    options.addArguments("--headless=new");
+  }
   options.addArguments("--no-sandbox", "--disable-dev-shm-usage",
                        "--window-size=1500,1300");
   browserFlags.addBrowserAccessFlags(options, baseUrl);
@@ -194,6 +213,62 @@ async function test() {
     await verdict(driver, "a changed attribute", /^INVALID .*SAID/);
     log.info("PASS a changed attribute is INVALID, naming the SAID.");
 
+    // 5. Version 2: weighted keys, witnesses, a delegated issuer, an
+    // aggregate; then a selective disclosure of it.
+    await setValue(driver, "acdc_version", "2");
+    await setValue(driver, "acdc_signers", "3");
+    await setValue(driver, "acdc_kt", "[\"1/2\",\"1/2\",\"1/2\"]");
+    await setValue(driver, "acdc_witnesses", "2");
+    await setChecked(driver, "acdc_delegated", true);
+    await setChecked(driver, "acdc_aggregate", true);
+    await click(driver, "acdc_issue_button");
+    await waitForStatus(driver, "acdc_issue_status", function (st) {
+      return /^Issued .*version 2/.test(st);
+    }, "the v2 issuance should finish", stepWait);
+    await click(driver, "acdc_verify_issued_button");
+    await verdict(driver, "a v2 weighted, witnessed, delegated aggregate",
+                  /^VALID/);
+    await setValue(driver, "acdc_disclose_indices", "2");
+    await click(driver, "acdc_disclose_button");
+    await click(driver, "acdc_verify_disclosed_button");
+    await verdict(driver, "one block of two disclosed", /^VALID/);
+    var disclosed = await driver.executeScript("return document." +
+      "getElementById('acdc_disclose_output').value;");
+    var dr = acdc.verifyPresentation(disclosed);
+    assert.ok(dr.valid && dr.acdc.A.filter(function (b) {
+      return typeof b === "string";
+    }).length === 2, "in node too: the AGID and one block's SAID");
+    log.info("PASS a v2 credential (three weighted keys, two witnesses, a " +
+             "delegated issuer, an aggregate) verifies, and so does a " +
+             "selective disclosure of it, in the page and in node.");
+
+    // 6. Version 1: a chain to a parent, then an IPEX grant of it.
+    var holder = acdc.makeController({}).prefix;
+    await setValue(driver, "acdc_version", "1");
+    await setValue(driver, "acdc_signers", "1");
+    await setValue(driver, "acdc_kt", "");
+    await setValue(driver, "acdc_witnesses", "0");
+    await setChecked(driver, "acdc_delegated", false);
+    await setChecked(driver, "acdc_aggregate", false);
+    await setChecked(driver, "acdc_chain", true);
+    await setValue(driver, "acdc_recipient", holder);
+    await click(driver, "acdc_issue_button");
+    await waitForStatus(driver, "acdc_issue_status", function (st) {
+      return /^Issued .*parent/.test(st);
+    }, "the chained issuance should finish", stepWait);
+    await click(driver, "acdc_verify_issued_button");
+    await verdict(driver, "a chained credential", /^VALID/);
+    await click(driver, "acdc_grant_button");
+    await waitForStatus(driver, "acdc_issue_status", function (st) {
+      return /^Granted/.test(st);
+    }, "the grant should be appended", stepWait);
+    await setValue(driver, "acdc_stream", await driver.executeScript(
+      "return document.getElementById('acdc_issue_output').value;"));
+    await click(driver, "acdc_verify_grant_button");
+    await verdict(driver, "the IPEX grant", /^VALID/);
+    log.info("PASS a chained credential verifies with its parent, and its " +
+             "IPEX grant verifies.");
+
     var stored = await driver.executeScript("return localStorage.length + " +
                                             "sessionStorage.length;");
     assert.strictEqual(stored, 0, "the page stores nothing");
@@ -216,7 +291,9 @@ if (opts.url) {
   baseUrl = opts.url;
   log.info("Setting url to " + baseUrl);
 }
-if (opts.headless === "false") headless = false;
+if (opts.headless === "false") {
+  headless = false;
+}
 
 test().catch(function (e) {
   log.error("FAILED: " + (e && e.stack || e));

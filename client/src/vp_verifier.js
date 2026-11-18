@@ -4356,6 +4356,11 @@ async function checkBitstringEntry(s, key, entry, issuer) {
     return;
   }
   var value = bitstringAt(raw, index * size, size);
+  if (typeof s.observe === "function") {
+    s.observe({ url: url, index: index, size: size, value: value,
+                entries: entries, trusted: !problems.length,
+                credential: cred });
+  }
   var where = "entry " + index + " of " + url + " is " + value +
       (entries < BITSTRING_MIN_ENTRIES ? " (the list has " + entries +
        " entries, fewer than the " + BITSTRING_MIN_ENTRIES + " Bitstring " +
@@ -4451,6 +4456,34 @@ async function checkCredentialStatus(s, key, refs, issuer, ctx) {
     await checkBitstringEntry(s, sub, refs.w3c[i], who);
   }
   log.debug("Leaving checkCredentialStatus().");
+}
+
+// ONE W3C Bitstring Status List entry checked on its own, for a caller
+// that is not verifying a presentation: vc_barcodes_page.js, whose terse
+// entry expands to one (VC Barcodes section 3.2.3, #480). The same reading
+// as a presentation's credentialStatus, so the barcode page and the
+// Verifier cannot disagree about a list. opts: { fetchText (url, { accept })
+// -> the body; a pasted credential is a fetchText that answers it),
+// fetchJson, now, issuer (the credential's issuer id, for the note when the
+// list's issuer differs) }. Answers { checks: [{ id, label, status,
+// detail }], value (the entry, when read), entries, trusted, credential }.
+async function checkBitstringStatus(entry, opts) {
+  log.debug("Entering checkBitstringStatus().");
+  var o = opts || {};
+  var report = { checks: [] };
+  var s = scope(report, "status", "");
+  var seen = {};
+  s.observe = function observe(v) {
+    log.debug("Entering observe().");
+    seen = v;
+    log.debug("Leaving observe().");
+  };
+  var ctx = { fetchText: o.fetchText, fetchJson: o.fetchJson, now: o.now };
+  await checkBitstringEntry(s, "status", entry || {},
+                            { ctx: ctx, id: o.issuer || "" });
+  log.debug("Leaving checkBitstringStatus(). " + report.checks.length);
+  return { checks: report.checks, value: seen.value, entries: seen.entries,
+           trusted: seen.trusted, credential: seen.credential };
 }
 
 // The top-level summary: every status check of every presentation.
@@ -6995,6 +7028,7 @@ module.exports = {
   parseResponse: parseResponse,
   verifyResponse: verifyResponse,
   verifyDataIntegrity: verifyDataIntegrity,
+  checkBitstringStatus: checkBitstringStatus,
   mdocSessionTranscript: mdocSessionTranscript,
   jwkThumbprint: jwkThumbprint,
   jwtVcIssuerUrl: jwtVcIssuerUrl

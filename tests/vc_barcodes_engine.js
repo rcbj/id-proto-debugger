@@ -25,6 +25,23 @@
 //      its padding bits set, a QR text without "VC1-R", a base45 length of
 //      3n+1, a term id no context defines.
 //   5. Base45 against RFC 9285's own examples.
+//   6. IsoDrivingLicenceMachineReadableInformation (Appendix B,
+//      informative), for which NO VECTOR EXISTS, so this file builds one:
+//      fixed data groups, the 2-byte index, and the canonical text spelled
+//      out independently with node's own base64url, then signed both ways
+//      with the library's cryptosuite over the same opticalDataBytes. DG10
+//      is protected on purpose: a code-point sort would put it before DG2.
+//   7. Status: the BitstringStatusListCredential a terse entry expands to,
+//      issued by Digital Bazaar's @digitalbazaar/vc-bitstring-status-list
+//      2.0.1 and signed with its ecdsa-rdfc-2019 suite, read by
+//      vp_verifier.js's checkBitstringStatus() (the page's reader); and one
+//      packed and signed here, accepted by the library's checkStatus(). A
+//      list changed after signing is not relied on.
+//   8. PDF417 (client/src/pdf417.js: bwip-js to draw, @zxing/library to
+//      read): the specification's driver's licence text drawn, rasterised
+//      here from the symbol's modules at three scales, and read back to the
+//      same text, which still verifies; a symbol too damaged to read is
+//      reported as none rather than as wrong text.
 //
 // No browser and no services, so this never skips.
 // ---------------------------------------------------------------------------
@@ -77,6 +94,9 @@ const vcb = load("vc_barcodes.js");
 const contexts = load("jsonld_contexts.js");
 const di = load("data_integrity.js");
 const didLib = load("did.js");
+const vpVerifier = load("vp_verifier.js");
+const pdf417 = load("pdf417.js");
+const zlib = require("zlib");
 
 const hex = function (s) {
   return new Uint8Array(Buffer.from(s.replace(/\s+/g, ""), "hex"));
@@ -496,6 +516,378 @@ async function refusals() {
   log.debug("Leaving refusals().");
 }
 
+// ---------------------------------------------------------------------------
+// 6. IsoDrivingLicenceMachineReadableInformation (Appendix B).
+// ---------------------------------------------------------------------------
+
+// A licence's data groups. DG2 carries bytes above 0x7f so its base64url
+// has the two characters base64 does not ("-" and "_"); DG3 is never
+// protected, so it may change.
+const ISO_GROUPS = {
+  DG1: "UTO\x1dSMITH\x1dJOHN\x1d19880419\x1d20240101\x1d20300419\x1d" +
+    "UTOPIA DMV\x1dF987654321",
+  DG2: Buffer.from("fbff3ec0fe7f00ff", "hex"),
+  DG3: "BRO\x1d069",
+  DG10: "ENDORSEMENTS:NONE"
+};
+const ISO_PROTECT = ["DG1", "DG2", "DG10"];
+// What Appendix B.2 makes of them, pinned (computed once by
+// isoCanonicalByHand() below and checked against it every run).
+const ISO_CANONICAL = "DG1VVRPHVNNSVRIHUpPSE4dMTk4ODA0MTkdMjAyNDAxMDEdMjAzMD" +
+  "A0MTkdVVRPUElBIERNVh1GOTg3NjU0MzIx\nDG2-_8-wP5_AP8\n" +
+  "DG10RU5ET1JTRU1FTlRTOk5PTkU\n";
+// An ISO barcode made ENTIRELY by Digital Bazaar's libraries — signed with
+// ecdsa-xi-2023-cryptosuite over ISO_OPTICAL and encoded with cborld, on a
+// throwaway P-256 key — once, so a fixed ISO vector exists for this file and
+// the page's example link to hold to. The private key was
+// discarded; the did:key is in the credential.
+const ISO_EXAMPLE_DG11 =
+  "2csdghhkpQGDGYAAGYABoXgrSXNvRHJpdmluZ0xpY2VuY2VNYWNoaW5lUmVhZGFi" +
+  "bGVJbmZvcm1hdGlvbnhIaHR0cHM6Ly93M2lkLm9yZy92Yy1iYXJjb2RlcyNJc29E" +
+  "cml2aW5nTGljZW5jZU1hY2hpbmVSZWFkYWJsZUluZm9ybWF0aW9uGJ2CGHYYpBiy" +
+  "ohicGKoYqEN1wEAYtoIZBAFYI4AkA7PTi9n4hQNhmVLLNdlG_QSgSyjM9MHACH_9" +
+  "_bkzc0w3GLilGJwYbBjKBBjUGNoY1lhBeoKm-_CqGFQs0Qvw5p1jsrq1tCQEPcoo" +
+  "f9GH3QtlwwSJaP19j3O0d3_psG2eHyuR5fUO4eyQ3_G8joaJ9FYfotMY2IMZBAFY" +
+  "I4AkA7PTi9n4hQNhmVLLNdlG_QSgSyjM9MHACH_9_bkzc0w3WCOAJAOz04vZ-IUD" +
+  "YZlSyzXZRv0EoEsozPTBwAh__f25M3NMNw";
+const ISO_OPTICAL = "58af2a194288b9b0270607ad67d1cbb5b7fb79dc4396f93623a0" +
+  "4d5e1c11facd";
+
+function isoGroupBytes(groups) {
+  log.debug("Entering isoGroupBytes().");
+  var out = {};
+  Object.keys(groups).forEach(function (k) {
+    out[k] = new Uint8Array(Buffer.from(groups[k]));
+  });
+  log.debug("Leaving isoGroupBytes().");
+  return out;
+}
+
+// Appendix B.2 spelled out independently: "DGn" + base64url(contents) +
+// "\n" for each protected group, in data-group NUMBER order.
+function isoCanonicalByHand(groups, names) {
+  log.debug("Entering isoCanonicalByHand().");
+  var order = names.slice().sort(function (a, b) {
+    return Number(a.slice(2)) - Number(b.slice(2));
+  });
+  log.debug("Leaving isoCanonicalByHand().");
+  return order.map(function (n) {
+    return n + Buffer.from(groups[n]).toString("base64url") + "\n";
+  }).join("");
+}
+
+async function isoLicence(theirs) {
+  log.debug("Entering isoLicence().");
+  var index = vcb.isoComponentIndex(ISO_PROTECT);
+  // DG1 = bit 0, DG2 = bit 1, DG10 = bit 9: C0 40.
+  assert.strictEqual(index, "u" + Buffer.from([0xc0, 0x40])
+                     .toString("base64url"), "the 2-byte index");
+  assert.strictEqual(index.length, 4, "\"a total of 4 characters\"");
+  assert.deepStrictEqual(vcb.isoProtectedGroups(index), ISO_PROTECT);
+  var groups = isoGroupBytes(ISO_GROUPS);
+  var canonical = vcb.isoCanonical(groups, index);
+  var byHand = isoCanonicalByHand(ISO_GROUPS, ISO_PROTECT);
+  assert.strictEqual(canonical, byHand, "Appendix B.2's components");
+  assert.strictEqual(canonical, ISO_CANONICAL, "the pinned vector");
+  assert.ok(canonical.indexOf("DG2") < canonical.indexOf("DG10"),
+            "numeric, not code-point, order");
+  assert.ok(/[-_]/.test(canonical.split("\n")[1]), "base64url, not base64");
+  var text = vcb.formatIsoDataGroups(groups);
+  assert.deepStrictEqual(vcb.parseIsoDataGroups(text), groups,
+                         "the text form reads back to the same bytes");
+  var opticalHex = nodeCrypto.createHash("sha256").update(byHand)
+    .digest("hex");
+  assert.strictEqual(opticalHex, ISO_OPTICAL, "the pinned opticalDataBytes");
+  var example = vcb.formatIsoDataGroups(groups) + "\nDG11: " +
+      ISO_EXAMPLE_DG11;
+  var ex = await vcb.verify(example);
+  assert.ok(ex.valid, "the library-made ISO example verifies: " + ex.reason);
+  assert.strictEqual(Buffer.from(ex.opticalDataBytes).toString("hex"),
+                     ISO_OPTICAL);
+  log.info("ISO vector: index " + index + ", canonical " +
+           JSON.stringify(canonical) + ", opticalDataBytes " + opticalHex);
+
+  var jsigs = await import("jsonld-signatures");
+  jsigs = jsigs.default || jsigs;
+  var Purpose = jsigs.purposes.AssertionProofPurpose;
+  var { DataIntegrityProof } = await import("@digitalbazaar/data-integrity");
+  var xi = await import("@digitalbazaar/ecdsa-xi-2023-cryptosuite");
+  var tableLoader = function tableLoader(o) {
+    log.debug("Entering tableLoader().");
+    log.debug("Leaving tableLoader().");
+    return tableLoaderFor(o.registryEntryId);
+  };
+  for (const crv of ["P-256", "P-384"]) {
+    var jwk = nodeCrypto.generateKeyPairSync("ec", { namedCurve: crv })
+      .privateKey.export({ format: "jwk" });
+    var k = didKeyFor(jwk);
+    var unsigned = vcb.credentialTemplate({ issuer: k.did,
+      subjectType: vcb.ISO_IDL, protect: ISO_PROTECT });
+    var issued = await vcb.issue(unsigned, { privateJwk: jwk,
+      verificationMethod: k.vm, printed: { iso: groups } });
+    assert.strictEqual(issued.carrier, "dg11");
+    assert.strictEqual(issued.canonical, byHand);
+    assert.strictEqual(Buffer.from(issued.opticalDataBytes).toString("hex"),
+                       opticalHex, crv + ": opticalDataBytes");
+    var libBytes = Buffer.from(await theirs.encode({
+      jsonldDocument: issued.credential, registryEntryId: 100,
+      documentLoader: loader, typeTableLoader: tableLoader }));
+    assert.strictEqual(Buffer.from(issued.cborld).toString("hex"),
+                       libBytes.toString("hex"), crv + ": the library " +
+                       "writes the same CBOR-LD, inline context and all");
+    var decoded = await theirs.decode({ cborldBytes: issued.cborld,
+      documentLoader: loader, typeTableLoader: tableLoader });
+    assert.deepStrictEqual(decoded, issued.credential);
+    var v = await jsigs.verify(decoded, { suite: new DataIntegrityProof({
+      cryptosuite: xi.createCryptosuite({ extraInformation: new Uint8Array(
+        Buffer.from(opticalHex, "hex")) }) }),
+      purpose: new Purpose(), documentLoader: loader });
+    assert.ok(v.verified, crv + ": the library verifies our ISO barcode " +
+              "over the same optical data: " + JSON.stringify(v.error));
+    var licence = vcb.formatIsoDataGroups(vcb.withVcbInDg11(groups,
+                                                            issued.text));
+    var mine = await vcb.verify(licence);
+    assert.ok(mine.valid, crv + ": ours, from DG11: " + mine.reason);
+    assert.deepStrictEqual(mine.protected, ISO_PROTECT);
+    var signer = await EcdsaMultikey.fromJwk({ jwk: jwk, secretKey: true,
+      id: k.vm, controller: k.did });
+    var theirsSigned = await jsigs.sign(unsigned, { suite:
+      new DataIntegrityProof({ signer: signer.signer(), date: null,
+        cryptosuite: xi.createCryptosuite({ extraInformation:
+          new Uint8Array(Buffer.from(opticalHex, "hex")) }) }),
+      purpose: new Purpose(), documentLoader: loader });
+    var theirBytes = await theirs.encode({ jsonldDocument: theirsSigned,
+      registryEntryId: 100, documentLoader: loader,
+      typeTableLoader: tableLoader });
+    var theirLicence = vcb.formatIsoDataGroups(vcb.withVcbInDg11(groups,
+      vcb.pdf417FieldText(theirBytes)));
+    var r = await vcb.verify(theirLicence);
+    assert.ok(r.valid, crv + ": the library's ISO barcode verifies here: " +
+              r.reason);
+    // DG2 protected and changed: fails. DG3 unprotected and changed: not.
+    var forged = Object.assign({}, groups, { DG2: new Uint8Array([1]) });
+    assert.ok(!(await vcb.verify(vcb.formatIsoDataGroups(vcb.withVcbInDg11(
+      forged, issued.text)))).valid, crv + ": a changed protected group");
+    var moved = Object.assign({}, groups, { DG3: new Uint8Array([2]) });
+    assert.ok((await vcb.verify(vcb.formatIsoDataGroups(vcb.withVcbInDg11(
+      moved, issued.text)))).valid, crv + ": an unprotected group changed " +
+      "still verifies");
+    log.info("PASS ISO " + crv + ": ours verified by the library (" +
+             issued.cborld.length + " bytes in DG11), the library's verified " +
+             "here; a protected group changed fails, an unprotected one " +
+             "does not.");
+  }
+  assert.throws(function () {
+    vcb.credentialTemplate({ issuer: "did:example:x", subjectType: vcb.ISO_IDL,
+                             protect: ["DG1", "DG11"] });
+  }, /DG11 cannot be protected/, "DG11 carries the VCB, so it is not " +
+  "protected");
+  assert.throws(function () {
+    vcb.isoProtectedGroups("u" + Buffer.from([0xc0, 0x41])
+                           .toString("base64url"));
+  }, /padding/, "the five padding bits must be 0");
+  assert.throws(function () {
+    vcb.isoProtectedGroups("uwAAA");
+  }, /4 characters/, "a 3-byte (AAMVA) index is not an ISO one");
+  assert.throws(function () {
+    vcb.parseIsoDataGroups("DG12: x");
+  }, /DG1\.\.DG11/, "DG12 is not a data group");
+  log.info("PASS ISO refusals: DG11 protected, padding bits, a 3-byte " +
+           "index, DG12.");
+  log.debug("Leaving isoLicence().");
+}
+
+// ---------------------------------------------------------------------------
+// 7. The status list a terse entry expands to.
+// ---------------------------------------------------------------------------
+
+// MSB-first packing (Bitstring Status List v1.0 section 3.2) and GZIP, done
+// here rather than by either implementation under test.
+function packList(length, set) {
+  log.debug("Entering packList().");
+  var bits = Buffer.alloc(length / 8);
+  set.forEach(function (i) {
+    bits[i >> 3] |= 0x80 >> (i & 7);
+  });
+  log.debug("Leaving packList().");
+  return "u" + zlib.gzipSync(bits).toString("base64url");
+}
+
+async function statusLists() {
+  log.debug("Entering statusLists().");
+  var bsl = await import("@digitalbazaar/vc-bitstring-status-list");
+  var { DataIntegrityProof } = await import("@digitalbazaar/data-integrity");
+  var ecdsaRdfc = (await import(
+    "@digitalbazaar/ecdsa-rdfc-2019-cryptosuite")).cryptosuite;
+  var jsigs = await import("jsonld-signatures");
+  jsigs = jsigs.default || jsigs;
+  var dl = await vcb.verify(DL_PDF417);
+  var entry = vcb.expandStatus(dl.credential.credentialStatus,
+                               { listLength: 131072 });
+  var url = entry.statusListCredential;
+  var jwk = nodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" })
+    .privateKey.export({ format: "jwk" });
+  var k = didKeyFor(jwk);
+  var signer = await EcdsaMultikey.fromJwk({ jwk: jwk, secretKey: true,
+    id: k.vm, controller: k.did });
+  var served = {};
+  var fetchText = async function fetchText(u) {
+    log.debug("Entering fetchText(). " + u);
+    if (!served[u]) {
+      log.debug("Leaving fetchText(). Not served.");
+      throw new Error("404 " + u);
+    }
+    log.debug("Leaving fetchText().");
+    return JSON.stringify(served[u]);
+  };
+  var docLoader = async function docLoader(u) {
+    log.debug("Entering docLoader(). " + u);
+    if (served[u]) {
+      log.debug("Leaving docLoader(). Served.");
+      return { documentUrl: u, document: served[u] };
+    }
+    log.debug("Leaving docLoader().");
+    return loader(u);
+  };
+
+  // The library's list, signed with the library's suite, read here.
+  var list = await bsl.createList({ length: 131072 });
+  list.setStatus(Number(entry.statusListIndex), true);
+  var unsignedList = await bsl.createCredential({ id: url, list: list,
+    statusPurpose: "revocation" });
+  unsignedList.issuer = k.did;
+  served[url] = await jsigs.sign(unsignedList, { suite:
+    new DataIntegrityProof({ signer: signer.signer(),
+                             cryptosuite: ecdsaRdfc }),
+    purpose: new jsigs.purposes.AssertionProofPurpose(),
+    documentLoader: docLoader });
+  var r = await vpVerifier.checkBitstringStatus(entry, { fetchText: fetchText,
+    issuer: k.did });
+  assert.strictEqual(r.value, 1, "entry 8321 is set: " +
+                     JSON.stringify(r.checks));
+  assert.ok(r.trusted, "the library's list verifies here");
+  var verdict = r.checks.filter(function (c) {
+    return c.id === "status";
+  })[0];
+  assert.strictEqual(verdict.status, "fail");
+  assert.ok(/revoked/.test(verdict.detail), verdict.detail);
+  var clear = Object.assign({}, entry, { statusListIndex: "8320" });
+  r = await vpVerifier.checkBitstringStatus(clear, { fetchText: fetchText });
+  assert.strictEqual(r.value, 0, "entry 8320 is clear");
+  log.info("PASS status: the library's BitstringStatusListCredential (" +
+           "ecdsa-rdfc-2019) at the expanded URL verifies here; entry 8321 " +
+           "is revoked and 8320 is not.");
+
+  // Ours: packed here, signed with data_integrity.js, read by the library.
+  var ourUrl = url.replace(/\/29385$/, "/29386");
+  served[ourUrl] = await di.createProof({ "@context":
+    ["https://www.w3.org/ns/credentials/v2"], id: ourUrl,
+    type: ["VerifiableCredential", "BitstringStatusListCredential"],
+    issuer: k.did, credentialSubject: { id: ourUrl + "#list",
+      type: "BitstringStatusList", statusPurpose: "revocation",
+      encodedList: packList(131072, [5, 131071]) } }, {
+    suite: "ecdsa-rdfc-2019", privateJwk: jwk, verificationMethod: k.vm,
+    proofPurpose: "assertionMethod", documentLoader: docLoader });
+  for (const idx of [5, 6, 131071]) {
+    var holderVc = { "@context": ["https://www.w3.org/ns/credentials/v2"],
+      type: ["VerifiableCredential"], issuer: k.did,
+      credentialSubject: {
+        id: "urn:uuid:4ab1e1c8-0000-4000-8000-000000000001" },
+      credentialStatus: Object.assign({}, entry, {
+        statusListCredential: ourUrl, statusListIndex: String(idx) }) };
+    var theirs = await bsl.checkStatus({ credential: holderVc,
+      documentLoader: docLoader, suite: new DataIntegrityProof({
+        cryptosuite: ecdsaRdfc }), verifyMatchingIssuers: true });
+    assert.ok(theirs.verified, "the library accepts our list: " +
+              (theirs.error && theirs.error.message));
+    assert.strictEqual(theirs.results[0].status, idx !== 6,
+                       "the library reads bit " + idx);
+    var ours = await vpVerifier.checkBitstringStatus(
+      holderVc.credentialStatus, { fetchText: fetchText });
+    assert.strictEqual(ours.value, idx !== 6 ? 1 : 0, "and so do we");
+  }
+  log.info("PASS status: a list packed and signed here is accepted by the " +
+           "library's checkStatus(), which reads bits 5, 6 and 131071 as " +
+           "this does.");
+
+  // Changed after signing: the bit is read and not relied on.
+  served[url] = JSON.parse(JSON.stringify(served[url]));
+  served[url].credentialSubject.encodedList = packList(131072, []);
+  r = await vpVerifier.checkBitstringStatus(entry, { fetchText: fetchText });
+  assert.ok(!r.trusted, "a tampered list does not verify");
+  assert.strictEqual(r.checks.filter(function (c) {
+    return c.id === "status";
+  })[0].status, "skip", "and its bit is not relied on");
+  assert.ok(r.checks.some(function (c) {
+    return c.id === "status.list" && c.status === "fail";
+  }), "the list check fails");
+  log.info("PASS status: a list changed after signing fails its proof and " +
+           "its bit is not relied on.");
+  log.debug("Leaving statusLists().");
+}
+
+// ---------------------------------------------------------------------------
+// 8. PDF417.
+// ---------------------------------------------------------------------------
+
+// The symbol's modules as a picture: `scale` pixels a module, a quiet zone,
+// one luminance byte a pixel.
+function rasterise(m, scale, quiet) {
+  log.debug("Entering rasterise(). " + scale);
+  var w = m.width * scale + 2 * quiet;
+  var h = m.height * scale + 2 * quiet;
+  var lum = new Uint8ClampedArray(w * h).fill(255);
+  for (var y = 0; y < m.height; y++) {
+    for (var x = 0; x < m.width; x++) {
+      if (!m.dark[y * m.width + x]) {
+        continue;
+      }
+      for (var dy = 0; dy < scale; dy++) {
+        var row = (quiet + y * scale + dy) * w + quiet + x * scale;
+        lum.fill(0, row, row + scale);
+      }
+    }
+  }
+  log.debug("Leaving rasterise().");
+  return { lum: lum, w: w, h: h };
+}
+
+async function pdf417RoundTrip() {
+  log.debug("Entering pdf417RoundTrip().");
+  var m = pdf417.symbolModules(DL_PDF417);
+  for (const scale of [2, 3, 5]) {
+    var px = rasterise(m, scale, 12);
+    var text = pdf417.readSymbol(px.lum, px.w, px.h);
+    assert.strictEqual(text, DL_PDF417, "scale " + scale + ": the symbol " +
+                       "reads back to the specification's PDF417 text");
+  }
+  var back = await vcb.verify(pdf417.readSymbol(rasterise(m, 3, 12).lum,
+    m.width * 3 + 24, m.height * 3 + 24));
+  assert.ok(back.valid, "the text read from the symbol verifies: " +
+            back.reason);
+  var svg = pdf417.symbolSvg(DL_PDF417);
+  var sized = new RegExp("^<svg width=\"\\d+\" height=\"\\d+\" " +
+                         "viewBox=\"0 0 \\d+ \\d+\" xmlns=\"http://" +
+                         "www.w3.org/2000/svg\"");
+  assert.ok(sized.test(svg), "an SVG document with its own size: " +
+            svg.slice(0, 90));
+  assert.ok(svg.indexOf("ANSI") === -1 && svg.indexOf("DAQ") === -1,
+            "the SVG carries modules, not the text");
+  // Most of the symbol painted over: nothing is read, and nothing wrong.
+  var damaged = rasterise(m, 3, 12);
+  damaged.lum.fill(255, 0, Math.floor(damaged.lum.length * 0.8));
+  assert.strictEqual(pdf417.readSymbol(damaged.lum, damaged.w, damaged.h),
+                     null, "a symbol too damaged to read reads as none");
+  assert.throws(function () {
+    pdf417.symbolSvg("\u20ac");
+  }, /not a byte/, "a character above U+00FF is refused");
+  log.info("PASS PDF417: the specification's licence text drawn with " +
+           pdf417.ENCODER + " (" + m.width + "x" + m.height + " modules, EC " +
+           "level " + pdf417.EC_LEVEL + ") reads back with " + pdf417.DECODER +
+           " at three scales and verifies; a damaged symbol reads as none.");
+  log.debug("Leaving pdf417RoundTrip().");
+}
+
 async function main() {
   log.debug("Entering main().");
   EcdsaMultikey = await import("@digitalbazaar/ecdsa-multikey");
@@ -504,6 +896,9 @@ async function main() {
   await cborldBothWays(theirs);
   await xiBothWays(theirs);
   await refusals();
+  await isoLicence(theirs);
+  await statusLists();
+  await pdf417RoundTrip();
   log.info("vc_barcodes_engine: all checks passed.");
   log.debug("Leaving main().");
 }

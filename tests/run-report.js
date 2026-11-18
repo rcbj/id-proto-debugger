@@ -3971,7 +3971,9 @@ function buildJobs() {
   // VC Barcodes (#480, W3C Working Draft): CBOR-LD 1.0 and ecdsa-xi-2023 —
   // the specification's three printed payloads, its PDF417 and QR text, and
   // Digital Bazaar's released cborld 8.1.0 and ecdsa-xi-2023-cryptosuite
-  // 1.2.0 byte for byte and both ways. No services.
+  // 1.2.0 byte for byte and both ways; the ISO (Appendix B) vector built
+  // there; status lists against @digitalbazaar/vc-bitstring-status-list
+  // 2.0.1 both ways; and the PDF417 draw/read round trip. No services.
   jobs.push({
     name: "VC Barcodes (CBOR-LD and ecdsa-xi-2023 against the spec's " +
         "vectors and Digital Bazaar's library, in node)",
@@ -3981,8 +3983,10 @@ function buildJobs() {
 
   // Gordian Envelope (#480, IETF drafts): dCBOR, the digest tree, UR, and
   // Schnorr / ECDSA / Ed25519, reproducing bc-envelope 0.43.0's and dcbor
-  // 0.25.2's own test vectors byte for byte, signatures included. No
-  // services.
+  // 0.25.2's own test vectors byte for byte, signatures included; then the
+  // obscuring cases (encryption, recipients, password locks, compression,
+  // SSKR), multi-part URs, ML-DSA and SSH signatures, against the crates'
+  // vectors and bc-envelope-cli 0.35.0 both ways. No services.
   jobs.push({
     name: "Gordian Envelope (the Rust crates' vectors, and Blockchain " +
         "Commons' bc-envelope-cli both ways, in node)",
@@ -3998,6 +4002,17 @@ function buildJobs() {
     name: "ACDC (KEL, registry, anchors and credential, both ways with " +
         "signify-ts, in node)",
     script: "acdc_engine.js",
+    env: {},
+  });
+
+  // ACDC against keri-ts 2.2.9 and cesr-ts 2.2.1 (#480): CESR version 2
+  // KELs, weighted thresholds, delegation, witness receipts, credentials
+  // (no-backer and backer registries, chains), IPEX and v2 ACDC messages,
+  // both ways, in memory. No services.
+  jobs.push({
+    name: "ACDC (CESR v2, thresholds, delegation, witnesses, chains and " +
+        "IPEX, both ways with keri-ts and cesr-ts, in node)",
+    script: "acdc_keri_ts.js",
     env: {},
   });
 
@@ -4247,8 +4262,9 @@ function buildJobs() {
     });
     // The VC Barcodes page (#480): the specification's two examples, a
     // changed MRZ refused, and an MRZ and an AAMVA barcode issued in the
-    // page, the drawn QR code read back from its image. Needs only the
-    // client.
+    // page, the drawn QR code and PDF417 symbol read back from their
+    // images; the ISO example and an ISO issue; a status list fetched from
+    // a server the job runs itself, and pasted. Needs only the client.
     jobs.push({
       name: "VC Barcodes page — read, verify and issue (MRZ QR code, " +
           "AAMVA PDF417)",
@@ -4257,10 +4273,13 @@ function buildJobs() {
     });
     // The Gordian Envelope page (#480): issue bc-envelope's example,
     // present four claims (the root digest unchanged, verified in the page
-    // and in node), another key refused, salted Ed25519. Needs only the
-    // client.
+    // and in node), another key refused, salted Ed25519; encrypt to a
+    // recipient and a password, compress, split into SSKR shares, send as
+    // multi-part URs, and issue with ML-DSA-44 and SSH Ed25519. Needs only
+    // the client.
     jobs.push({
-      name: "Gordian Envelope page — issue, verify and present by elision",
+      name: "Gordian Envelope page — issue, verify, present, encrypt, " +
+          "compress, SSKR and multi-part URs",
       script: "gordian_envelope_browser.js",
       env: {},
     });
