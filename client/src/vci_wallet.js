@@ -309,8 +309,10 @@ function fetchProtected(opts) {
       url: opts.url, nonce: nonce
     }).then(function (built) {
       var headers = Object.assign({}, opts.headers || {}, built.headers);
+      // opts.signal lets a caller bound the wait (vc_client_auth_pane.js
+      // does, for the token request).
       return fetch(opts.url, { method: method, headers: headers,
-                   body: opts.body })
+                   body: opts.body, signal: opts.signal })
         .then(function (response) {
           return response.text().then(function (text) {
             var body = null;

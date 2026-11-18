@@ -251,10 +251,41 @@ async function redeem(driver, offered, methodName, fields, secret, shownRe,
             methodName + ": the shown request must not carry the secret");
   await driver.findElement(By.id("vc_token_request_button")).click();
   if (expectOk) {
-    await driver.wait(async function () {
-      return !!(await value(driver, "vc_access_token"));
-    }, fetchWait, methodName + ": the token endpoint should issue a token. " +
-      "Status: " + (await value(driver, "vc_token_status")));
+    // Wait for an outcome — a token, or a status that is no longer
+    // "Redeeming" — and report the status as it IS then (it used to be read
+    // once, before the wait, so a refusal was reported as "Redeeming").
+    // Longer than the page's own bound on a token request
+    // (vc_client_auth_pane.js TOKEN_TIMEOUT_MS, 30 s), so a hang arrives
+    // here as the page's named timeout.
+    var done = false;
+    try {
+      await driver.wait(async function () {
+        if (await value(driver, "vc_access_token")) return true;
+        return !/^Redeeming/.test(await value(driver, "vc_token_status"));
+      }, Math.max(fetchWait, 45000));
+      done = true;
+    } catch (e) {
+      done = false;
+    }
+    var token = await value(driver, "vc_access_token");
+    if (!token) {
+      var said = await value(driver, "vc_token_status");
+      var answer = await driver.executeScript("var e=document." +
+        "getElementById('vc_token_response'); return e ? e.textContent : '';");
+      var consoleLines = [];
+      try {
+        consoleLines = (await driver.manage().logs().get("browser"))
+          .map(function (l) {
+            return l.level.name + " " + l.message;
+          }).slice(-15);
+      } catch (e) {
+        consoleLines = ["(no browser log: " + e.message + ")"];
+      }
+      assert.fail(methodName + ": the token endpoint should issue a token" +
+        (done ? "" : " (no outcome within the wait)") + ". The page says: " +
+        said + " | token response: " + String(answer).slice(0, 600) +
+        " | browser console: " + consoleLines.join(" / ").slice(0, 1500));
+    }
   } else {
     await waitForStatus(driver, "vc_token_status", function (s) {
       return /refused/.test(s);

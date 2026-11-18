@@ -1320,7 +1320,10 @@ function sendTokenRequest() {
       // also answers an attestation challenge once. No accessToken: this
       // request is how one is obtained, so the DPoP proof carries no ath.
       return clientAuthPane.sendToken(vciWallet, params, endpoint,
-                                      dpopContext());
+                                      dpopContext(), function (text) {
+        status("vc_token_status", "Redeeming the pre-authorized code: " +
+               text, "vc-pending");
+      });
     })
     .then(function (result) {
       recordTokenBinding(result);

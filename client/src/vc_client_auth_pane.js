@@ -465,20 +465,69 @@ function headersLowerOf(response) {
 // sent (draft -12 section 6.1); a challenge on any response is kept for the
 // next PoP (section 6.2). Resolves to fetchProtected's result plus
 // `applied` (what was sent, secret elided).
-function sendToken(vciWallet, params, endpoint, context) {
+// How long one token request may go unanswered before it is abandoned
+// with a reason, rather than leaving the page at "Redeeming …" for ever.
+var TOKEN_TIMEOUT_MS = 30000;
+
+// One POST, abandoned after TOKEN_TIMEOUT_MS with an error naming the
+// stage it was at.
+function postBounded(vciWallet, request, stageName) {
+  log.debug("Entering postBounded(). " + stageName);
+  var controller = typeof AbortController === "function" ?
+      new AbortController() : null;
+  var timer = null;
+  var timedOut = new Promise(function (resolve, reject) {
+    timer = setTimeout(function () {
+      if (controller) controller.abort();
+      reject(new Error("no answer from the token endpoint within " +
+        (TOKEN_TIMEOUT_MS / 1000) + " s (" + stageName + "). The request " +
+        "was sent and never answered: check that the server is up and that " +
+        "its CORS preflight allows the headers this method sends."));
+    }, TOKEN_TIMEOUT_MS);
+  });
+  var sent = vciWallet.fetchProtected(Object.assign({}, request,
+    { signal: controller ? controller.signal : undefined }));
+  log.debug("Leaving postBounded().");
+  return Promise.race([sent, timedOut]).then(function (r) {
+    clearTimeout(timer);
+    return r;
+  }, function (e) {
+    clearTimeout(timer);
+    throw e;
+  });
+}
+
+// onStage(text), when given, is told each step, so a page's status says
+// what it is waiting on.
+function sendToken(vciWallet, params, endpoint, context, onStage) {
   log.debug("Entering sendToken().");
+  var stage = function (text) {
+    log.debug("sendToken() stage: " + text);
+    if (typeof onStage === "function") onStage(text);
+  };
+  var m = method();
   var attempt = function (retry) {
+    stage(m === "attest_jwt_client_auth" ? (retry ? "Signing a new Client " +
+      "Attestation PoP with the server's challenge …" : "Signing the " +
+      "Client Attestation PoP …") : "Applying " + m + " …");
     return applyTo(params, endpoint).then(function (applied) {
-      return vciWallet.fetchProtected({ url: endpoint, method: "POST",
+      var name = "token request, " + m + (retry ? ", challenge retry" : "");
+      stage("Waiting for the token endpoint (" + name + ") …");
+      return postBounded(vciWallet, { url: endpoint, method: "POST",
         headers: Object.assign({ "Content-Type":
           "application/x-www-form-urlencoded" }, applied.headers),
-        body: vciWallet.encodeForm(applied.body), context: context })
+        body: vciWallet.encodeForm(applied.body), context: context }, name)
         .then(function (result) {
           noteChallenge(headersLowerOf(result.response));
           var err = result.body && result.body.error;
           if (!retry && err === "use_attestation_challenge" &&
-              method() === "attest_jwt_client_auth") {
+              m === "attest_jwt_client_auth") {
             log.debug("sendToken(): retrying with the server's challenge.");
+            if (!sdJwtVc.get(KEYS.CHALLENGE)) {
+              stage("The server asked for a challenge and its " +
+                "OAuth-Client-Attestation-Challenge header could not be " +
+                "read (not exposed to the page by CORS?); retrying anyway …");
+            }
             return attempt(true);
           }
           result.applied = applied;
@@ -493,6 +542,7 @@ function sendToken(vciWallet, params, endpoint, context) {
 module.exports = {
   KEYS: KEYS,
   sendToken: sendToken,
+  TOKEN_TIMEOUT_MS: TOKEN_TIMEOUT_MS,
   KEY_MATERIAL: KEY_MATERIAL,
   SECRET_FIELD: SECRET_FIELD,
   method: method,
