@@ -596,6 +596,7 @@ function strBuf(s) {
 // Returns DER bytes.
 async function encryptedPkcs8Der(privDer, password) {
   log.debug("Entering encryptedPkcs8Der().");
+  requirePkiEngine('A password-protected PKCS#8 key');
   var bag = new pkijs.PKCS8ShroudedKeyBag({
       parsedValue: pkijs.PrivateKeyInfo.fromBER(privDer) });
   var opts = Object.assign({ password: strBuf(password) }, PBES2_OPTS);
@@ -622,6 +623,25 @@ function asCertificate(cert) {
   return pkijs.Certificate.fromBER(cert);
 }
 
+// THE ONE PLACE LEFT THAT NEEDS WEB CRYPTO (#463). Every key, signature and
+// certificate on these pages is crypto_provider.js's, pure JS. The keystore
+// formats that PKI.js builds, PKCS#12 and password-protected PKCS#8, do their
+// own cryptography through PKI.js's Web Crypto engine, and crypto.subtle does
+// not exist on a plain-HTTP page. So they say so, naming the reason and what
+// still works, instead of failing somewhere inside PKI.js.
+function requirePkiEngine(what) {
+  log.debug("Entering requirePkiEngine(). " + what);
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    log.debug("Leaving requirePkiEngine(). Available.");
+    return;
+  }
+  log.debug("Leaving requirePkiEngine(). No Web Crypto.");
+  throw new Error(what + ' is built by PKI.js, whose cryptography is the ' +
+      "browser's Web Crypto, and this page is not in a secure context " +
+      '(https, or localhost), so it has none. Every other key format works ' +
+      'here: PEM, DER and JWK, public and private.');
+}
+
 // A PKCS#12 (.p12/.pfx) holding one private key and the certificates given —
 // the leaf first, then as much of its chain as the caller wants to ship.
 //
@@ -631,6 +651,7 @@ function asCertificate(cert) {
 // certificate imports and then fails to authenticate anything.
 async function buildPkcs12(options) {
   log.debug("Entering buildPkcs12().");
+  requirePkiEngine('A PKCS#12 keystore');
   var opts = options || {};
   var certs = (opts.certs || []).map(asCertificate);
   if (!certs.length) {

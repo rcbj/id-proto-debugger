@@ -636,6 +636,46 @@ async function pkcs12CarriesTheWholeChain() {
   log.debug("Leaving pkcs12CarriesTheWholeChain().");
 }
 
+// With crypto.subtle removed, as on a page served over plain HTTP (#463):
+// PEM, DER and JWK keep working, because they are crypto_provider.js's, and
+// the two formats PKI.js builds (PKCS#12, password-protected PKCS#8), whose
+// cryptography is PKI.js's Web Crypto engine, refuse with a sentence that
+// names the reason instead of failing inside PKI.js.
+async function keystoresSayWhenTheyNeedWebCrypto() {
+  log.debug("Entering keystoresSayWhenTheyNeedWebCrypto().");
+  const pair = await keyFor("ec-p256");
+  const desc = keys.keyAlg("ec-p256");
+  const cert = await certFor("ec-p256");
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  const real = globalThis.crypto;
+  Object.defineProperty(globalThis, "crypto", { configurable: true,
+    writable: true, value: { getRandomValues: function (a) {
+      return real.getRandomValues(a);
+    } } });
+  try {
+    const jwk = await keys.privToJwk(pair.privatePem, desc, "ES256", "sig");
+    assert.strictEqual(jwk.kty, "EC", "a JWK with no Web Crypto");
+    for (const format of ["pkcs12", "pem"]) {
+      let why = "";
+      try {
+        await keys.exportKeyPair({ format: format,
+          privatePem: pair.privatePem, publicPem: pair.publicPem, desc: desc,
+          password: PASSWORD, baseName: "export", certs: [cert.pem] });
+      } catch (e) {
+        why = e.message;
+      }
+      assert.ok(/built by PKI\.js.*not in a secure context/.test(why),
+        format + " with a password and no Web Crypto must say why: " +
+        JSON.stringify(why));
+    }
+  } finally {
+    Object.defineProperty(globalThis, "crypto", descriptor);
+  }
+  log.info("[no web crypto] OK — JWK works, and PKCS#12 and encrypted " +
+           "PKCS#8 name the secure context they need.");
+  log.debug("Leaving keystoresSayWhenTheyNeedWebCrypto().");
+}
+
 // ---------------------------------------------------------------------------
 // 4. The refusals, by name.
 // ---------------------------------------------------------------------------
@@ -861,6 +901,7 @@ async function test() {
   await hmacSecretsExportAsOctJwkOnly();
   await everyFormatIsReadableByOpenssl();
   await pkcs12CarriesTheWholeChain();
+  await keystoresSayWhenTheyNeedWebCrypto();
   await refusalsSayWhichMistakeItWas();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
