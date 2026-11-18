@@ -7,7 +7,7 @@
 // Data Integrity and Linked Data proofs on a JSON-LD credential or
 // presentation: CREATE one and VERIFY one, for every proof type an `ldp_vc`
 // arrives with except the selective-disclosure ones (bbs-2023 lives in
-// bbs2023.js; ecdsa-sd-2023 is #476).
+// bbs2023.js; ecdsa-sd-2023 in ecdsa_sd_2023.js, #476).
 //
 //   W3C VC Data Integrity EdDSA Cryptosuites v1.0
 //     eddsa-rdfc-2022     RDFC-1.0, SHA-256, Ed25519
@@ -178,8 +178,8 @@ var SUITES = {
 var VERIFIED_ELSEWHERE = {
   "bbs-2023": "bbs-2023 is selective disclosure: its derived proofs are " +
     "verified by bbs2023.js.",
-  "ecdsa-sd-2023": "ecdsa-sd-2023 is selective disclosure and is not " +
-    "verified yet (#476).",
+  "ecdsa-sd-2023": "ecdsa-sd-2023 is selective disclosure: its base and " +
+    "derived proofs are verified by ecdsa_sd_2023.js.",
   "BbsBlsSignature2020": "BbsBlsSignature2020 is verified by " +
     "bbs_bls_2020.js, which this page does not load.",
   "BbsBlsSignatureProof2020": "BbsBlsSignatureProof2020 is verified by " +

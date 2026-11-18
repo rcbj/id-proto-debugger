@@ -149,6 +149,15 @@ function didSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
+              <input class="btn2" id="did_apply_members_button" type="button" value="Apply edits" onclick="return didtools.applyMemberEdits();" />
+              <span class="tooltiptext">Make the members above THE document, so the resolved-document table and the Verify checks read what you edited rather than only what was resolved. A json field that does not parse is refused.</span>
+            </div>
+          </td>
+          <td><div class="vc-status" id="did_members_status">&nbsp;</div></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
               <input class="btn2" id="did_save_button" type="button" value="Save" onclick="return didtools.saveState();" />
               <span class="tooltiptext">Keep the DID, the document URL and the origin in this browser's local storage so they survive a reload.</span>
             </div>
