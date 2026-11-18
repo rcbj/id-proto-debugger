@@ -366,10 +366,26 @@ is how the default iya-sts issues.
    the offer link into **Receive a Credential Offer**, and press **Take this
    offer**. The **Credential Offer** pane names `IdentityCredential` and the
    pre-authorized grant with its `tx_code`.
-5. Press **Start Issuance** (a pre-authorized offer skips the sign-in). On
+5. Now step 1 discovers the issuer, so **nothing else is typed by hand** — and
+   you can see exactly where each value comes from:
+   - **Credential Issuer Metadata** — the **Credential Issuer Metadata URL**
+     is filled from the offer as
+     `https://localhost:8081/.well-known/openid-credential-issuer`. Press
+     **Retrieve** to fetch it (OpenID4VCI 1.0 §12.2); the pane lists the
+     `credential_configurations_supported` and the `authorization_servers`.
+     Press **Validate Signature** to verify the issuer's `signed_metadata`
+     (§12.2.3).
+   - **Authorization Server Metadata** — its **Metadata Endpoint URL** is taken
+     from the `authorization_servers` just retrieved. Press **Retrieve** (RFC
+     8414), then **Validate Signature**.
+   The **Configuration Parameters** pane below is filled **from these two
+   documents** — every endpoint, scope and credential setting the flow uses is
+   shown there, sourced from the metadata rather than guessed. You can override
+   any of it in that pane before continuing.
+6. Press **Start Issuance** (a pre-authorized offer skips the sign-in). On
    step 2, type the **Transaction Code**, press **Send the Token Request**,
    then **Approve and Request Credential**.
-6. Step 3 shows the SD-JWT VC, verified — the credential is now held in the
+7. Step 3 shows the SD-JWT VC, verified — the credential is now held in the
    wallet.
 
 **Present it (VC Presentation)** — to **iya-sts's own OpenID4VP verifier**. (The
@@ -383,12 +399,20 @@ Credentials API.)
    an `openid4vp://` request — *by value*, `response_mode=direct_post` — as a
    link and QR code. (The same request comes from
    `POST /admin-api/verifications/start`.)
-2. On `https://idptools.com`, choose **VC Presentation**. On step 1, paste the
-   `openid4vp://` request. The wallet reads it (no fetch needed), and you pick
-   the held credential and the claims to disclose.
-3. Press **Present**. The wallet posts the presentation to iya-sts's
+2. On `https://idptools.com`, choose **VC Presentation**. Unlike issuance,
+   **OpenID4VP has no metadata document to discover**, so the wallet learns the
+   Verifier's identity from the request plus a couple of values you set by hand
+   on step 0: set **Verifier base URL** to `https://localhost:8081` and press
+   **Save**. (The **Verifier JWKS URL** defaults to `<base>/oauth2/jwks`, used
+   to check a signed request from a pre-registered client; the **x509 trust
+   anchor** is needed only for an `x509_hash` / HAIP verifier. This request
+   names its client by the `redirect_uri` prefix and is unsigned, so neither is
+   required here.)
+3. On step 1, paste the `openid4vp://` request. The wallet reads it (no fetch
+   needed), and you pick the held credential and the claims to disclose.
+4. Press **Present**. The wallet posts the presentation to iya-sts's
    `response_uri` (allowed by the CORS origin set in step 3).
-4. The admin console shows the presentation **received and verified**.
+5. The admin console shows the presentation **received and verified**.
 
 ### 7. Remove it again
 
