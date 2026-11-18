@@ -34,11 +34,24 @@ no credential.
 | `GET /oid4vp/verifier/:id/ca` | `oid4vpVerifierCa` | Wallet | 200: DER, `application/pkix-cert` |
 | `POST /oid4vp/verifier/:id/response` | `oid4vpVerifierResponse` | Wallet | 200 `{}` or `{ "redirect_uri": ...?response_code=... }` |
 
-**Create** takes `{ redirectUri?, ttlMs?, idleTtlMs?, liveSigning? }`. `id` and `secret`
-are each 32 hex characters of `crypto.randomBytes`. The three URLs are built
-from the api's own address *as the caller reached it* (`publicBaseUrl()`), so
-they share one host, which the suite's peer wallet requires of `request_uri`
-and `response_uri`. `caIssuersUrl` is for the AIA extension of the Verifier's
+**Create** takes `{ redirectUri?, ttlMs?, idleTtlMs?, liveSigning?,
+publicBaseUrl? }`. `id` and `secret` are each 32 hex characters of
+`crypto.randomBytes`. The three URLs are built from one base, so they share
+one host, which the suite's peer wallet requires of `request_uri` and
+`response_uri`. The base is, in order: the page's `publicBaseUrl`, the
+`oid4vpVerifierPublicBaseUrl` setting, and the api's own address *as the
+caller reached it* (`publicBaseUrl()` in `api/server.js`). The last is often
+`localhost` or `api`, which a phone scanning the QR code cannot reach, which
+is why the first two exist (#470, B5). Both must be an absolute https URL
+with no credentials, query or fragment. A page's that is not is refused with
+a 400; a setting's is logged and ignored.
+
+**Letting the page choose the base is safe** because the base only shapes
+three strings handed back to that page. The api fetches nothing from it,
+redirects nobody to it, and serves the session on its own host whatever it
+says. The page could already write any `request_uri` it liked into the
+invocation. A base that does not lead back to the api only produces a
+request no wallet can answer. `caIssuersUrl` is for the AIA extension of the Verifier's
 leaf certificate. That wallet builds its chain by fetching the root from it.
 The two lifetimes may be shorter than the settings and never longer.
 
@@ -180,6 +193,7 @@ cursor ahead of `next` is clamped to it.
 | `oid4vpVerifierMaxRequestObjectBytes` | 65536 | A Request Object or the CA certificate (DER) |
 | `oid4vpVerifierLiveSignWaitMs` | 15000 | How long a live-signing Wallet POST is held for the page |
 | `oid4vpVerifierMaxPendingSignings` | 4 | Wallets held at once per session; one more is answered 503 if it sent a `wallet_nonce`, else served the pre-signed object |
+| `oid4vpVerifierPublicBaseUrl` | `""` | The base a session's three URLs are built from, e.g. `https://verifier.example.net:4000`. Empty: the address the page reached the api at. Reported by `GET /oid4vp/verifier/limits` as `publicBaseUrl`; a page's own `publicBaseUrl` overrides it |
 
 `oid4vpVerifierMaxSessionBytes` exists for the reason
 `ssfReceiverMaxInboxBytes` does. Without it the three count caps multiply
@@ -190,6 +204,9 @@ out to more than a gigabyte held in memory.
 A Wallet that fetches `request_uri` or posts to `response_uri` has no such
 session, so the gate would answer it before this service did. Create returns
 403 and names the setting, rather than returning URLs that can only fail.
+`oid4vpVerifierPublicBaseUrl` is there too, empty, and unused while the role
+is off. The embedded contract does not name it, because iya-sts reads none of
+the Verifier's settings.
 
 ## For the page
 
@@ -198,10 +215,19 @@ session, so the gate would answer it before this service did. Create returns
   with the role switched off returns 200 with `enabled: false`.
 * **CORS** needed no change. The api's `cors()` reflects requested headers
   and allows PUT and DELETE, so `Authorization` passes the preflight.
+* **Issuer-side fetches** (issuer metadata, DID documents, status lists) go
+  through the wallet's proxy, `POST /oid4vp/call`, when the page's "through
+  the api" box is ticked, which is its default wherever there is an api. They
+  ask for `responseEncoding: "base64"`, so the answer's `body` is the bytes
+  in base64 with `bodyEncoding: "base64"` (a Token Status List may be a
+  binary CWT). `GET /oid4vp/limits` lists `responseEncodings`. That proxy's
+  rules are in `api/oid4vp_proxy.js`: GET or POST only, the address policy,
+  the timeouts, and the size and redirect caps of every outbound call.
 * Sessions live in memory and are lost when the api restarts. When the api
-  returns 404 for a session, create a new one and sign again. The `client_id`
-  and certificates do not depend on the session, but `request_uri` and
-  `response_uri` do.
+  returns 404 for a session, create a new one and sign again. The root CA,
+  the attester and the request key do not depend on the session (the page
+  keeps them across runs), but `request_uri`, `response_uri` and each
+  request's leaf certificate do, and so does an `x509_hash` `client_id`.
 
 `tests/api_oid4vp_verifier.js` drives the module in node and, when it is
 given `API_URL`, the routes over HTTP. The model is in

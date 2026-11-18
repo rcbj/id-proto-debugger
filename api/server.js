@@ -560,6 +560,22 @@ function captureRawBody(sink) {
   };
 }
 
+// captureRawBody()'s sibling for a response read as an arraybuffer: the
+// bytes are kept as they arrived (sink.bytes) and their UTF-8 reading is
+// what the trace shows (sink.raw). Nothing is parsed.
+function captureRawBytes(sink) {
+  log.debug("Entering captureRawBytes().");
+  log.debug("Leaving captureRawBytes().");
+  return function (data) {
+    var bytes = Buffer.isBuffer(data) ? data :
+        (data === null || data === undefined) ? Buffer.alloc(0) :
+        Buffer.from(data);
+    sink.bytes = bytes;
+    sink.raw = bytes.toString('utf8');
+    return bytes;
+  };
+}
+
 // The headers of an axios response, as a plain object. axios 1.x returns an
 // AxiosHeaders instance, which JSON.stringify renders as {} without toJSON().
 function traceHeaders(headers) {
@@ -3835,15 +3851,20 @@ app.post('/oid4vp/call', model.route('oid4vpCall'), function (req, res) {
   var sink = {};
   var startedAt = Date.now();
   var sentHeaders = withUserAgent(described.headers);
+  // Under responseEncoding "base64" the body is read as BYTES (a status
+  // list may be a binary CWT), kept in sink.bytes, and its UTF-8 reading
+  // goes to the trace (#470, B3).
+  var binary = described.responseEncoding === 'base64';
   axios({
     method: described.method.toLowerCase(),
     url: described.url,
     data: described.body === null ? undefined : described.body,
-    responseType: 'text',
+    responseType: binary ? 'arraybuffer' : 'text',
     timeout: CALL_TIMEOUT,
     maxContentLength: MAX_CONTENT_LENGTH,
     maxRedirects: MAX_REDIRECTS,
-    transformResponse: [captureRawBody(sink)],
+    transformResponse: [binary ? captureRawBytes(sink) :
+                        captureRawBody(sink)],
     // A Verifier's 400 is its ANSWER (invalid_request naming the check that
     // failed), so it must not throw.
     validateStatus: function () {
@@ -3855,7 +3876,8 @@ app.post('/oid4vp/call', model.route('oid4vpCall'), function (req, res) {
   })
     .then(function (response) {
       var answer = oid4vpProxy.readResponse(response.status,
-          traceHeaders(response.headers), sink.raw);
+          traceHeaders(response.headers), binary ? sink.bytes : sink.raw,
+          described.responseEncoding);
       var trace = buildHttpTrace({ method: described.method,
           url: described.url, headers: sentHeaders,
           body: described.body === null ? '' : described.body },
@@ -4176,10 +4198,13 @@ app.post('/oid4vp/verifier', model.route('oid4vpVerifierCreate'),
     log.debug('Leaving POST /oid4vp/verifier. Refused: ' + made.error);
     return res.status(made.status).json({ error: made.error });
   }
-  // This api's address AS THE CALLER REACHED IT, for the SSF receiver's
-  // reason: the Wallet has to reach these URLs, and behind the embedding
-  // proxy they carry the prefix it stripped. See publicBaseUrl().
-  var urls = oid4vpVerifier.urlsFor(publicBaseUrl(req), made.id);
+  // The page's publicBaseUrl, else oid4vpVerifierPublicBaseUrl, else this
+  // api's address AS THE CALLER REACHED IT, for the SSF receiver's reason:
+  // the Wallet has to reach these URLs, and behind the embedding proxy they
+  // carry the prefix it stripped. See publicBaseUrl() and, for why the
+  // first two exist, publicBase() in oid4vp_verifier.js (#470, B5).
+  var urls = oid4vpVerifier.urlsFor(oid4vpVerifier.publicBase(appconfig,
+      made.publicBaseUrl, publicBaseUrl(req)), made.id);
   log.debug('Leaving POST /oid4vp/verifier. ' + made.id);
   return res.status(201).json({
     id: made.id,

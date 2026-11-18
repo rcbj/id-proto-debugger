@@ -28,11 +28,11 @@
 // four key-pair panes' lists as the classes; anything named like a token, a
 // response or a history was filed as `output`, and the rest as `ordinary`.
 
-import "./bbs2023.tsp";
 import "./did_tools.tsp";
 import "./digital_signature.tsp";
 import "./gnap.tsp";
 import "./introspection.tsp";
+import "./jsonld_contexts.tsp";
 import "./jwks.tsp";
 import "./jwt_tools.tsp";
 import "./kerberos_history.tsp";

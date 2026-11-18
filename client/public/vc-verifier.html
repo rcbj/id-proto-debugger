@@ -32,7 +32,7 @@
 <a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html" target="_blank" rel="noopener noreferrer">OpenID for Verifiable Presentations 1.0</a>:
 it asks a wallet for claims and checks what comes back. You compose a
 <a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#name-digital-credentials-query-l" target="_blank" rel="noopener noreferrer">DCQL</a>
-query, the page signs the Authorization Request with a certificate it makes for this run, and you hand the request
+query, the page signs the Authorization Request with a certificate issued under the Verifier's own root, and you hand the request
 to a wallet. The wallet posts its answer to a <code>response_uri</code> this debugger's api hosts on the page's
 behalf, because a page cannot receive a POST. Every check on the answer is reported on its own line. The other
 side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-0.html">the presentation workflow</a>.</p>
@@ -104,19 +104,20 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
                 <option value="x509_san_dns">x509_san_dns (a DNS name in the certificate)</option>
                 <option value="redirect_uri">redirect_uri (an unsigned request)</option>
                 <option value="decentralized_identifier">decentralized_identifier (a did:jwk of the request key)</option>
-                <option value="verifier_attestation">verifier_attestation (a Verifier Attestation JWT from an attester made for this run)</option>
+                <option value="verifier_attestation">verifier_attestation (a Verifier Attestation JWT from the Verifier's attester)</option>
                 <option value="pre-registered">pre-registered (no prefix: a client_id the wallet already knows)</option>
               </select>
-              <span class="vc-note">The certificate is made for this run: a root, and a leaf whose
-              subjectAltName is the api's host name and whose Authority Information Access points at the root,
-              which the api serves.</span></td>
+              <span class="vc-note">The certificate is a leaf made for this request, under the Verifier's
+              root CA (below), which is kept across runs. The leaf's subjectAltName is the api's host name and
+              its Authority Information Access points at the root, which the api serves.</span></td>
         </tr>
         <tr id="vpv_client_id_row">
           <td><label for="vpv_client_id_typed">Pre-registered client_id</label></td>
           <td><input type="text" id="vpv_client_id_typed" size="40" placeholder="verifier-1"
                      onchange="return vcverifier.settingsChanged();" />
-              <span class="vc-note">Only for the pre-registered prefix. The request is signed with a key made for
-              this run; pane 3 shows the JWKS the wallet must have registered for it.</span></td>
+              <span class="vc-note">Only for the pre-registered prefix. The request is signed with the
+              Verifier's request key (below); the JWKS the wallet must have registered for it is shown there and
+              in pane 3.</span></td>
         </tr>
         <tr>
           <td><label for="vpv_response_mode">Response mode</label></td>
@@ -163,6 +164,31 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
               (SD-JWT VC section 2.5).</span></td>
         </tr>
         <tr>
+          <td><label for="vpv_public_base_url">Public base URL of the api (optional)</label></td>
+          <td><input type="text" id="vpv_public_base_url" size="60"
+                     placeholder="https://verifier.example.net:4000"
+                     onchange="return vcverifier.settingsChanged();" />
+              <span class="vc-note">Where a wallet reaches this debugger's api. The request_uri, the
+              response_uri and the root's caIssuers URL are built from it. Empty: the api's
+              <code>oid4vpVerifierPublicBaseUrl</code>, or else the address this page reached the api at, which a
+              phone scanning the QR code usually cannot reach (<code>localhost</code>, <code>api</code>). An
+              https URL. It only shapes the URLs handed to the wallet; the api still serves on its own host, so
+              the address must lead back to it. When the host is an IP address the leaf names it in an iPAddress
+              subjectAltName, and x509_san_dns cannot be used: an address is not a DNS name.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_fetch_via_api">Issuer-side fetches</label></td>
+          <td><label><input type="checkbox" id="vpv_fetch_via_api"
+                            onchange="return vcverifier.settingsChanged();" />
+              Fetch issuer metadata, DID documents and status lists through the api</label>
+              <span class="vc-note">On by default wherever there is an api. From the page, each of these is a
+              cross-origin GET the browser lets it read only when the server sends CORS headers, and SD-JWT VC
+              issuer metadata and did:web hosts usually send none (Token Status List section 8.1 makes it only a
+              SHOULD). Through the api it is fetched server-side under the api's address policy. Either way a
+              fetch that fails is reported as a check not performed, naming the URL. A static site has no api,
+              so the box is off there.</span></td>
+        </tr>
+        <tr>
           <td><label for="vpv_issuer_bindings">Issuer bindings (optional)</label></td>
           <td><textarea id="vpv_issuer_bindings" class="vc-mono" rows="3" cols="80"
                         placeholder="https://issuer.example = sha256:3f2a...&#10;https://issuer.example = cn:Example Issuer"
@@ -183,6 +209,30 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
               POST (section 8.2), with a fresh random <code>response_code</code> added for each answer, as
               section 8.2 requires. Empty: none &mdash; which a same-device flow should not be (HAIP 1.0
               section 5.1: Verifiers MUST include one).</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_save_identity">The Verifier's identity</label></td>
+          <td><label><input type="checkbox" id="vpv_save_identity" checked="checked"
+                            onchange="return vcverifier.saveIdentityChanged();" />
+              Keep this identity in this browser (its root CA, its attester and its request key)</label>
+              <span class="vc-note">These are what a wallet is given to trust this Verifier, so they stay the
+              same from one request to the next; only each request's leaf certificate is new, issued under the
+              same root. They are <strong>private keys</strong>. Unticked, nothing is stored and whatever was is
+              removed at once; the identity then lasts this page load, and Download carries it.</span>
+              <br/><textarea id="vpv_identity_trust" class="vc-mono" rows="8" cols="80" readonly="readonly"></textarea>
+              <br/><input class="btn2" id="btn_vpv_identity_download" type="button" value="Download the identity"
+                          onclick="return vcverifier.downloadIdentity();" />
+              <input class="btn2" id="btn_vpv_identity_new" type="button" value="Make a new identity"
+                     onclick="return vcverifier.newIdentity();" />
+              <span class="vc-status" id="vpv_identity_status">&nbsp;</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_identity_import">Use a saved identity</label></td>
+          <td><textarea id="vpv_identity_import" class="vc-mono" rows="3" cols="80"
+                        placeholder='{"type": "oid4vp-verifier-identity", ...}  (a file from Download)'></textarea>
+              <br/><input class="btn2" id="btn_vpv_identity_import" type="button" value="Use this identity"
+                          onclick="return vcverifier.importIdentity();" />
+              <span class="vc-note">Replaces the identity above. What is pasted here is never stored.</span></td>
         </tr>
       </tbody>
     </table>

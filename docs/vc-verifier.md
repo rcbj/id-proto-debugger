@@ -49,22 +49,95 @@ HTTP server, so the api hosts both, as it hosts the Shared Signals push
 receiver. **The api is a store.** The page makes the key pair and the
 certificates and signs the Request Object in the browser; the api is given
 the compact JWS and the root certificate and serves them, and keeps what the
-wallet posts until the page polls for it. The private keys and the api
-session's secret are held for one page load and never stored. The routes,
+wallet posts until the page polls for it. Each request's leaf key, the
+response decryption key and the api session's secret are held for one page
+load and never stored. The Verifier's identity is the exception, behind an
+opt-out checkbox: see below. The routes,
 settings and limits are in `docs/vc-verifier-api.md`.
 
 On the static sites there is no api, so the page cannot host a request. It
 says so, and pane 4 still checks a pasted answer.
 
+## Issuer metadata, DID documents and status lists
+
+Checking an answer means reading things the WALLET did not send: an SD-JWT
+VC issuer's `/.well-known/jwt-vc-issuer` and its `jwks_uri`, a `did:web`
+document, a Token Status List or a Bitstring Status List credential. From the
+page each is a cross-origin GET, which the browser lets the page read only
+when the server sends CORS headers. iya-sts sends them; SD-JWT VC issuers and
+`did:web` hosts generally do not, and Token Status List section 8.1 makes
+CORS only a SHOULD.
+
+So pane 2 has **Fetch issuer metadata, DID documents and status lists
+through the api** (`vpv_fetch_via_api`, an ordinary remembered setting). It
+is **on by default wherever there is an api** and off, and disabled, on the
+static sites, which have none. Ticked, each GET goes through `POST
+/oid4vp/call` with `responseEncoding: "base64"`, so the api's address
+policy, timeouts and size and redirect caps apply, and a status list that is
+a binary CWT arrives as its bytes. Unticked, the browser fetches directly,
+and a server with no CORS headers is named in the error.
+
+Either way a fetch that fails throws an error naming the URL. For an
+issuer's key the engine reports that as a SKIP ("could not fetch …"), which
+makes the verdict incomplete, not a signature FAIL.
+
 ## The certificate
 
-Each request gets a new self-signed P-256 root and a leaf signed by it. The
-leaf's subjectAltName is the api's host name (the host of `response_uri`),
-which is what `x509_san_dns` names, and its Authority Information Access
-`caIssuers` URL is the api's `/oid4vp/verifier/<id>/ca`, which serves the
-root. The Request Object's `x5c` carries the leaf only. A wallet that
-completes a chain from AIA, as `rcbj/oid4vc-wallet` does, finds the root
-there; any other wallet can be given the root from pane 3 as a trust anchor.
+Each request gets a new P-256 leaf, issued under the Verifier's **root CA**,
+which is kept across runs (next section). The leaf's subjectAltName is the
+api's host name (the host of `response_uri`), which is what `x509_san_dns`
+names, and its Authority Information Access `caIssuers` URL is the api's
+`/oid4vp/verifier/<id>/ca`, which serves the root. The Request Object's
+`x5c` carries the leaf only. A wallet that completes a chain from AIA, as
+`rcbj/oid4vc-wallet` does, finds the root there; any other wallet is given
+the root once, as a trust anchor, and it stays valid for every later request.
+
+**The host a wallet is handed** is the api's address as the page reached it,
+unless pane 2's **Public base URL of the api** or the api's
+`oid4vpVerifierPublicBaseUrl` names another (`docs/vc-verifier-api.md`).
+`localhost` or `api` is unreachable from a phone scanning the QR code, and
+pane 3 says so when the request uses one.
+
+**An IP address is never a dNSName** (RFC 5280 section 4.2.1.6). When the
+host is an address, the leaf carries it as an iPAddress subjectAltName, so
+`x509_hash` works. `x509_san_dns` is refused before anything is made: OpenID4VP
+1.0 section 5.9.3 makes that Client Identifier "a DNS name" matching a
+dNSName SAN, and an address can be neither. The error says to use
+`x509_hash` or reach the api by a host name.
+
+## The Verifier's identity across runs
+
+Until #470 every request made a new root, attester and request key, so only
+a wallet that fetches its anchor from AIA could trust the Verifier. A wallet
+configured with trust anchors, an attester's key or a registered JWKS
+refused every signed request. Three things now outlive a request:
+
+| Part | Used by | What a wallet is given |
+|---|---|---|
+| the root CA (certificate and key) | `x509_hash`, `x509_san_dns` | the root certificate, as a trust anchor |
+| the attester | `verifier_attestation` | the attester's JWKS (its `iss` is the `did:jwk` of that key) |
+| the request key | `decentralized_identifier`, a pre-registered `client_id`, and the key a Verifier Attestation's `cnf` names | the DID, or the JWKS registered for the `client_id` |
+
+Pane 2 shows all of them, under "The Verifier's identity". Each part is made
+the first time a prefix needs it. The response encryption key is not part of
+the identity: it is sent in each request's `client_metadata`, so nothing is
+anchored on it, and keeping it would only let one leaked key read later
+answers.
+
+**These are private keys**, so they follow the key-material rules every
+key-pair pane here follows. They are stored in `localStorage` under
+`vpv_identity` only while **Keep this identity** (`vpv_save_identity`) is
+ticked, which is the default. Unticking it removes the stored identity at
+once. `saveState()` removes it whenever the box is off, and so does every
+page load. A cached page without the box keeps saving; only an explicit `"0"`
+stops it. With saving off the identity lasts one page load. **Download the
+identity** writes it as one JSON file (`vp_verifier.js`
+`verifierIdentityFile()`: the root's certificate PEM and private JWK, the
+attester's `iss` and private JWK, the request key's private JWK), and **Use a
+saved identity** reads one back, checking that each JWK's `x` and `y` belong
+to its `d` and that the root's key is the one in its certificate. The import
+field is never stored. **Make a new identity** discards it, and every wallet
+must then be given the new one.
 
 ## What is checked
 
@@ -169,9 +242,27 @@ them:
 * **dc+sd-jwt and mso_mdoc: the IETF Token Status List**
   (draft-ietf-oauth-status-list-21).
   * The Status List Token is fetched with `Accept:
-    application/statuslist+jwt`. The CWT form is not asked for, because it
-    is not verified. `typ` is compared as a media type (RFC 7515 section
-    4.1.9), so `application/statuslist+jwt` and any letter case pass.
+    application/statuslist+jwt, application/statuslist+cwt` (section 8.1),
+    and both forms are verified. In the JWT form (section 5.1) `typ` is
+    compared as a media type (RFC 7515 section 4.1.9), so
+    `application/statuslist+jwt` and any letter case pass.
+  * The CWT form (section 5.2) is a COSE_Sign1 decoded with `cbor.js` and
+    verified in pure JavaScript by `mdoc.verifyCoseSignature()` over RFC
+    9052's Sig_structure. It FAILs when it is not tagged
+    COSE_Sign1_Tagged (18), when it is tagged with the CWT tag (61, which
+    section 5.2 forbids), and when the protected header's type (16) is
+    missing or is not `application/statuslist+cwt`. An integer type is a
+    CoAP Content-Format, whose number section 14.8 still leaves TBD, so it
+    is reported and not judged. The claims are `2` (sub, which must be the
+    credential's uri), `6` (iat, required), `4` (exp), `5` (nbf), `65534`
+    (ttl, reported) and `65533`, the section 4.3 map whose `lst` is a byte
+    string; an `aggregation_uri` there is reported. The key is named by
+    the COSE `kid` (4), `x5chain` (33) or `x5t` (34, SHA-256 or SHA-1),
+    read into the same header the JWT path uses, so the key order and the
+    `.signer` row below are the same for both forms. A COSE_Mac0 (tag 17)
+    is SKIP: it needs a key shared with the Status Issuer, and none is held.
+    A Content-Type other than the form's media type is reported (section
+    8.2).
   * Its signature is checked with **the first key that verifies**, in this
     order: the credential issuer's own key when the token references it
     (the same `x5c`, an `x5t` or `x5t#S256` of the credential's leaf, or the
@@ -190,15 +281,17 @@ them:
     names it too.
   * `lst` is decompressed (zlib, with the browser's `DecompressionStream`).
     Entry 0 is in the least significant bits of byte 0. The tests read the
-    draft's own vectors (sections 4.1 and 4.2, Appendix C.1 and C.3).
+    draft's own vectors (sections 4.1 and 4.2, Appendix C.1 and C.3), the
+    CBOR StatusLists of section 4.3 and Appendix C.1 and C.2 inside a CWT,
+    and section 5.2's example CWT, which is read and not relied on because
+    the draft does not publish its key.
   * VALID is PASS, INVALID and SUSPENDED are FAIL. Any other value is SKIP
     and shown: 0x03 and 0x0C to 0x0F are application-specific (section
     7.1), and the rest are reserved for future registration.
-  * A body that is not a compact JWS is reported as what it is. A
-    COSE_Sign1 (detected by decoding the CBOR) is SKIP: recognised, not
-    verified. An HTML page, other binary data or other text is FAIL. The
-    page hands the body over as bytes, so a binary CWT is not mangled into
-    text.
+  * A body that is neither a compact JWS nor a COSE structure (detected by
+    decoding the CBOR, never by its first byte) is reported as what it is:
+    an HTML page, other binary data or other text is FAIL. The page hands
+    the body over as bytes, so a binary CWT is not mangled into text.
   * Status mechanisms other than `status_list`, such as an mdoc's
     `identifier_list`, are reported as SKIP by name, never as "no status".
 * **jwt_vc_json and ldp_vc: the W3C Bitstring Status List**, one row per
@@ -235,6 +328,17 @@ back to the page.
 * **Audience:** under the DC API a KB-JWT, a VP and an `ldp_vc` proof are
   held to `origin:<origin>`. An mdoc device signature is checked against the
   DC API handover (B.2.6.2).
+* **The origin has no trailing slash.** It is `window.location.origin`, the
+  HTML serialization of an origin (scheme, host, port), and that is what
+  OpenID4VP 1.0 calls the Origin: section 2 says "The web origin is
+  https://verify.example.com", Appendix A.2's `expected_origins` example is
+  `https://origin1.example.com`, and B.2.6.2's worked SessionTranscript
+  hashes `https://example.com`. The tests reproduce those bytes. The
+  `origin:https://verifier.example.com/` in section 5.9.3 and Appendix A.4 is
+  a "for example", and it is the only example that has a slash. An `aud` of
+  `origin:<origin>/` therefore FAILs, and the detail explains why. A
+  `session.origin` with a path is a URL, not an origin, so
+  `response.origin` FAILs too.
 
 A browser without the API, or without a wallet the platform knows, is told
 so by name.

@@ -38,10 +38,15 @@
 //     chosen so that reading either one the wrong way gives a wrong answer;
 //     draft-ietf-oauth-status-list-21's own vectors (sections 4.1/4.2 and
 //     Appendix C.1 and C.3) and Bitstring Status List v1.0's Examples 1-3;
-//     a CWT as bytes, an HTML page and binary in the list's place; and the
+//     an HTML page and binary in the list's place; and the
 //     Status List Token's signer linked to the credential's issuer by each
 //     of section 11.3's routes (certificates from x509.js, keys and
 //     thumbprints from node), and the ways it is NOT;
+//   * CWT Status List Tokens (section 5.2, #471 E5) assembled byte by byte
+//     here and signed by node's ECDSA: VALID, INVALID, SUSPENDED, a bad
+//     signature, a sub mismatch and each structural MUST, by kid, x5chain
+//     and x5t; plus the draft's own section 5.2 CWT and its section 4.3 and
+//     Appendix C.1/C.2 CBOR StatusLists;
 //   * Data Integrity: the W3C's own eddsa-jcs-2022 vector, and credentials,
 //     VPs and status list credentials signed here in five suite/curve
 //     combinations (JCS written here, RDFC by jsonld).
@@ -53,6 +58,22 @@
 //     IRIs, mdocs signed here with -9, -35, SHA-384/512 digests and
 //     DeviceMac, and the Data Integrity proof @context rules; plus issuer
 //     keys that cannot be had reported as a SKIP (B2/B3).
+//
+// Which checks are the SPECIFICATIONS' own vectors, byte for byte or value
+// for value (#471, T1), as opposed to inputs built here from their text:
+//
+//   * OpenID4VP 1.0 Appendix B.2.6.1 and B.2.6.2: the example JWK's
+//     thumbprint, the two HandoverInfo, Handover and SessionTranscript hex
+//     strings, rebuilt by the Verifier and by the wallet
+//     (openid4vpSpecVectors());
+//   * OpenID4VP 1.0 Appendix B.3.2: the example SD-JWT VC's _sd array, its
+//     three Disclosures and their printed SHA-256 hashes (ibid.);
+//   * draft-ietf-oauth-status-list-21 sections 4.1/4.2 and Appendix C.1 and
+//     C.3 (tokenStatusSpecVectors()); its section 5.2 example CWT and the
+//     CBOR StatusLists of section 4.3 and Appendix C.1 and C.2
+//     (cwtStatusLists());
+//   * Bitstring Status List v1.0 Examples 1-3 (bitstringStatusLists());
+//   * the W3C eddsa-jcs-2022 test vector (cryptosuites()).
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -442,6 +463,160 @@ async function identityAndRequest() {
            "the wallet's own rules.");
   log.debug("Leaving identityAndRequest().");
   return { identity: id, enc: enc };
+}
+
+// THE IDENTITY ACROSS RUNS (#470, B4): one root, two requests. Each request
+// gets a new leaf and both chain to the same root, which node's own
+// X509Certificate checks, and a wallet CONFIGURED with that root as its
+// anchor (vp_protocols.verifyX509Request with trustAnchorPem, no AIA) takes
+// both. Then the identity file round-trips, and a tampered one is refused.
+async function persistentIdentity() {
+  log.debug("Entering persistentIdentity().");
+  const root = await verifier.makeVerifierRoot();
+  const rootCert = new nodeCrypto.X509Certificate(root.certificatePem);
+  ok(rootCert.ca && rootCert.verify(rootCert.publicKey),
+     "the root is a self-signed CA");
+  const fromCert = rootCert.publicKey.export({ format: "jwk" });
+  eq([fromCert.x, fromCert.y], [root.privateJwk.x, root.privateJwk.y],
+     "the root's private JWK is the key node reads out of its certificate");
+  eq(Buffer.from(verifier.p256PointOfCertificate(rootCert.raw))
+     .toString("base64url"), Buffer.concat([Buffer.from([4]),
+       Buffer.from(fromCert.x, "base64url"),
+       Buffer.from(fromCert.y, "base64url")]).toString("base64url"),
+     "p256PointOfCertificate() finds the point node finds");
+  const a = await verifier.makeVerifierIdentity({ dnsName: "a.example",
+    caIssuersUrl: "https://a.example/ca", root: root });
+  const b = await verifier.makeVerifierIdentity({ dnsName: "b.example",
+    root: root });
+  eq(a.rootPem, root.certificatePem, "request 1 names the kept root");
+  eq(b.rootPem, root.certificatePem, "request 2 names the same root");
+  ok(Buffer.from(a.rootDer).equals(rootCert.raw) &&
+     Buffer.from(b.rootDer).equals(rootCert.raw), "rootDer is that root");
+  ok(!Buffer.from(a.leafDer).equals(Buffer.from(b.leafDer)),
+     "each request has a new leaf");
+  ok(a.x509Hash !== b.x509Hash, "so a new x509_hash");
+  for (const one of [a, b]) {
+    const leaf = new nodeCrypto.X509Certificate(one.leafPem);
+    ok(leaf.verify(rootCert.publicKey) && leaf.checkIssued(rootCert),
+       one.dnsName + "'s leaf chains to the kept root (node)");
+    const clientId = verifier.clientIdFor("x509_hash", one);
+    const claims = verifier.requestObjectClaims({ clientId: clientId,
+      responseUri: "https://" + one.dnsName + "/response",
+      responseMode: "direct_post", nonce: "n", state: "s",
+      dcql: verifier.buildDcql({ queries: [{ id: "pid",
+        format: "dc+sd-jwt", vct: VCT }] }) });
+    const compact = await verifier.signRequestObject({ claims: claims,
+      identity: one });
+    const r = await vp.verifyX509Request({ compact: compact,
+      clientId: clientId, trustAnchorPem: root.certificatePem,
+      verifyChain: x509.verifyChain,
+      responseTarget: claims.response_uri });
+    r.checks.forEach(function (c) {
+      ok(c.ok, one.dnsName + ": a wallet anchored on the kept root: '" +
+         c.name + "' failed: " + c.detail);
+    });
+  }
+
+  const requestKey = verifier.makeRequestKey();
+  const attester = verifier.makeAttester();
+  const file = JSON.stringify(verifier.verifierIdentityFile({ root: root,
+    attester: attester, requestKey: requestKey }));
+  ok(file.indexOf("BEGIN PRIVATE KEY") === -1 && file.indexOf("privatePem")
+     === -1, "the file holds the root's key as a JWK only");
+  const back = verifier.readVerifierIdentityFile(file);
+  eq(back.root.certificatePem.trim(), root.certificatePem.trim(),
+     "the root certificate round-trips");
+  eq(back.root.privateJwk, root.privateJwk, "the root key round-trips");
+  eq(back.attester.iss, attester.iss, "the attester keeps its iss");
+  eq(back.attester.jwks, attester.jwks, "and the JWKS a wallet trusts");
+  eq(verifier.clientIdFor("decentralized_identifier", back.requestKey,
+       { didMethod: "jwk" }),
+     verifier.clientIdFor("decentralized_identifier", requestKey,
+       { didMethod: "jwk" }), "the request key keeps its DID");
+  eq(verifier.preRegisteredJwks(back.requestKey),
+     verifier.preRegisteredJwks(requestKey),
+     "and the JWKS a pre-registered client_id was registered with");
+  const c = await verifier.makeVerifierIdentity({ dnsName: "c.example",
+    root: back.root });
+  ok(new nodeCrypto.X509Certificate(c.leafPem).verify(rootCert.publicKey),
+     "a leaf issued under the IMPORTED root chains to the same root");
+  const attestation = await verifier.verifierAttestation({
+    attester: back.attester, sub: "c.example", identity: back.requestKey });
+  ok(nodeVerifyJws(attestation, attester.jwks.keys[0]),
+     "the imported attester signs what the original's JWKS verifies (node)");
+
+  const doc = JSON.parse(file);
+  throws(function () {
+    verifier.readVerifierIdentityFile("{");
+  }, /is JSON/, "a file that is not JSON");
+  throws(function () {
+    verifier.readVerifierIdentityFile(Object.assign({}, doc,
+      { type: "something-else" }));
+  }, /not a Verifier identity file/, "the wrong type");
+  throws(function () {
+    verifier.readVerifierIdentityFile(Object.assign({}, doc,
+      { version: 2 }));
+  }, /version 2/, "an unknown version");
+  throws(function () {
+    verifier.readVerifierIdentityFile(Object.assign({}, doc, { root: {
+      certificatePem: doc.root.certificatePem,
+      privateJwk: requestKey.privateJwk } }));
+  }, /is not the key in root\.certificatePem/,
+  "a root key that is not the certificate's");
+  throws(function () {
+    verifier.readVerifierIdentityFile(Object.assign({}, doc, { requestKey: {
+      privateJwk: Object.assign({}, requestKey.privateJwk,
+        { x: attester.privateJwk.x }) } }));
+  }, /not the public key of its d/, "a JWK whose x is not its d's");
+  throws(function () {
+    verifier.readVerifierIdentityFile(Object.assign({}, doc,
+      { attester: { privateJwk: { kty: "OKP", crv: "Ed25519", d: "AA" } } }));
+  }, /P-256 private JWK/, "an attester key that is not P-256");
+  log.info("PASS the Verifier's identity outlives a request: one root, a " +
+           "new leaf each time, the file round-trips and is checked.");
+  log.debug("Leaving persistentIdentity().");
+}
+
+// AN IP ADDRESS IS NOT A dNSName (#470, B5; RFC 5280 section 4.2.1.6).
+// When the api is reached by an address, x509_san_dns is refused by name
+// and x509_hash's leaf carries the address as an iPAddress SAN — read here
+// by node's own X509Certificate, which prints the decoded octets.
+async function ipHosts() {
+  log.debug("Entering ipHosts().");
+  const root = await verifier.makeVerifierRoot();
+  for (const one of [["192.0.2.10", "192.0.2.10"],
+                     ["[2001:db8::1]", "2001:DB8:0:0:0:0:0:1"]]) {
+    const id = await verifier.makeVerifierIdentity({ dnsName: one[0],
+      root: root });
+    const leaf = new nodeCrypto.X509Certificate(id.leafPem);
+    const san = leaf.subjectAltName || "";
+    ok(new RegExp("^IP Address:" + one[1].replace(/\./g, "\\.") + "$", "i")
+       .test(san), one[0] + ": the SAN must be one iPAddress and no " +
+       "dNSName; node read " + JSON.stringify(san));
+    eq(id.ipAddress, one[0].replace(/^\[|\]$/g, ""),
+       one[0] + ": the identity says its SAN is an address");
+    ok(leaf.checkIP(one[0].replace(/^\[|\]$/g, "")) !== undefined,
+       one[0] + ": node's checkIP() matches the leaf");
+    eq(verifier.clientIdFor("x509_hash", id), "x509_hash:" + id.x509Hash,
+       one[0] + ": x509_hash is still available");
+    throws(function () {
+      verifier.clientIdFor("x509_san_dns", id, { dnsName: one[0] });
+    }, /it is an IP address[\s\S]*Use x509_hash/,
+    one[0] + ": x509_san_dns is refused, naming x509_hash");
+  }
+  throws(function () {
+    verifier.clientIdFor("x509_san_dns", null, { dnsName: "10.1.2.3" });
+  }, /dNSName SAN/, "the refusal needs no certificate");
+  const named = await verifier.makeVerifierIdentity({
+    dnsName: "verifier.example", root: root });
+  eq(new nodeCrypto.X509Certificate(named.leafPem).subjectAltName,
+     "DNS:verifier.example", "a host name is still a dNSName");
+  eq(named.ipAddress, "", "and the identity says so");
+  eq(verifier.clientIdFor("x509_san_dns", named, {}),
+     "x509_san_dns:verifier.example", "and x509_san_dns works for it");
+  log.info("PASS an IP host: an iPAddress SAN for x509_hash, x509_san_dns " +
+           "refused by name.");
+  log.debug("Leaving ipHosts().");
 }
 
 function requestUris() {
@@ -1647,6 +1822,12 @@ async function dcApi(env) {
     return verifier.dcApiRequest({ signed: true, claims: signedClaims,
       identity: env.identity, origin: "https://elsewhere.example" });
   }, /expected_origins/, "an origin outside expected_origins is refused");
+  // #471, E6: an Origin has no trailing slash (OpenID4VP 1.0 section 2;
+  // the HTML Standard's serialization, window.location.origin).
+  await rejects(function () {
+    return verifier.dcApiRequest({ signed: true, claims: signedClaims,
+      identity: env.identity, origin: ORIGIN + "/" });
+  }, /is not an origin/, "an origin with a trailing slash is a URL");
   await rejects(function () {
     return verifier.dcApiRequest({ multisigned: true, claims: signedClaims,
       identity: env.identity });
@@ -1689,6 +1870,24 @@ async function dcApi(env) {
   r = await run({ fields: { vp_token: { pid: [pres(ORIGIN)] } },
                   session: unsignedSession, fetchJson: fetchJson });
   failsOnly(r, ["pid[0].kb.aud"], "aud without the origin: prefix");
+  // #471, E6: Appendix A.4's example audience has a slash; the Origin
+  // (section 2, B.2.6.2's hashed "https://example.com") has none. The
+  // audience stays exact, and the mismatch is explained.
+  r = await run({ fields: { vp_token: { pid: [pres("origin:" + ORIGIN +
+    "/")] } }, session: unsignedSession, fetchJson: fetchJson });
+  failsOnly(r, ["pid[0].kb.aud"], "aud with a trailing slash");
+  ok(/trailing slash, which is a URL and not an Origin.*section 2/.test(
+    checkById(r, "pid[0].kb.aud").detail),
+     checkById(r, "pid[0].kb.aud").detail);
+  r = await run({ fields: { vp_token: { pid: [pres("origin:" + ORIGIN +
+    "/")] } }, session: Object.assign({}, unsignedSession,
+    { origin: ORIGIN + "/" }), fetchJson: fetchJson });
+  failsOnly(r, ["response.origin"], "a session origin with a path");
+  ok(/a URL with a path, not an Origin/.test(
+    checkById(r, "response.origin").detail),
+     checkById(r, "response.origin").detail);
+  eq(checkById(r, "pid[0].kb.aud").detail.indexOf("trailing slash"), -1,
+     "no slash hint where the audience is what the session says");
   r = await run({ fields: { vp_token: { pid: [pres("origin:" +
     ORIGIN)] } }, session: Object.assign({}, unsignedSession,
     { origin: undefined }), fetchJson: fetchJson });
@@ -1862,8 +2061,9 @@ async function tokenStatusLists(env) {
                                    payload: { sub: URI + "/typ" } });
   docs[URI + "/expired"] = listToken({ payload: { sub: URI + "/expired",
     iat: now - 7200, exp: now - 3600 } });
-  // A COSE_Sign1 in CWT tag 61 (RFC 8392 section 6), as BYTES: the CWT
-  // form of section 5.2, recognised and not verified.
+  // A COSE_Sign1 in CWT tag 61 (RFC 8392 section 6), as BYTES, which
+  // section 5.2 forbids, with no type and a signature that is not one: read
+  // as a CWT and failed for each (cwtStatusLists() has the correct ones).
   docs[URI + "/cwt"] = new Uint8Array(mdocIssuer.cbor(new mdocIssuer.Tag(61,
     new mdocIssuer.Tag(18, [mdocIssuer.cbor(new Map([[1, -7]])), new Map(),
       mdocIssuer.cbor(new Map([[2, URI + "/cwt"]])),
@@ -1909,9 +2109,9 @@ async function tokenStatusLists(env) {
   ok(/VALID/.test(checkById(r, "pid[0].status").detail));
   ok(/ttl 300s/.test(checkById(r, "pid[0].status.list").detail),
      "the ttl is reported: " + checkById(r, "pid[0].status.list").detail);
-  eq(seen.length && seen[0].accept, "application/statuslist+jwt",
-     "the list is asked for as application/statuslist+jwt, and NOT as the " +
-     "CWT form this Verifier does not verify");
+  eq(seen.length && seen[0].accept, "application/statuslist+jwt, " +
+     "application/statuslist+cwt", "both of section 8.1's media types are " +
+     "asked for, the CWT form being verified too (#471, E5)");
   eq(checkById(r, "pid[0].status.signer").status, "pass");
   ok(/the same key.*kid "iss-1"/.test(
     checkById(r, "pid[0].status.signer").detail),
@@ -1944,12 +2144,19 @@ async function tokenStatusLists(env) {
   failsOnly(r, ["pid[0].status.list", "status"], "typ is not statuslist+jwt");
   r = await at({ idx: 3, uri: URI + "/expired" });
   failsOnly(r, ["pid[0].status.list", "status"], "an expired list");
+  // A list that could not be fetched is a check NOT PERFORMED (#470 B3):
+  // nothing fails, and the row says what could not be fetched.
   r = await at({ idx: 3, uri: URI + "/missing" });
-  failsOnly(r, ["pid[0].status.list", "status"], "a list that will not load");
+  eq(failedIds(r), [], "a list that will not load: nothing fails");
+  eq(checkById(r, "pid[0].status.list").status, "skip",
+     "a list that will not load is a skip");
+  ok(/could not fetch .*\/missing/.test(
+    checkById(r, "pid[0].status.list").detail),
+     checkById(r, "pid[0].status.list").detail);
   r = await at({ idx: 3, uri: URI + "/cwt" });
-  allPass(r, "a CWT Status List Token");
-  eq(checkById(r, "pid[0].status.list").status, "skip");
-  ok(/COSE_Sign1 \(CBOR, in CWT tag 61\).*CWT form/.test(
+  failsOnly(r, ["pid[0].status.list", "status"],
+            "a CWT in tag 61 with no type and a signature of 0x01s");
+  ok(/CWT tag \(61\).*MUST NOT.*no type \(16\).*does NOT verify/.test(
     checkById(r, "pid[0].status.list").detail),
      checkById(r, "pid[0].status.list").detail);
   r = await at({ idx: 3, uri: URI + "/hex" });
@@ -4082,11 +4289,542 @@ function oneDeclarationPerName() {
   log.debug("Leaving oneDeclarationPerName().");
 }
 
+// ---------------------------------------------------------------------------
+// OpenID4VP 1.0's own worked examples (#471, T1), as bytes the specification
+// prints. Nothing here is this tree's wallet: each input and each expected
+// value is copied from the text, and the spec's own hex is checked against
+// node's SHA-256 first, so a transcription error says so rather than
+// passing or failing the code for the wrong reason.
+//
+//   B.2.6.1  the input JWK's RFC 7638 thumbprint, OpenID4VPHandoverInfo,
+//            OpenID4VPHandover and the SessionTranscript, rebuilt from
+//            client_id, nonce, that JWK and response_uri;
+//   B.2.6.2  the same for OpenID4VPDCAPIHandoverInfo / OpenID4VPDCAPI-
+//            Handover, from the origin "https://example.com", nonce and JWK;
+//   B.3.2    the example SD-JWT VC's _sd array and its three Disclosures:
+//            the Verifier must find each printed digest for each printed
+//            Disclosure and put back John, Doe and 1940-01-01.
+//
+// Both transcripts are rebuilt twice, by the Verifier
+// (vp_verifier.mdocSessionTranscript) and by the wallet (mdoc.js
+// sessionTranscript), and must be the spec's bytes exactly.
+// ---------------------------------------------------------------------------
+const OID4VP_B26_JWK = { kty: "EC", crv: "P-256",
+  x: "DxiH5Q4Yx3UrukE2lWCErq8N8bqC9CHLLrAwLz5BmE0",
+  y: "XtLM4-3h5o3HUH0MHVJV0kyq0iBlrBwlh8qEDMZ4-Pc",
+  use: "enc", alg: "ECDH-ES", kid: "1" };
+const OID4VP_B26_NONCE = "exc7gBkxjx1rdc9udRrveKvSsJIq80avlXeLHhGwqtA";
+const OID4VP_B261_INFO =
+    "847818783530395f73616e5f646e733a6578616d706c652e636f6d782b6578633767" +
+    "426b786a7831726463397564527276654b7653734a4971383061766c58654c486847" +
+    "7771744158204283ec927ae0f208daaa2d026a814f2b22dca52cf85ffa8f3f8626c6" +
+    "bd669047781c68747470733a2f2f6578616d706c652e636f6d2f726573706f6e7365";
+const OID4VP_B261_HANDOVER =
+    "82714f70656e494434565048616e646f7665725820048bc053c00442af9b8eed494c" +
+    "efdd9d95240d254b046b11b68013722aad38ac";
+const OID4VP_B261_TRANSCRIPT =
+    "83f6f682714f70656e494434565048616e646f7665725820048bc053c00442af9b8e" +
+    "ed494cefdd9d95240d254b046b11b68013722aad38ac";
+const OID4VP_B262_INFO =
+    "837368747470733a2f2f6578616d706c652e636f6d782b6578633767426b786a7831" +
+    "726463397564527276654b7653734a4971383061766c58654c486847777174415820" +
+    "4283ec927ae0f208daaa2d026a814f2b22dca52cf85ffa8f3f8626c6bd669047";
+const OID4VP_B262_HANDOVER =
+    "82764f70656e4944345650444341504948616e646f7665725820fbece366f4212f97" +
+    "62c74cfdbf83b8c69e371d5d68cea09cb4c48ca6daab761a";
+const OID4VP_B262_TRANSCRIPT =
+    "83f6f682764f70656e4944345650444341504948616e646f7665725820fbece366f4" +
+    "212f9762c74cfdbf83b8c69e371d5d68cea09cb4c48ca6daab761a";
+
+function hexOf(b) {
+  log.debug("Entering hexOf().");
+  log.debug("Leaving hexOf().");
+  return Buffer.from(b).toString("hex");
+}
+
+function sha256Hex(hex) {
+  log.debug("Entering sha256Hex().");
+  log.debug("Leaving sha256Hex().");
+  return nodeCrypto.createHash("sha256").update(Buffer.from(hex, "hex"))
+    .digest("hex");
+}
+
+async function openid4vpSpecVectors(env) {
+  log.debug("Entering openid4vpSpecVectors().");
+  const mdoc = load("mdoc.js");
+  // The spec against itself, with node: each Handover's hash is SHA-256 of
+  // its Info, each SessionTranscript is [null, null, Handover], and the
+  // Info's third element is the JWK's thumbprint (node's SHA-256 of RFC
+  // 7638's member order).
+  const thumbHex = Buffer.from(thumbprintOf(OID4VP_B26_JWK), "base64url")
+    .toString("hex");
+  ok(OID4VP_B261_INFO.indexOf("5820" + thumbHex) !== -1,
+     "B.2.6.1: the Info's third element is the JWK's RFC 7638 thumbprint");
+  ok(OID4VP_B262_INFO.indexOf("5820" + thumbHex) !== -1,
+     "B.2.6.2: the Info's third element is the JWK's RFC 7638 thumbprint");
+  eq(OID4VP_B261_HANDOVER.slice(-64), sha256Hex(OID4VP_B261_INFO),
+     "B.2.6.1: the Handover hashes the Info (node's SHA-256)");
+  eq(OID4VP_B262_HANDOVER.slice(-64), sha256Hex(OID4VP_B262_INFO),
+     "B.2.6.2: the Handover hashes the Info (node's SHA-256)");
+  eq(OID4VP_B261_TRANSCRIPT, "83f6f6" + OID4VP_B261_HANDOVER,
+     "B.2.6.1: the SessionTranscript wraps the Handover");
+  eq(OID4VP_B262_TRANSCRIPT, "83f6f6" + OID4VP_B262_HANDOVER,
+     "B.2.6.2: the SessionTranscript wraps the Handover");
+
+  // The Verifier's thumbprint of the spec's JWK.
+  eq(Buffer.from(verifier.jwkThumbprint(OID4VP_B26_JWK), "base64url")
+    .toString("hex"), thumbHex, "B.2.6.1: jwkThumbprint() of the JWK");
+
+  // B.2.6.1, redirects: x509_san_dns:example.com, an encrypted response.
+  const redirect = { responseMode: "direct_post.jwt",
+    decryptionJwk: OID4VP_B26_JWK, clientId: "x509_san_dns:example.com",
+    nonce: OID4VP_B26_NONCE, responseUri: "https://example.com/response" };
+  eq(hexOf(mdoc.encode([redirect.clientId, redirect.nonce,
+    Buffer.from(thumbHex, "hex"), redirect.responseUri])), OID4VP_B261_INFO,
+     "B.2.6.1: OpenID4VPHandoverInfo, byte for byte");
+  let t = verifier.mdocSessionTranscript(redirect);
+  eq(hexOf(mdoc.encode(t.transcript[2])), OID4VP_B261_HANDOVER,
+     "B.2.6.1: the Verifier's OpenID4VPHandover, byte for byte");
+  eq(hexOf(mdoc.encode(t.transcript)), OID4VP_B261_TRANSCRIPT,
+     "B.2.6.1: the Verifier's SessionTranscript, byte for byte");
+  ok(t.encrypted, "B.2.6.1: direct_post.jwt carries the thumbprint");
+  const walletRedirect = await mdoc.sessionTranscript({
+    clientId: redirect.clientId, nonce: redirect.nonce,
+    encryptionJwk: OID4VP_B26_JWK, responseUri: redirect.responseUri });
+  eq(hexOf(mdoc.encode(walletRedirect)), OID4VP_B261_TRANSCRIPT,
+     "B.2.6.1: the wallet's SessionTranscript, byte for byte");
+
+  // B.2.6.2, the Digital Credentials API: origin https://example.com
+  // WITHOUT "origin:" and without a trailing slash, dc_api.jwt.
+  const dc = { responseMode: "dc_api.jwt", decryptionJwk: OID4VP_B26_JWK,
+    origin: "https://example.com", nonce: OID4VP_B26_NONCE };
+  eq(hexOf(mdoc.encode([dc.origin, dc.nonce,
+    Buffer.from(thumbHex, "hex")])), OID4VP_B262_INFO,
+     "B.2.6.2: OpenID4VPDCAPIHandoverInfo, byte for byte");
+  t = verifier.mdocSessionTranscript(dc);
+  eq(hexOf(mdoc.encode(t.transcript[2])), OID4VP_B262_HANDOVER,
+     "B.2.6.2: the Verifier's OpenID4VPDCAPIHandover, byte for byte");
+  eq(hexOf(mdoc.encode(t.transcript)), OID4VP_B262_TRANSCRIPT,
+     "B.2.6.2: the Verifier's SessionTranscript, byte for byte");
+  // The same request answered under dc_api (unencrypted) must NOT be the
+  // spec's bytes: its third element is null (B.2.6.2).
+  t = verifier.mdocSessionTranscript(Object.assign({}, dc,
+    { responseMode: "dc_api" }));
+  ok(hexOf(mdoc.encode(t.transcript)) !== OID4VP_B262_TRANSCRIPT &&
+     !t.encrypted, "B.2.6.2: dc_api's jwkThumbprint is null");
+
+  // B.3.2: the example SD-JWT VC, its _sd array and Disclosures as
+  // printed. Only cnf is replaced (by a holder key that can sign a
+  // KB-JWT); no digest covers it. The issuer, https://example.com/issuer,
+  // publishes a key made here in its jwt-vc-issuer metadata.
+  const B32_VCT = "https://credentials.example.com/identity_credential";
+  const B32_ISS = "https://example.com/issuer";
+  const disclosures = {
+    given_name: "WyIyR0xDNDJzS1F2ZUNmR2ZyeU5STjl3IiwgImdpdmVuX25hbWUiLCAi" +
+      "Sm9obiJd",
+    family_name: "WyJlbHVWNU9nM2dTTklJOEVZbnN4QV9BIiwgImZhbWlseV9uYW1lIiw" +
+      "gIkRvZSJd",
+    birthdate: "WyI2SWo3dE0tYTVpVlBHYm9TNXRtdlZBIiwgImJpcnRoZGF0ZSIsICIx" +
+      "OTQwLTAxLTAxIl0"
+  };
+  const printed = { given_name: "jsu9yVulwQQlhFlM_3JlzMaSFzglhQG0DpfayQwLUK4",
+    family_name: "TGf4oLbgwd5JQaHyKVQZU9UdGE0w5rtDsrZzfUaomLo",
+    birthdate: "tiTngp9_jhC389UP8_k67MXqoSfiHq3iK6o9un4we_Y" };
+  Object.keys(printed).forEach(function (name) {
+    eq(sha256b64u(disclosures[name]), printed[name],
+       "B.3.2: node's SHA-256 of the " + name + " Disclosure is the " +
+       "printed hash");
+  });
+  const signer = ecPair();
+  const holder = ecPair();
+  const docs = {};
+  docs["https://example.com/.well-known/jwt-vc-issuer/issuer"] =
+    { issuer: B32_ISS, jwks: { keys: [Object.assign({ kid: "b32",
+      alg: "ES256" }, signer.publicJwk)] } };
+  const fetchJson = function fetchJson(url) {
+    log.debug("Entering fetchJson(). " + url);
+    log.debug("Leaving fetchJson().");
+    return docs[url] ? Promise.resolve(docs[url]) :
+      Promise.reject(new Error("no such document: " + url));
+  };
+  const jwt = nodeJws({ alg: "ES256", typ: "dc+sd-jwt", kid: "b32" }, {
+    _sd: ["3oUCnaKt7wqDKuyh-LgQozzfhgb8gO5Ni-RCWsWW2vA",
+          "8z8z9X9jUtb99gjejCwFAGz4aqlHf-sCqQ6eM_qmpUQ",
+          "Cxq4872UXXngGULT_kl8fdwVFkyK6AJfPZLy7L5_0kI",
+          "TGf4oLbgwd5JQaHyKVQZU9UdGE0w5rtDsrZzfUaomLo",
+          "jsu9yVulwQQlhFlM_3JlzMaSFzglhQG0DpfayQwLUK4",
+          "sFcViHN-JG3eTUyBmU4fkwusy5I1SLBhe1jNvKxP5xM",
+          "tiTngp9_jhC389UP8_k67MXqoSfiHq3iK6o9un4we_Y",
+          "xsKkGJXD1-e3I9zj0YyKNv-lU5YqhsEAF9NhOr8xga4"],
+    iss: B32_ISS, iat: 1683000000, exp: 1883000000, vct: B32_VCT,
+    _sd_alg: "sha-256", cnf: { jwk: holder.publicJwk } }, signer);
+  const clientId = verifier.clientIdFor("x509_hash", env.identity);
+  const session = { clientId: clientId, nonce: verifier.randomToken(),
+    responseMode: "direct_post", responseUri: "https://verifier.example/r",
+    dcql: verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
+      vct: B32_VCT, claims: [["given_name"], ["family_name"],
+                             ["birthdate"]] }] }) };
+  const r = await run({ fields: { vp_token: { pid: [presentSdJwt(jwt,
+    [disclosures.given_name, disclosures.family_name, disclosures.birthdate],
+    { aud: clientId, nonce: session.nonce, key: holder })] } },
+    session: session, fetchJson: fetchJson });
+  allPass(r, "B.3.2: the example SD-JWT VC");
+  eq(checkById(r, "pid[0].disclosures").status, "pass");
+  eq([r.presentations[0].claims.given_name,
+      r.presentations[0].claims.family_name,
+      r.presentations[0].claims.birthdate], ["John", "Doe", "1940-01-01"],
+     "B.3.2: each printed Disclosure is found by its printed digest");
+  log.info("PASS OpenID4VP 1.0's own vectors: Appendix B.2.6.1 and " +
+           "B.2.6.2 (thumbprint, Info, Handover, SessionTranscript, by the " +
+           "Verifier and the wallet) and B.3.2's Disclosures.");
+  log.debug("Leaving openid4vpSpecVectors().");
+}
+
+// ---------------------------------------------------------------------------
+// Status List Tokens in CWT form (draft-ietf-oauth-status-list-21 section
+// 5.2, #471 E5), each assembled HERE byte by byte with tests/
+// mdoc_test_issuer.js's CBOR encoder and signed by node's ECDSA over RFC
+// 9052 section 4.4's Sig_structure: COSE_Sign1_Tagged (18), type (16)
+// application/statuslist+cwt in the protected header, the kid (4), x5chain
+// (33) or x5t (34) naming the key, and the Claims Set 2/6/4/65534/65533.
+// Then the draft's own bytes: section 5.2's example CWT (signed by a key the
+// draft does not publish, so it must be read and NOT relied on), and the
+// CBOR StatusList encodings of section 4.3 and Appendix C.1 and C.2,
+// carried verbatim as claim 65533.
+// ---------------------------------------------------------------------------
+// Section 5.2's example, hex as printed.
+const TSL_52_CWT =
+    "d2845820a2012610781a6170706c69636174696f6e2f7374617475736c6973742b63" +
+    "7774a1044231325850a502782168747470733a2f2f6578616d706c652e636f6d2f73" +
+    "74617475736c697374732f31061a648c5bea041a8898dfea19fffe19a8c019fffda2" +
+    "646269747301636c73744a78dadbb918000217015d584093fa4d01032b18c35e2fe1" +
+    "101b77fd6cc9440022caa4694450c4e4e9feab4e99d1fa6d9772ce2bf3a12e0323de" +
+    "d7c982c5e101a5e67f0cbc1e2b6f57ce99c279";
+// Section 4.3's StatusList in CBOR: [0xb9, 0xa3], one bit each.
+const TSL_43_CBOR = "a2646269747301636c73744a78dadbb918000217015d";
+// Appendix C.1 (1-bit) and C.2 (2-bit), CBOR encoding, as printed.
+const TSL_C1_CBOR =
+    "a2646269747301636c737458bd78daeddc010dc0200c0041a88249400ad2903e0f4b" +
+    "ba00bd93f002beb7a2a2010000a91e09000000000000000000000000000000807296" +
+    "04000000000000000000000000000000000000000000000000000000000000000000" +
+    "000000000000005c6f4800000000000000fc2c240000000000000000000000be1b12" +
+    "000000000000000000ecaa4b000000000000000000000000000000009b0b09000000" +
+    "00000000000038de9400000000000000002a30cc010000000080642f0bd8011b";
+const TSL_C2_CBOR =
+    "a2646269747302636c737459013d78daeddb310d00211000412ea1a04004fe5520ed" +
+    "357c28c81d3312b6df68bc65480000000000406e2101000000000000000000000000" +
+    "0000000000000000000000000000000000000040795b020000000000000000000000" +
+    "00000000000000000000000000000000000000000000000000000000000000000000" +
+    "00000000000000000000000000000000000000000000000000000000000000000000" +
+    "0080f4ba0400000000000000000000000000406d764a000000000000000000000000" +
+    "000000000000000000e0922101000000000000000000000000000000000000fc1312" +
+    "00000000000000000000000000000000000000000000000000000000000000c0912e" +
+    "01000000000000000000000000000000000000c07d4b020000000000000000000000" +
+    "00000000a8614a0000000000000000000000406a1fcd60010c";
+
+// A CWT Status List Token. `o`: claims (a Map of overrides; a value of
+// undefined removes the claim), statusListRaw (CBOR bytes spliced in as
+// claim 65533 verbatim), prot / unprot (Maps merged over the defaults),
+// tags (default [18]), signer (a node private key), mac (a COSE_Mac0).
+function cwtStatusList(sub, signer, o) {
+  log.debug("Entering cwtStatusList().");
+  const opts = o || {};
+  const cbor = mdocIssuer.cbor;
+  const now = Math.floor(Date.now() / 1000);
+  const prot = new Map([[1, -7], [16, "application/statuslist+cwt"]]);
+  (opts.prot || new Map()).forEach(function (v, k) {
+    if (v === undefined) {
+      prot.delete(k);
+    } else {
+      prot.set(k, v);
+    }
+  });
+  const unprot = new Map([[4, Buffer.from("iss-1")]]);
+  (opts.unprot || new Map()).forEach(function (v, k) {
+    if (v === undefined) {
+      unprot.delete(k);
+    } else {
+      unprot.set(k, v);
+    }
+  });
+  const claims = new Map([[2, sub], [6, now - 60], [4, now + 3600],
+    [65534, 300], [65533, new Map([["bits", 2], ["lst", Buffer.from(
+      tokenStatusLst([1, 1, 1, 0, 2, 1, 1, 3], 2), "base64url")]])]]);
+  (opts.claims || new Map()).forEach(function (v, k) {
+    if (v === undefined) {
+      claims.delete(k);
+    } else {
+      claims.set(k, v);
+    }
+  });
+  let payload;
+  if (opts.statusListRaw) {
+    claims.delete(65533);
+    const entries = [];
+    claims.forEach(function (v, k) {
+      entries.push(cbor(k), cbor(v));
+    });
+    payload = Buffer.concat([Buffer.from([0xa0 + claims.size + 1])]
+      .concat(entries, [cbor(65533), opts.statusListRaw]));
+  } else {
+    payload = cbor(claims);
+  }
+  const protectedBytes = cbor(prot);
+  const sig = opts.mac ? Buffer.alloc(32, 9) : nodeCrypto.sign("sha256",
+    coseSigStructure(protectedBytes, payload),
+    { key: signer, dsaEncoding: "ieee-p1363" });
+  let out = [protectedBytes, unprot, payload, sig];
+  (opts.tags || (opts.mac ? [17] : [18])).slice().reverse()
+    .forEach(function (t) {
+      out = new mdocIssuer.Tag(t, out);
+    });
+  log.debug("Leaving cwtStatusList().");
+  return new Uint8Array(cbor(out));
+}
+
+async function cwtStatusLists(env) {
+  log.debug("Entering cwtStatusLists().");
+  const issuer = makeIssuer();
+  const fetchJson = function fetchJson(url) {
+    log.debug("Entering fetchJson(). " + url);
+    log.debug("Leaving fetchJson().");
+    return issuer.docs[url] ? Promise.resolve(issuer.docs[url]) :
+      Promise.reject(new Error("no such document: " + url));
+  };
+  const now = Math.floor(Date.now() / 1000);
+  const URI = "https://issuer.example/statuslists/cwt";
+  const key = issuer.key.privateKey;
+  const docs = {};
+  const add = function add(name, o, signer) {
+    log.debug("Entering add(). " + name);
+    docs[URI + name] = cwtStatusList(URI + name, signer || key, o);
+    log.debug("Leaving add().");
+  };
+  add("");
+  add("/forged", null, ecPair().privateKey);
+  add("/wrongsub", { claims: new Map([[2, URI + "/elsewhere"]]) });
+  add("/expired", { claims: new Map([[6, now - 7200], [4, now - 3600]]) });
+  add("/noiat", { claims: new Map([[6, undefined]]) });
+  add("/tag61", { tags: [61, 18] });
+  add("/untagged", { tags: [] });
+  add("/notype", { prot: new Map([[16, undefined]]) });
+  add("/unprottype", { prot: new Map([[16, undefined]]),
+    unprot: new Map([[16, "application/statuslist+cwt"]]) });
+  add("/jwttype", { prot: new Map([[16, "application/statuslist+jwt"]]) });
+  add("/textlst", { claims: new Map([[65533, new Map([["bits", 2],
+    ["lst", tokenStatusLst([0], 2)]])]]) });
+  add("/badttl", { claims: new Map([[65534, 0]]) });
+  add("/mac", { mac: true });
+  add("/agg", { claims: new Map([[65533, new Map([["bits", 2],
+    ["lst", Buffer.from(tokenStatusLst([1, 1, 1, 0], 2), "base64url")],
+    ["aggregation_uri", "https://issuer.example/aggregation"]])]]) });
+  docs[URI + "/served"] = { body: cwtStatusList(URI + "/served", key),
+    contentType: "application/statuslist+cwt" };
+  docs[URI + "/served-wrong"] = { body: cwtStatusList(URI + "/served-wrong",
+    key), contentType: "application/octet-stream" };
+  // Section 4.3 and Appendix C.1/C.2's own CBOR, verbatim as claim 65533.
+  [["/s43", TSL_43_CBOR], ["/c1", TSL_C1_CBOR], ["/c2", TSL_C2_CBOR]]
+    .forEach(function (pair) {
+      add(pair[0], { statusListRaw: Buffer.from(pair[1], "hex") });
+    });
+  // Section 5.2's example: sub https://example.com/statuslists/1, kid
+  // "12", a key the draft never publishes.
+  const SPEC_URI = "https://example.com/statuslists/1";
+  docs[SPEC_URI] = new Uint8Array(Buffer.from(TSL_52_CWT, "hex"));
+  const seen = [];
+  const fetchText = textFetcher(docs, seen);
+  const holder = ecPair();
+  const clientId = verifier.clientIdFor("x509_hash", env.identity);
+  const session = { clientId: clientId, nonce: verifier.randomToken(),
+    responseMode: "direct_post", responseUri: "https://verifier.example/r",
+    dcql: verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
+      vct: VCT, claims: [["given_name"]] }] }) };
+  async function at(idx, uri) {
+    log.debug("Entering at(). " + uri + " " + idx);
+    const cred = issueSdJwt(issuer, holder.publicJwk, { payload: { status:
+      { status_list: { idx: idx, uri: uri } } } });
+    const r = await run({ fields: { vp_token: { pid: [presentSdJwt(cred.jwt,
+      [cred.d.given_name], { aud: clientId, nonce: session.nonce,
+        key: holder })] } }, session: session, fetchJson: fetchJson,
+      fetchText: fetchText });
+    log.debug("Leaving at().");
+    return r;
+  }
+  const row = function row(r, id) {
+    log.debug("Entering row(). " + id);
+    log.debug("Leaving row().");
+    return checkById(r, "pid[0].status" + id);
+  };
+  // idx 3 is VALID, 4 SUSPENDED, 5 INVALID (LSB first).
+  let r = await at(3, URI);
+  allPass(r, "CWT: VALID");
+  eq([row(r, "").status, row(r, ".list").status, row(r, ".signer").status],
+     ["pass", "pass", "pass"]);
+  ok(row(r, ".list").detail.indexOf("a CWT (COSE_Sign1_Tagged, type " +
+     "application/statuslist+cwt), sub (2) is the credential's uri, " +
+     "signed (ES256, COSE -7)") === 0, row(r, ".list").detail);
+  ok(/ttl 300s/.test(row(r, ".list").detail), row(r, ".list").detail);
+  ok(/the same key.*kid "iss-1"/.test(row(r, ".signer").detail),
+     "the COSE kid (4) names the credential's key: " +
+     row(r, ".signer").detail);
+  eq(seen[0].accept, "application/statuslist+jwt, " +
+     "application/statuslist+cwt", "both forms are asked for (section 8.1)");
+  r = await at(5, URI);
+  failsOnly(r, ["pid[0].status", "status"], "CWT: INVALID");
+  ok(/is 1 \(INVALID\).*revoked/.test(row(r, "").detail), row(r, "").detail);
+  r = await at(4, URI);
+  failsOnly(r, ["pid[0].status", "status"], "CWT: SUSPENDED");
+  ok(/is 2 \(SUSPENDED\)/.test(row(r, "").detail), row(r, "").detail);
+  r = await at(40, URI);
+  failsOnly(r, ["pid[0].status", "status"], "CWT: idx past the end");
+  r = await at(3, URI + "/forged");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: a bad signature");
+  ok(/does NOT verify/.test(row(r, ".list").detail), row(r, ".list").detail);
+  eq([row(r, "").status, row(r, ".signer").status], ["skip", "skip"],
+     "CWT: an unverified list is neither relied on nor linked");
+  r = await at(3, URI + "/wrongsub");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: sub mismatch");
+  ok(row(r, ".list").detail.indexOf("sub (2) is \"" + URI +
+     "/elsewhere\", not the uri") !== -1, row(r, ".list").detail);
+  eq(row(r, "").status, "skip");
+  r = await at(3, URI + "/expired");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: expired (4)");
+  ok(/expired at/.test(row(r, ".list").detail));
+  r = await at(3, URI + "/noiat");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: no iat (6)");
+  r = await at(3, URI + "/tag61");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: in the CWT tag");
+  ok(/CWT tag \(61\), which section 5\.2 says it MUST NOT be/.test(
+    row(r, ".list").detail), row(r, ".list").detail);
+  r = await at(3, URI + "/untagged");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: untagged");
+  ok(/not tagged COSE_Sign1_Tagged \(18\)/.test(row(r, ".list").detail));
+  r = await at(3, URI + "/notype");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: no type (16)");
+  r = await at(3, URI + "/unprottype");
+  failsOnly(r, ["pid[0].status.list", "status"],
+            "CWT: type (16) unprotected");
+  ok(/unprotected header/.test(row(r, ".list").detail));
+  r = await at(3, URI + "/jwttype");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: the JWT's type");
+  r = await at(0, URI + "/textlst");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: lst as text");
+  ok(/byte string/.test(row(r, ".list").detail));
+  eq(row(r, "").status, "skip");
+  r = await at(3, URI + "/badttl");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: ttl 0");
+  r = await at(3, URI + "/agg");
+  allPass(r, "CWT: an aggregation_uri");
+  ok(/aggregation_uri is https:\/\/issuer\.example\/aggregation/.test(
+    row(r, ".list").detail), row(r, ".list").detail);
+  r = await at(3, URI + "/mac");
+  allPass(r, "CWT: COSE_Mac0 is reported, not judged");
+  eq([row(r, ".list").status, row(r, "").status], ["skip", "skip"]);
+  ok(/COSE_Mac0/.test(row(r, ".list").detail), row(r, ".list").detail);
+  r = await at(3, URI + "/served");
+  allPass(r, "CWT: served as application/statuslist+cwt");
+  ok(!/served as/.test(row(r, ".list").detail));
+  r = await at(3, URI + "/served-wrong");
+  allPass(r, "CWT: served under another media type, reported");
+  ok(/served as application\/octet-stream, not application\/statuslist\+cwt/
+    .test(row(r, ".list").detail), row(r, ".list").detail);
+
+  // The draft's own CBOR StatusLists, as claim 65533.
+  const cases = [
+    ["/s43", 0, 1, "fail"], ["/s43", 1, 0, "pass"], ["/s43", 15, 1, "fail"],
+    ["/c1", 0, 1, "fail"], ["/c1", 1, 0, "pass"], ["/c1", 1993, 1, "fail"],
+    ["/c1", 25460, 1, "fail"], ["/c1", 1000345, 1, "fail"],
+    ["/c1", 1048575, 0, "pass"],
+    ["/c2", 0, 1, "fail"], ["/c2", 1993, 2, "fail"], ["/c2", 2, 0, "pass"],
+    ["/c2", 159495, 3, "skip"], ["/c2", 1000345, 3, "skip"],
+    ["/c2", 645645, 2, "fail"]
+  ];
+  for (const c of cases) {
+    r = await at(c[1], URI + c[0]);
+    const what = "CWT " + c[0] + "[" + c[1] + "]";
+    eq(row(r, ".list").status, "pass", what + ": " + row(r, ".list").detail);
+    eq(row(r, "").status, c[3], what + ": " + row(r, "").detail);
+    ok(row(r, "").detail.indexOf(" is " + c[2] + " (") !== -1,
+       what + " is " + c[2] + " in the draft: " + row(r, "").detail);
+  }
+
+  // Section 5.2's example, read as printed. Everything but the signature
+  // checks out (it expires in 2042); the key behind kid "12" is not
+  // published, so the value is reported and not relied on.
+  r = await at(0, SPEC_URI);
+  failsOnly(r, ["pid[0].status.list", "status"],
+            "section 5.2's example: no published key");
+  ok(/^the CWT Status List Token: the signature does NOT verify with /.test(
+    row(r, ".list").detail) && !/sub|type|tag|iat|ttl/.test(
+    row(r, ".list").detail.split("verify with")[0]), row(r, ".list").detail);
+  eq(row(r, "").status, "skip");
+  ok(row(r, "").detail.indexOf("idx 0 of " + SPEC_URI + " is 1 " +
+     "(INVALID), but the Status List Token did not verify") === 0,
+     row(r, "").detail);
+
+  // mso_mdoc: the CWT names the credential's document signer by x5chain
+  // (33), and by x5t (34) over SHA-256 (-16) — section 11.3's COSE routes.
+  const auth = await mdocIssuer.authority("cwt");
+  const mdocUri = "https://issuer.example/statuslists/mdoc-cwt";
+  const one = function one(name, o, signer) {
+    log.debug("Entering one(). " + name);
+    log.debug("Leaving one().");
+    return cwtStatusList(mdocUri + name, signer || auth.dsKey,
+      Object.assign({ unprot: new Map([[4, undefined]]) }, o));
+  };
+  const mdocDocs = {};
+  mdocDocs[mdocUri] = one("", { prot: new Map([[33, auth.dsDer]]) });
+  mdocDocs[mdocUri + "/x5t"] = one("/x5t", { prot: new Map([[34, [-16,
+    nodeCrypto.createHash("sha256").update(auth.dsDer).digest()]]]) });
+  mdocDocs[mdocUri + "/forged"] = one("/forged",
+    { prot: new Map([[33, auth.dsDer]]) }, ecPair().privateKey);
+  const device = ecPair();
+  const nonce = verifier.randomToken();
+  const mSession = { nonce: nonce, responseMode: "dc_api", origin: ORIGIN,
+    trustAnchors: [auth.iacaPem],
+    dcql: verifier.buildDcql({ queries: [{ id: "mdl", format: "mso_mdoc",
+      doctype: mdocIssuer.DOCTYPE, claims: [[mdocIssuer.NS,
+                                             "given_name"]] }] }) };
+  async function mdocAt(status) {
+    log.debug("Entering mdocAt().");
+    const cred = issueMdocHere(auth, device.publicJwk,
+                               { given_name: "Erika" }, status);
+    const res = await run({ fields: { vp_token: { mdl: [deviceResponseHere(
+      cred, device, dcTranscript(ORIGIN, nonce, null))] } },
+      session: mSession, fetchText: textFetcher(mdocDocs) });
+    log.debug("Leaving mdocAt().");
+    return res;
+  }
+  r = await mdocAt({ idx: 3, uri: mdocUri });
+  allPass(r, "mdoc, a CWT list by x5chain, VALID");
+  eq(checkById(r, "mdl[0].status").status, "pass");
+  ok(/the same key.*the same x5c/.test(
+    checkById(r, "mdl[0].status.signer").detail),
+     checkById(r, "mdl[0].status.signer").detail);
+  r = await mdocAt({ idx: 5, uri: mdocUri });
+  failsOnly(r, ["mdl[0].status", "status"], "mdoc, a CWT list, INVALID");
+  r = await mdocAt({ idx: 3, uri: mdocUri + "/x5t" });
+  allPass(r, "mdoc, a CWT list by x5t (SHA-256)");
+  ok(/x5t#S256 that is the credential's leaf/.test(
+    checkById(r, "mdl[0].status.signer").detail),
+     checkById(r, "mdl[0].status.signer").detail);
+  r = await mdocAt({ idx: 3, uri: mdocUri + "/forged" });
+  failsOnly(r, ["mdl[0].status.list", "status"],
+            "mdoc, a CWT list not signed by its x5chain's key");
+  log.info("PASS CWT Status List Tokens (section 5.2): VALID, INVALID, " +
+           "SUSPENDED, every defect of the CWT, a COSE_Mac0, section " +
+           "5.2's example and the CBOR vectors of section 4.3 and " +
+           "Appendix C.1/C.2, for dc+sd-jwt and mso_mdoc.");
+  log.debug("Leaving cwtStatusLists().");
+}
+
 async function main() {
   log.debug("Entering main().");
   randomTokens();
   dcqlBuilder();
   const env = await identityAndRequest();
+  await persistentIdentity();
+  await ipHosts();
   requestUris();
   oneDeclarationPerName();
   await sdJwtRoundTrip(env);
@@ -4095,8 +4833,10 @@ async function main() {
   await ldpVcRoundTrip(env);
   await prefixesAndWalletNonce(env);
   await dcApi(env);
+  await openid4vpSpecVectors(env);
   await tokenStatusLists(env);
   await tokenStatusSpecVectors(env);
+  await cwtStatusLists(env);
   await statusSignerLinks(env);
   await bitstringStatusLists(env);
   await cryptosuites(env);
@@ -4112,10 +4852,10 @@ async function main() {
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
   // pass by checking less.
-  assert.ok(assertions >= 1330, "only " + assertions + " assertions ran; " +
-            "expected at least 1330");
-  assert.ok(checksSeen >= 5100, "only " + checksSeen + " Verifier checks " +
-            "were examined; expected at least 5100");
+  assert.ok(assertions >= 1440, "only " + assertions + " assertions ran; " +
+            "expected at least 1440");
+  assert.ok(checksSeen >= 5700, "only " + checksSeen + " Verifier checks " +
+            "were examined; expected at least 5700");
   log.info("vp_verifier_engine: all checks passed.");
   log.debug("Leaving main().");
 }

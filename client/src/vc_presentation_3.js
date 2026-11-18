@@ -33,6 +33,10 @@ var didLib = require("./did");
 var dpop = require("./dpop");
 var mdoc = require("./mdoc");
 var bbs2023 = require("./bbs2023");
+// The whole-credential ldp_vc re-check verifies both proofs (#475): the
+// holder's and the issuer's, RDFC suites included.
+var dataIntegrity = require("./data_integrity_rdfc");
+var vcFormats = require("./vc_formats");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_3',
                                 level: appconfig.logLevel });
@@ -300,6 +304,12 @@ function recheckOwnPresentation() {
     log.debug("Leaving recheckOwnPresentation().");
     return Promise.resolve(false);
   }
+  // A whole-credential ldp_vc (#475): both proofs, by data_integrity.js.
+  var whole = wholeLdpPresentation(sent.presentation);
+  if (whole) {
+    log.debug("Leaving recheckOwnPresentation(). ldp_vc, whole.");
+    return recheckWholeLdp(whole);
+  }
   // A bbs-2023 presentation is not a JWS at all, so none of the checks below
   // apply: there is no KB-JWT and no sd_hash. It is a reveal document with a
   // derived proof (W3C Data Integrity BBS Cryptosuites v1.0), and the wallet
@@ -487,6 +497,103 @@ function recheckMdoc() {
 
 // The wallet's own verdict table. Shared by both formats: the checks differ,
 // how they are shown does not.
+// A whole-credential ldp_vc presentation (#475): a VerifiablePresentation
+// around a credential whose proof is not selective, or that credential bare
+// when no holder binding was asked for. Answers { vp, credential } or null
+// for anything else (a bbs-2023 envelope, a JWT, an mdoc).
+function wholeLdpPresentation(text) {
+  log.debug("Entering wholeLdpPresentation().");
+  var doc;
+  try {
+    doc = JSON.parse(String(text || ""));
+  } catch (e) {
+    log.debug("Leaving wholeLdpPresentation(). Not JSON.");
+    return null;
+  }
+  if (!doc || typeof doc !== "object") {
+    log.debug("Leaving wholeLdpPresentation(). Not an object.");
+    return null;
+  }
+  var isVp = [].concat(doc.type || []).indexOf("VerifiablePresentation") !==
+      -1;
+  var credential = isVp ? [].concat(doc.verifiableCredential || [])[0] : doc;
+  if (!credential || typeof credential !== "object" ||
+      !vcFormats.isLdpSecured(credential)) {
+    log.debug("Leaving wholeLdpPresentation(). No recognised proof.");
+    return null;
+  }
+  var suite = vcFormats.ldpSuiteOf([].concat(credential.proof)[0]);
+  if (vcFormats.isSelectiveLdpSuite(suite)) {
+    log.debug("Leaving wholeLdpPresentation(). Selective: " + suite);
+    return null;
+  }
+  log.debug("Leaving wholeLdpPresentation(). " + suite);
+  return { vp: isVp ? doc : null, credential: credential, suite: suite };
+}
+
+function proofRow(name, result) {
+  log.debug("Entering proofRow(). " + name);
+  var p = (result.proofs || [])[0] || {};
+  var ok = !!result.valid;
+  var detail = ok ? p.suite + " by " + p.verificationMethod + " verifies." :
+      (p.suite || "the proof") + " does NOT verify: " +
+      (p.reason || result.reason || "no reason given") + ".";
+  log.debug("Leaving proofRow(). " + ok);
+  return { name: name, ok: ok, detail: detail };
+}
+
+// Both proofs verified by data_integrity.js from the bytes that went, and
+// the holder compared with the credential's subject.
+function recheckWholeLdp(whole) {
+  log.debug("Entering recheckWholeLdp(). " + whole.suite);
+  var checks = [];
+  var verifyingVp = whole.vp ? dataIntegrity.verifyProof(whole.vp) :
+      Promise.resolve(null);
+  log.debug("Leaving recheckWholeLdp().");
+  return Promise.all([verifyingVp,
+                      dataIntegrity.verifyProof(whole.credential)])
+    .then(function (results) {
+      var vpResult = results[0];
+      var vcResult = results[1];
+      checks.push(proofRow("Issuer proof", vcResult));
+      if (vpResult) {
+        var vpProof = [].concat(whole.vp.proof || [])[0] || {};
+        checks.push(proofRow("Holder proof", vpResult));
+        checks.push({
+          name: "Challenge and domain",
+          ok: vpProof.challenge === sent.nonce &&
+              vpProof.domain === sent.clientId,
+          detail: "challenge " + vpProof.challenge + " (the request's " +
+              "nonce is " + sent.nonce + "), domain " + vpProof.domain +
+              " (the Verifier is " + sent.clientId + ")."
+        });
+        var subject = [].concat(whole.credential.credentialSubject || [])[0] ||
+            {};
+        checks.push({
+          name: "Holder is the subject",
+          ok: !!whole.vp.holder && whole.vp.holder === subject.id,
+          detail: "the VP's holder is " + whole.vp.holder + " and the " +
+              "credential's subject is " + subject.id + "."
+        });
+      } else {
+        checks.push({
+          name: "Holder proof", ok: true,
+          detail: "none: the request did not ask for holder binding, so " +
+              "the credential went bare and anyone holding it could have " +
+              "sent it."
+        });
+      }
+      checks.push({
+        name: "Disclosure", ok: true,
+        detail: "the whole credential went: " + whole.suite + " has no " +
+            "selective disclosure, and its proof covers every statement."
+      });
+      renderRecheck(checks);
+      log.debug("Leaving recheckWholeLdp(). " + checks.length + " check(s).");
+      return true;
+    });
+}
+
 function renderRecheck(checks) {
   log.debug("Entering renderRecheck().");
   setHtml("vp_recheck_table",

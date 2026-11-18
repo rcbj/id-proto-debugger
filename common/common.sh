@@ -1080,12 +1080,24 @@ requireIyaStsImage()
   fi
   if ! ${docker_cmd} pull -q "${image}" >/dev/null;
   then
-    echo "ERROR: could not pull ${image}, the iya-sts release this run" \
-         "uses. It is the private mirror copy on ghcr.io; the login" \
-         "requireGhcrMirror() describes covers it, or set IYA_STS_IMAGE" \
-         "to an image this machine has." >&2
-    echo "Leaving requireIyaStsImage(). Pull failed."
-    return 1
+    # A CANDIDATE built on this machine (IYA_STS_IMAGE=iya-sts-candidate:...)
+    # has no registry to pull from, and that is the case the override exists
+    # for. Use the local image when there is one, and say so; fail only when
+    # the image is neither pullable nor present.
+    if ${docker_cmd} image inspect "${image}" >/dev/null 2>&1;
+    then
+      echo "WARNING: could not pull ${image}; using the copy already on" \
+           "this machine ($(${docker_cmd} image inspect -f '{{.Id}}' \
+           "${image}" | cut -c1-19))." >&2
+    else
+      echo "ERROR: could not pull ${image}, the iya-sts release this run" \
+           "uses, and this machine has no copy of it. The default is the" \
+           "private mirror copy on ghcr.io; the login requireGhcrMirror()" \
+           "describes covers it, or set IYA_STS_IMAGE to an image this" \
+           "machine has." >&2
+      echo "Leaving requireIyaStsImage(). Pull failed."
+      return 1
+    fi
   fi
   declare -gx IYA_STS_IMAGE="${image}"
   echo "Leaving requireIyaStsImage(). IYA_STS_IMAGE=${IYA_STS_IMAGE}"

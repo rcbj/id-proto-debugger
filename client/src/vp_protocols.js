@@ -60,6 +60,10 @@ var jweKem = require("./jwe_kem");
 var dpop = require("./dpop");
 var metadataClient = require("./metadata_client");
 var didLib = require("./did");
+// The holder's VP proof (#475): created by data_integrity.js in the suite
+// vc_formats.js chooses.
+var dataIntegrity = require("./data_integrity");
+var vcFormats = require("./vc_formats");
 
 var KEYS = {
   // Which protocol the presentation is answered under (see PROTOCOLS).
@@ -1055,95 +1059,74 @@ function walletNonce() {
 }
 
 // ---------------------------------------------------------------------------
-// ldp_vc holder binding: a W3C VerifiablePresentation around the bbs-2023
-// reveal document (the credential with its derived proof), secured with an
-// ecdsa-jcs-2019 Data Integrity proof by the holder (OpenID4VP 1.0 Appendix
-// B.1.3.2: challenge is the nonce, domain the Client Identifier). The
-// derived proof says the issuer signed these values; this one says the
-// holder is the one presenting them, now, to this Verifier.
+// ldp_vc holder binding: a W3C VerifiablePresentation around the credential
+// (a bbs-2023 reveal document, or a whole eddsa/ecdsa/legacy-signed one),
+// secured with the holder's own Data Integrity proof (OpenID4VP 1.0
+// Appendix B.1.3.2: challenge is the nonce, domain the Client Identifier).
+// The credential's proof says the issuer signed it; this one says the holder
+// is the one presenting it, now, to this Verifier.
+//
+// The proof itself is data_integrity.js's (#475), in whichever suite the
+// holder key signs and the Verifier accepts (vc_formats.holderSuiteFor()).
+// The JCS suites need no JSON-LD library and work on every page; an RDFC or
+// legacy suite needs data_integrity_rdfc.js loaded by the page.
 // ---------------------------------------------------------------------------
 
-// RFC 8785 JSON Canonicalization Scheme. Member names sort by UTF-16 code
-// units, which is what JavaScript's default string comparison is; numbers and
-// strings serialise exactly as ECMAScript's JSON.stringify does, which is
-// what the RFC adopts.
+// RFC 8785 JSON Canonicalization Scheme: data_integrity.js's, the one copy.
 function jcs(value) {
   log.debug("Entering jcs().");
-  var out;
-  if (value === null || typeof value !== "object") {
-    out = JSON.stringify(value);
-  } else if (Object.prototype.toString.call(value) === "[object Array]") {
-    out = "[" + value.map(function (v) {
-      return jcs(v);
-    }).join(",") + "]";
-  } else {
-    out = "{" + Object.keys(value).filter(function (k) {
-      return value[k] !== undefined;
-    }).sort().map(function (k) {
-      return JSON.stringify(k) + ":" + jcs(value[k]);
-    }).join(",") + "}";
-  }
   log.debug("Leaving jcs().");
-  return out;
-}
-
-function sha256Utf8(text) {
-  log.debug("Entering sha256Utf8().");
-  log.debug("Leaving sha256Utf8().");
-  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))
-    .then(function (d) {
-      return new Uint8Array(d);
-    });
+  return dataIntegrity.jcs(value);
 }
 
 // The ecdsa-jcs-2019 proof (W3C VC Data Integrity ECDSA Cryptosuites v1.0,
-// section 3.3): SHA-256 of the JCS of the proof configuration, then SHA-256
-// of the JCS of the unsecured document, concatenated and signed P-256; the
-// proofValue is the raw signature, multibase base58btc.
+// section 3.3) on opts.document, answered as the proof object alone. It
+// carries the document's @context, as Proof Configuration step 2 requires:
+// until #475 this one hashed the @context and left it out of the proof,
+// which a verifier following the specification rejects.
 function ecdsaJcs2019Proof(opts) {
   log.debug("Entering ecdsaJcs2019Proof().");
-  var doc = Object.assign({}, opts.document);
-  delete doc.proof;
-  var config = {
-    type: "DataIntegrityProof",
-    cryptosuite: "ecdsa-jcs-2019",
-    created: new Date(opts.now || Date.now()).toISOString()
-      .replace(/\.\d{3}Z$/, "Z"),
-    verificationMethod: opts.verificationMethod,
-    proofPurpose: opts.proofPurpose || "authentication"
-  };
-  if (opts.challenge) config.challenge = opts.challenge;
-  if (opts.domain) config.domain = opts.domain;
-  if (doc["@context"]) config["@context"] = doc["@context"];
   log.debug("Leaving ecdsaJcs2019Proof().");
-  return Promise.all([sha256Utf8(jcs(config)), sha256Utf8(jcs(doc))])
-    .then(function (hashes) {
-      var data = bytes.concatBytes(hashes[0], hashes[1]);
-      var priv = Object.assign({}, opts.privateJwk);
-      delete priv.key_ops;
-      delete priv.ext;
-      return crypto.subtle.importKey("jwk", priv,
-          { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])
-        .then(function (key) {
-          return crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key,
-                                    data);
-        });
-    })
-    .then(function (sig) {
-      // The proof keeps the @context it was hashed with (#469, C14): a
-      // JCS verifier hashes the proof options EXACTLY AS RECEIVED (VC
-      // Data Integrity, Verify Proof), so a proof that dropped it — as
-      // this one did until #469 — verifies nowhere but here.
-      var proof = Object.assign({}, config);
-      proof.proofValue = "z" + didLib.base58Encode(new Uint8Array(sig));
-      log.debug("Leaving ecdsaJcs2019Proof().");
-      return proof;
-    });
+  return dataIntegrity.createProof(opts.document, {
+    suite: "ecdsa-jcs-2019",
+    privateJwk: opts.privateJwk,
+    verificationMethod: opts.verificationMethod,
+    proofPurpose: opts.proofPurpose || "authentication",
+    challenge: opts.challenge || undefined,
+    domain: opts.domain || undefined,
+    created: opts.now,
+    addContext: false
+  }).then(function (secured) {
+    return secured.proof;
+  });
 }
 
-// The VP itself. `credential` is what the derived proof produced (the
-// reveal document the page already builds); `holder` the DID the credential
-// names as its subject.
+// The verification method of a holder DID's own key: "#0" for did:jwk, the
+// multibase key itself for did:key.
+function holderVerificationMethod(holder) {
+  log.debug("Entering holderVerificationMethod().");
+  var did = String(holder || "");
+  log.debug("Leaving holderVerificationMethod().");
+  return /^did:key:/.test(did) ? did + "#" + did.slice("did:key:".length) :
+      did + "#0";
+}
+
+// The public half of a private JWK, for choosing a suite by its curve.
+function publicJwkOf(privateJwk) {
+  log.debug("Entering publicJwkOf().");
+  var k = Object.assign({}, privateJwk || {});
+  ["d", "p", "q", "dp", "dq", "qi", "key_ops", "ext"].forEach(function (m) {
+    delete k[m];
+  });
+  log.debug("Leaving publicJwkOf().");
+  return k;
+}
+
+// The VP itself. `credential` is what goes in verifiableCredential (the
+// bbs-2023 reveal document or the whole credential); `holder` the DID the credential
+// names as its subject. `suite` forces a proof suite; otherwise `accepts`
+// (the Verifier's ldp_vc cryptosuite_values / proof_type_values) and the
+// key decide. Answers the secured VP; rejects naming why when no suite fits.
 function ldpVerifiablePresentation(opts) {
   log.debug("Entering ldpVerifiablePresentation(). holder=" + opts.holder);
   var vp = {
@@ -1152,17 +1135,22 @@ function ldpVerifiablePresentation(opts) {
     holder: opts.holder,
     verifiableCredential: [opts.credential]
   };
-  log.debug("Leaving ldpVerifiablePresentation().");
-  return ecdsaJcs2019Proof({
-    document: vp,
+  var pick = opts.suite ? { suite: opts.suite } :
+      vcFormats.holderSuiteFor(publicJwkOf(opts.privateJwk), opts.accepts);
+  if (!pick.suite) {
+    log.debug("Leaving ldpVerifiablePresentation(). No suite fits.");
+    return Promise.reject(new Error("No holder proof fits: " + pick.reason));
+  }
+  log.debug("Leaving ldpVerifiablePresentation(). suite=" + pick.suite);
+  return dataIntegrity.createProof(vp, {
+    suite: pick.suite,
     privateJwk: opts.privateJwk,
-    verificationMethod: opts.holder + "#0",
+    verificationMethod: opts.verificationMethod ||
+        holderVerificationMethod(opts.holder),
+    proofPurpose: "authentication",
     challenge: opts.nonce,
-    domain: opts.aud
-  }).then(function (proof) {
-    vp.proof = proof;
-    log.debug("Leaving ldpVerifiablePresentation().");
-    return vp;
+    domain: opts.aud,
+    created: opts.now
   });
 }
 
@@ -1216,5 +1204,6 @@ module.exports = {
   walletNonce: walletNonce,
   jcs: jcs,
   ecdsaJcs2019Proof: ecdsaJcs2019Proof,
-  ldpVerifiablePresentation: ldpVerifiablePresentation
+  ldpVerifiablePresentation: ldpVerifiablePresentation,
+  holderVerificationMethod: holderVerificationMethod
 };

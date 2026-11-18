@@ -308,6 +308,10 @@
           "maximum": 2147483647,
           "description": "Live signing: Wallets waiting on one session at once."
         },
+        "oid4vpVerifierPublicBaseUrl": {
+          "type": "string",
+          "description": "The base request_uri, response_uri and the caIssuers URL are built\nfrom: an absolute https URL a Wallet can reach. Empty is the base the\npage reached the api at."
+        },
         "ssfTransmitterEnabled": {
           "type": "boolean",
           "description": "The hosted SSF transmitter (#363): api/ssf_transmitter.js."
