@@ -4091,6 +4091,19 @@ function buildJobs() {
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
+    // An ldp_vc that is NOT bbs-2023, through the presentation pages: an
+    // eddsa-rdfc-2022 credential presented whole in the holder's VP (in the
+    // suite the key and the Verifier allow), and a BbsBlsSignature2020 one
+    // derived to one claim. Made in node by Digital Bazaar and MATTR, the
+    // request handed to step 1 by value, and the result verified by them —
+    // iya-sts's Verifier reads only the bbs-2023 envelope. Needs only the
+    // client.
+    jobs.push({
+      name: "VC Presentation — ldp_vc presented whole (eddsa, ecdsa) and " +
+          "BbsBlsSignature2020 derived, verified by Digital Bazaar and MATTR",
+      script: "ldp_vc_whole_presentation.js",
+      env: {},
+    });
     jobs.push({
       name: "VC Presentation — ldp_vc / bbs-2023 (statement disclosure, " +
           "unlinkable)",
