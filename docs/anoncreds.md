@@ -180,7 +180,19 @@ are the legacy objects `anoncreds.js` already makes and checks.
 
 - its W3C credential is processed here;
 - our W3C credential reads back in anoncreds-rs to the same signature;
-- our W3C presentation is verified by it, and its W3C presentation by us.
+- our W3C presentation is verified by it, and its W3C presentation by us;
+- **with revocation**: its revocable W3C credential (`revocationConfiguration`)
+  is processed here, our W3C presentation with a non-revocation proof is
+  verified by it and its (with a revocation state and timestamp) by us, it
+  presents from OUR revocable W3C credential, and the proof fails after
+  revocation.
+
+The revocation members (`r_credential`, `rev_reg`, `witness`, a sub-proof's
+`non_revoc_proof`) carry amcl BN254 values: amcl's text in the legacy JSON,
+bytes in the W3C form — a G1 or G2 point as 128 bytes, a group-order element
+as 32. Both point types are 128 bytes, so the type comes from the member's
+name (`REV_SCHEMA` in `anoncreds_w3c.js`), and a member it does not name is
+refused rather than guessed.
 
 **In the wallet,** a held bundle whose `credential` is in the W3C form is used
 like any other, and its presentation goes out in the W3C form too
@@ -188,12 +200,9 @@ like any other, and its presentation goes out in the W3C form too
 
 ## Not yet
 
-- **Predicates from DCQL.** OpenID4VP 1.0's DCQL can ask only for a claim's
-  presence or exact `values`; it has no way to say "age ≥ 18". The engine
-  proves predicates (`tests/anoncreds_engine.js`), but no OpenID4VP request
-  can ask for one, and inventing a request syntax would be this debugger's
-  own extension rather than the specification.
-- **The W3C form with revocation.** It is untested against anoncreds-rs.
+- Nothing on predicates is pending here. They can be asked for over
+  OpenID4VP now: in DIF Presentation Exchange (the OpenID4VP drafts), or in
+  DCQL through this debugger's critical extension. See `docs/predicates.md`.
 
 ## Tests
 

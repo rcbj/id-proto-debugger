@@ -34,6 +34,10 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var verifier = require("./vp_verifier");
+// Predicate requests (#474) and the AnonCreds material a proof is checked
+// with.
+var vpQuery = require("./vp_query");
+var anoncredsWallet = require("./anoncreds_wallet");
 var qrcode = require("qrcode-generator");
 
 var log = bunyan.createLogger({ name: "vc_verifier",
@@ -606,6 +610,14 @@ function querySpec() {
   } else {
     setText("vpv_trusted_authorities_note", "");
   }
+  var predicates = predicatesFromPage();
+  if (predicates.length) {
+    spec.predicates = predicates;
+  }
+  if (format === "anoncreds") {
+    log.debug("Leaving querySpec(). anoncreds.");
+    return spec;
+  }
   if (format === "dc+sd-jwt") {
     spec.vct = types;
   } else if (format === "mso_mdoc") {
@@ -617,12 +629,63 @@ function querySpec() {
   return spec;
 }
 
+// The predicates typed into pane 1, one "name op integer" per line.
+function predicatesFromPage() {
+  log.debug("Entering predicatesFromPage().");
+  var out = [];
+  val("vpv_predicates").split(/\n/).forEach(function (line) {
+    var t = line.trim();
+    if (!t) {
+      return;
+    }
+    var m = /^(.+?)\s*(>=|<=|>|<)\s*(-?\d+)$/.exec(t);
+    if (!m) {
+      throw new Error("a predicate is \"name op integer\", op one of >= > " +
+                      "<= <; got " + JSON.stringify(t) + ".");
+    }
+    out.push({ name: m[1].trim(), p_type: m[2], p_value: Number(m[3]) });
+  });
+  log.debug("Leaving predicatesFromPage(). " + out.length);
+  return out;
+}
+
+// The query in DIF Presentation Exchange 2.1.1 form, for the OpenID4VP
+// drafts (presentation_definition, removed in 1.0).
+function presentationDefinitionFromFields() {
+  log.debug("Entering presentationDefinitionFromFields().");
+  var spec = querySpec();
+  var reveal = (spec.claims || []).map(function (c) {
+    return c.path.filter(function (seg) {
+      return typeof seg === "string";
+    }).slice(-1)[0];
+  }).filter(Boolean);
+  log.debug("Leaving presentationDefinitionFromFields().");
+  return verifier.buildPresentationDefinition({ descriptors: [{
+    id: spec.id, format: spec.format, reveal: reveal,
+    predicates: (spec.predicates || []).map(function (p) {
+      return Object.assign({ mode: "required" }, p);
+    }) }] });
+}
+
 function regenerateDcql() {
   log.debug("Entering regenerateDcql().");
   try {
+    if (val("vpv_query_language") === "pe") {
+      setVal("vpv_dcql", JSON.stringify(presentationDefinitionFromFields(),
+                                        null, 2));
+      setText("vpv_dcql_status", "A presentation_definition (" +
+              vpQuery.LABEL_PE + "), generated from the fields above.",
+              "vc-pending");
+      saveState();
+      log.debug("Leaving regenerateDcql(). Presentation Exchange.");
+      return false;
+    }
     var dcql = verifier.buildDcql({ queries: [querySpec()] });
     setVal("vpv_dcql", JSON.stringify(dcql, null, 2));
-    setText("vpv_dcql_status", "Generated from the fields above.", "vc-ok");
+    setText("vpv_dcql_status", "Generated from the fields above." +
+            (dcql.credentials[0][vpQuery.EXT_PREDICATES] ? " Its " +
+             "predicates are the " + vpQuery.LABEL_EXT + ", marked " +
+             "critical." : ""), "vc-ok");
   } catch (e) {
     // Not generated (#468, M4): the query the fields describe is one a
     // Wallet must reject — most often a type field left empty, which
@@ -715,6 +778,11 @@ function dcqlFromPage() {
     return built;
   }
   var parsed = JSON.parse(text);
+  if (parsed && Array.isArray(parsed.input_descriptors)) {
+    // A presentation_definition: createRequest() sends it instead.
+    log.debug("Leaving dcqlFromPage(). Presentation Exchange.");
+    return parsed;
+  }
   if (!parsed || !Array.isArray(parsed.credentials) ||
       !parsed.credentials.length) {
     log.debug("Leaving dcqlFromPage(). No credentials.");
@@ -722,6 +790,47 @@ function dcqlFromPage() {
   }
   log.debug("Leaving dcqlFromPage().");
   return parsed;
+}
+
+function isPresentationDefinition(query) {
+  log.debug("Entering isPresentationDefinition().");
+  log.debug("Leaving isPresentationDefinition().");
+  return !!query && Array.isArray(query.input_descriptors);
+}
+
+// Whether the query asks for predicates, in either language.
+function asksForPredicates(query) {
+  log.debug("Entering asksForPredicates().");
+  var model = vpQuery.normalise(isPresentationDefinition(query) ?
+    { presentation_definition: query } : { dcql_query: query });
+  log.debug("Leaving asksForPredicates().");
+  return model.items.some(function (item) {
+    return item.predicates.length > 0;
+  });
+}
+
+// The AnonCreds issuer material pasted in pane 1 (an AnonCreds bundle: the
+// schema, the credential definition and, for a revocable credential, its
+// revocation member), as verifyResponse()'s session.anoncreds; undefined
+// when the box is empty.
+function anoncredsMaterialFromPage() {
+  log.debug("Entering anoncredsMaterialFromPage().");
+  var text = val("vpv_anoncreds_material").trim();
+  if (!text) {
+    log.debug("Leaving anoncredsMaterialFromPage(). None.");
+    return undefined;
+  }
+  var b = anoncredsWallet.parseBundle(text);
+  var schemas = {};
+  schemas[b.schemaId] = b.schema;
+  var cds = {};
+  cds[b.credDefId] = b.credentialDefinition;
+  var revocation = anoncredsWallet.revocationOf(b);
+  log.debug("Leaving anoncredsMaterialFromPage().");
+  return { schemas: schemas, credentialDefinitions: cds,
+           revocationRegistryDefinitions: revocation ?
+             revocation.definitions : {},
+           revocationStatusLists: revocation ? [revocation.list] : [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -958,6 +1067,12 @@ function haipGate(r) {
     log.debug("Leaving haipGate(). Not HAIP.");
     return;
   }
+  if (isPresentationDefinition(r.dcql)) {
+    log.debug("Leaving haipGate(). Presentation Exchange.");
+    throw new Error("HAIP 1.0 profiles OpenID4VP 1.0, which has only DCQL; " +
+                    "a presentation_definition (" + vpQuery.LABEL_PE +
+                    ") is not sent under it.");
+  }
   var found = verifier.haipRequestProblems(Object.assign({}, r, {
     formats: ((r.dcql || {}).credentials || []).map(function (q) {
       return q.format;
@@ -1022,9 +1137,15 @@ async function createRequest() {
     var clientId = clientIdOf(signer, hosted.responseUri);
     var nonce = verifier.randomToken(16);
     var state = verifier.randomToken(16);
+    var pd = isPresentationDefinition(dcql) ? dcql : undefined;
+    if (pd) {
+      dcql = undefined;
+    }
     var claimsInput = {
       clientId: clientId, responseUri: hosted.responseUri,
       responseMode: mode, nonce: nonce, state: state, dcql: dcql,
+      presentationDefinition: pd,
+      advertisePredicates: asksForPredicates(pd || dcql),
       encryptionJwk: encryption ? encryption.publicJwk : undefined,
       scope: val("vpv_scope").trim() || undefined,
       verifierInfo: verifierInfoFromPage(),
@@ -1078,6 +1199,7 @@ async function createRequest() {
         transactionData: claimsInput.transactionData,
         clientId: clientId, nonce: nonce, state: state,
         responseUri: hosted.responseUri, responseMode: mode, dcql: dcql,
+        presentationDefinition: pd,
         decryptionJwk: encryption ? encryption.privateJwk : undefined
       },
       after: 0,
@@ -1123,6 +1245,11 @@ async function askThroughDcApi() {
       "decentralized_identifier";
     var origin = window.location.origin;
     var dcql = dcqlFromPage();
+    if (isPresentationDefinition(dcql)) {
+      throw new Error("a presentation_definition (" + vpQuery.LABEL_PE +
+                      ") is not sent over the Digital Credentials API, " +
+                      "whose OpenID4VP profile is 1.0's: use DCQL.");
+    }
     haipGate({ dcApi: true, signed: signed, responseMode: mode, dcql: dcql,
                prefix: val("vpv_client_prefix") || "x509_hash" });
     if (multisigned) {
@@ -1750,7 +1877,8 @@ async function checkFields(fields, contentType) {
       fields: fields,
       session: Object.assign({}, current.session,
                              { trustAnchors: trustAnchorsFromPage(),
-                               issuerBindings: issuerBindingsFromPage() }),
+                               issuerBindings: issuerBindingsFromPage(),
+                               anoncreds: anoncredsMaterialFromPage() }),
       fetchJson: fetchJson, fetchText: fetchText, contentType: contentType,
       now: Math.floor(Date.now() / 1000) });
     renderChecks(result);

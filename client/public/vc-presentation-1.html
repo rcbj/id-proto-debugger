@@ -114,7 +114,7 @@ function vpSetAllPanes(expand) {
           <td><code id="vp_state">&mdash;</code></td>
         </tr>
         <tr>
-          <td><div class="tooltip"><label>dcql_query</label><span class="tooltiptext">The Digital Credentials Query Language query: which credential, of which format and type, and which claims. A verifier has no way to ask for "everything".</span></div></td>
+          <td><div class="tooltip"><label>dcql_query</label><span class="tooltiptext">The Digital Credentials Query Language query: which credential, of which format and type, and which claims. A verifier has no way to ask for "everything". When the request has no dcql_query and carries a DIF Presentation Exchange presentation_definition instead (the OpenID4VP drafts' query, removed in 1.0), that is shown here.</span></div></td>
           <td><pre class="vc-json" id="vp_dcql">&nbsp;</pre></td>
         </tr>
         <tr>
@@ -137,7 +137,13 @@ function vpSetAllPanes(expand) {
     <p class="vc-note">The DCQL query, decoded, against the credential this wallet holds: a claim in green is one
     the credential can disclose, a claim in red is one it cannot &mdash; and a <code>vct</code> in red means the
     verifier is asking for a different kind of credential altogether.</p>
+    <div class="vc-note"><div class="tooltip"><label>Query language:</label><span class="tooltiptext">Which query the request carries: DCQL (OpenID4VP 1.0 section 6), or a DIF Presentation Exchange 2.1.1 presentation_definition, which the OpenID4VP drafts used and 1.0 removed. A DCQL claim with values is matched by exact type and value (section 6.4.1); a mismatching claim is treated as absent.</span></div>
+    <span id="vp_query_language">&nbsp;</span></div>
     <table class="vc-table" id="vp_requested_table"><tbody></tbody></table>
+    <h5 class="vc-subtitle"><div class="tooltip"><label>Predicates: proven, not revealed</label><span class="tooltiptext">What the Verifier asks to be PROVEN about a claim rather than shown, such as age &gt;= 18. A Presentation Exchange predicate is standard (DIF PE 2.1.1); a DCQL one is this debugger's extension, honoured only when the credential query marks it critical. AnonCreds proves a range in zero knowledge; an mdoc answers an age bound with the issuer's age_over_NN; every other format cannot, and a required predicate is then REFUSED rather than answered with the value. <a href="/vc-predicates.html">Compose a predicate query</a>.</span></div></h5>
+    <table class="vc-table" id="vp_predicates_table"><tbody></tbody></table>
+    <p class="vc-note" id="vp_predicates_note">&nbsp;</p>
+    <p class="vc-note"><a id="vp_predicates_link" href="/vc-predicates.html">Compose a predicate query</a> (Presentation Exchange or the DCQL extension) and send it to this wallet.</p>
   </fieldset>
 </div>
 

@@ -6,13 +6,18 @@
 // ---------------------------------------------------------------------------
 // gordian-envelope.html (#480): read a Gordian Envelope credential, verify
 // its issuer's signature, present it with chosen claims elided, and issue
-// one. The work is gordian_envelope.js; this file is the DOM.
+// one; encrypt, compress, split into SSKR shares and send as multi-part
+// URs. The work is gordian_envelope.js, gordian_envelope_crypto.js, sskr.js
+// and bc_ur.js; this file is the DOM.
 //
-// NOTHING ON THIS PAGE IS STORED, the issuer's seed included. Every value
-// shown came from pasted text, so it is written with textContent.
+// NOTHING ON THIS PAGE IS STORED: the issuer's seed, content keys, private
+// keys and passwords live in their fields for this page load only. Every
+// value shown came from pasted text, so it is written with textContent.
 // ---------------------------------------------------------------------------
 
 var ge = require("./gordian_envelope");
+var gc = require("./gordian_envelope_crypto");
+var bcur = require("./bc_ur");
 var cbytes = require("./crypto_bytes");
 
 // The log level comes from the same configuration everything else here
@@ -138,7 +143,9 @@ function readEnvelope() {
     log.debug("Leaving readEnvelope(). Unreadable.");
     return false;
   }
-  setStatus("ge_read_status", "Read. Root digest " +
+  var parts = String(val("ge_input")).trim().split(/\s+/).length;
+  setStatus("ge_read_status", "Read" + (parts > 1 ? " from " + parts +
+            " parts of a multi-part UR" : "") + ". Root digest " +
             cbytes.bytesToHex(current.digest) + ".", "vc-ok");
   setPre("ge_notation", ge.notation(current));
   setPre("ge_tree", ge.tree(current));
@@ -242,9 +249,17 @@ function keyFromPage() {
     log.debug("Leaving keyFromPage(). Short seed.");
     throw new Error("the seed is at least 16 bytes of hex (press Generate).");
   }
+  var scheme = val("ge_scheme") || "schnorr";
+  if (ge.isMldsa(scheme)) {
+    log.debug("Leaving keyFromPage(). ML-DSA.");
+    return ge.mldsaKeyPair(scheme, ge.signingKeyFromSeed(seed));
+  }
+  if (scheme === "ssh-ed25519") {
+    log.debug("Leaving keyFromPage(). SSH.");
+    return ge.sshEd25519FromSeed(seed);
+  }
   log.debug("Leaving keyFromPage().");
-  return { scheme: val("ge_scheme") || "schnorr",
-           privateKey: ge.signingKeyFromSeed(seed) };
+  return { scheme: scheme, privateKey: ge.signingKeyFromSeed(seed) };
 }
 
 function generateSeed() {
@@ -322,6 +337,303 @@ function readIssued() {
   return verifyEnvelope();
 }
 
+// ---------------------------------------------------------------------------
+// The obscuring panes. Each reads its own Envelope field and writes a
+// Result that "Read It" hands to the first pane.
+// ---------------------------------------------------------------------------
+
+function readField(id) {
+  log.debug("Entering readField(). " + id);
+  var text = String(val(id)).trim();
+  if (!text) {
+    log.debug("Leaving readField(). Empty.");
+    throw new Error("paste an envelope first.");
+  }
+  log.debug("Leaving readField().");
+  return ge.read(text);
+}
+
+function showResult(outId, notationId, e) {
+  log.debug("Entering showResult(). " + outId);
+  setVal(outId, ge.toUr(e));
+  if (notationId) setPre(notationId, ge.notation(e));
+  log.debug("Leaving showResult().");
+}
+
+function readResult(id) {
+  log.debug("Entering readResult(). " + id);
+  setVal("ge_input", val(id));
+  readEnvelope();
+  var pane = el("ge_read_fieldset");
+  if (pane) pane.style.display = "block";
+  log.debug("Leaving readResult().");
+  return false;
+}
+
+function digestNote(a, b) {
+  log.debug("Entering digestNote().");
+  var same = cbytes.bytesEqual(a.digest, b.digest);
+  log.debug("Leaving digestNote(). " + same);
+  return same ? " The digest is unchanged (" +
+    cbytes.bytesToHex(b.digest).slice(0, 8) + "…)." :
+    " The digest CHANGED — this should not happen.";
+}
+
+// Let a status line paint before a slow step (Argon2id, scrypt).
+function later(statusId, fn) {
+  log.debug("Entering later(). " + statusId);
+  setStatus(statusId, "Working…", "");
+  setTimeout(fn, 10);
+  log.debug("Leaving later().");
+  return false;
+}
+
+function generateContentKey() {
+  log.debug("Entering generateContentKey().");
+  setVal("ge_enc_key", gc.keyUr(gc.generateKey()));
+  log.debug("Leaving generateContentKey().");
+  return false;
+}
+
+function lines(id) {
+  log.debug("Entering lines(). " + id);
+  var out = String(val(id)).split(/\s+/).filter(Boolean);
+  log.debug("Leaving lines(). " + out.length);
+  return out;
+}
+
+function doEncrypt() {
+  log.debug("Entering doEncrypt().");
+  var out;
+  var said = [];
+  try {
+    var env = readField("ge_enc_input");
+    var wrapFirst = el("ge_enc_wrap") && el("ge_enc_wrap").checked;
+    var target = wrapFirst ? ge.wrap(env) : env;
+    if (!String(val("ge_enc_key")).trim()) generateContentKey();
+    var key = gc.readKey(val("ge_enc_key"));
+    out = gc.encryptSubject(target, key);
+    lines("ge_enc_recipients").forEach(function (r) {
+      out = gc.addRecipient(out, gc.readPublicKeys(r), key);
+    });
+    if (gc.recipients(out).length) {
+      said.push(gc.recipients(out).length + " recipient(s)");
+    }
+    if (val("ge_enc_password")) {
+      out = gc.addSecret(out, val("ge_enc_kdf") || "argon2id",
+                         cbytes.strBytes(val("ge_enc_password")), key);
+      said.push("a " + (val("ge_enc_kdf") || "argon2id") + " password lock");
+    }
+    showResult("ge_enc_output", "ge_enc_notation", out);
+    setStatus("ge_enc_status", "Encrypted " + (wrapFirst ? "(wrapped " +
+              "first, so the assertions are hidden too)" : "(the subject " +
+              "only)") + (said.length ? ", with " + said.join(" and ") :
+              "") + "." + digestNote(ge.subjectOf(target),
+                                     ge.subjectOf(out)), "vc-ok");
+  } catch (e) {
+    setStatus("ge_enc_status", "Not encrypted: " + e.message, "vc-error");
+    log.debug("Leaving doEncrypt(). Failed.");
+    return;
+  }
+  log.debug("Leaving doEncrypt().");
+}
+
+function encryptEnvelope() {
+  log.debug("Entering encryptEnvelope().");
+  log.debug("Leaving encryptEnvelope().");
+  return later("ge_enc_status", doEncrypt);
+}
+
+function doDecrypt() {
+  log.debug("Entering doDecrypt().");
+  var out;
+  var how;
+  try {
+    var env = readField("ge_enc_input");
+    if (val("ge_enc_password")) {
+      out = gc.unlockSubject(env, cbytes.strBytes(val("ge_enc_password")));
+      how = "with the password";
+    } else if (String(val("ge_enc_private_keys")).trim()) {
+      out = gc.decryptSubjectToRecipient(env,
+        gc.readPrivateKeys(val("ge_enc_private_keys")));
+      how = "as a recipient";
+    } else if (String(val("ge_enc_key")).trim()) {
+      out = gc.decryptSubject(env, gc.readKey(val("ge_enc_key")));
+      how = "with the content key";
+    } else {
+      throw new Error("give the content key, the private keys of a " +
+                      "recipient, or the password.");
+    }
+    var unwrapped = false;
+    if (out.kind === "wrapped" && el("ge_enc_wrap") &&
+        el("ge_enc_wrap").checked) {
+      out = out.envelope;
+      unwrapped = true;
+    }
+    showResult("ge_enc_output", "ge_enc_notation", out);
+    setStatus("ge_enc_status", "Decrypted " + how + (unwrapped ? ", and " +
+              "unwrapped" : "") + "." + (unwrapped ? "" :
+              digestNote(env, out)), "vc-ok");
+  } catch (e) {
+    setStatus("ge_enc_status", "Not decrypted: " + e.message, "vc-error");
+    log.debug("Leaving doDecrypt(). Failed.");
+    return;
+  }
+  log.debug("Leaving doDecrypt().");
+}
+
+function decryptEnvelope() {
+  log.debug("Entering decryptEnvelope().");
+  log.debug("Leaving decryptEnvelope().");
+  return later("ge_enc_status", doDecrypt);
+}
+
+function makeRecipientKeys() {
+  log.debug("Entering makeRecipientKeys().");
+  try {
+    var scheme = val("ge_kp_scheme") || "x25519";
+    var seedHex = String(val("ge_kp_seed")).replace(/\s+/g, "");
+    var seed = seedHex ? cbytes.hexToBytes(seedHex) : cbytes.randomBytes(16);
+    if (seed.length < 16) throw new Error("the seed is at least 16 bytes.");
+    var keys = gc.privateKeysFromSeed(seed);
+    if (scheme !== "x25519") keys.encapsulation = gc.mlkemKeyPair(scheme);
+    var pub = gc.publicKeysUr(gc.publicKeysOf(keys));
+    setVal("ge_kp_seed", cbytes.bytesToHex(seed));
+    setVal("ge_kp_public", pub);
+    setVal("ge_enc_private_keys", gc.privateKeysUr(keys));
+    setVal("ge_enc_recipients", (String(val("ge_enc_recipients")).trim() ?
+      String(val("ge_enc_recipients")).trim() + "\n" : "") + pub);
+    setStatus("ge_enc_status", "Made a " + scheme + " recipient: its public " +
+              "keys are in Recipients, its private keys in Private keys " +
+              "(neither is stored).", "vc-ok");
+  } catch (e) {
+    setStatus("ge_enc_status", "No keys: " + e.message, "vc-error");
+  }
+  log.debug("Leaving makeRecipientKeys().");
+  return false;
+}
+
+function compressEnvelope() {
+  log.debug("Entering compressEnvelope().");
+  try {
+    var env = readField("ge_comp_input");
+    var subj = el("ge_comp_subject") && el("ge_comp_subject").checked;
+    var out = subj ? gc.compressSubject(env) : gc.compress(env);
+    var c = gc.readCompressed(ge.subjectOf(out).cbor);
+    showResult("ge_comp_output", null, out);
+    setStatus("ge_comp_status", "Compressed " + (subj ? "the subject" :
+              "the envelope") + ": " + c.size + " bytes of CBOR in " +
+              c.data.length + (c.data.length === c.size ? " (DEFLATE would " +
+              "not shrink them, so they are stored as they are)" : "") + "." +
+              digestNote(env, out), "vc-ok");
+  } catch (e) {
+    setStatus("ge_comp_status", "Not compressed: " + e.message, "vc-error");
+  }
+  log.debug("Leaving compressEnvelope().");
+  return false;
+}
+
+function decompressEnvelope() {
+  log.debug("Entering decompressEnvelope().");
+  try {
+    var env = readField("ge_comp_input");
+    var out = env.kind === "compressed" ? gc.decompress(env) :
+        gc.decompressSubject(env);
+    if (out === env) throw new Error("nothing in it is compressed.");
+    showResult("ge_comp_output", null, out);
+    setStatus("ge_comp_status", "Decompressed; the CRC-32 and the digest " +
+              "check." + digestNote(env, out), "vc-ok");
+  } catch (e) {
+    setStatus("ge_comp_status", "Not decompressed: " + e.message,
+              "vc-error");
+  }
+  log.debug("Leaving decompressEnvelope().");
+  return false;
+}
+
+function splitEnvelope() {
+  log.debug("Entering splitEnvelope().");
+  try {
+    var env = readField("ge_sskr_input");
+    var groups = String(val("ge_sskr_groups")).split(/[,;]/)
+      .map(function (g) {
+        return g.trim();
+      }).filter(Boolean);
+    var r = gc.splitEnvelope(env, parseInt(val("ge_sskr_threshold"), 10) ||
+                             1, groups);
+    setVal("ge_sskr_shares", r.shares.map(ge.toUr).join("\n"));
+    setStatus("ge_sskr_status", "Split into " + r.shares.length +
+              " share envelope(s) in " + r.groups.length + " group(s) (" +
+              groups.join(", ") + "; " + (parseInt(val("ge_sskr_threshold"),
+              10) || 1) + " group(s) needed). The content key is not kept.",
+              "vc-ok");
+  } catch (e) {
+    setStatus("ge_sskr_status", "Not split: " + e.message, "vc-error");
+  }
+  log.debug("Leaving splitEnvelope().");
+  return false;
+}
+
+function joinShares() {
+  log.debug("Entering joinShares().");
+  try {
+    var shares = lines("ge_sskr_shares").map(function (t) {
+      return ge.read(t);
+    });
+    var out = gc.joinEnvelope(shares);
+    setVal("ge_sskr_output", ge.toUr(out));
+    setStatus("ge_sskr_status", "Joined from " + shares.length +
+              " share(s). Root digest " +
+              cbytes.bytesToHex(out.digest).slice(0, 8) + "….", "vc-ok");
+  } catch (e) {
+    setStatus("ge_sskr_status", "Not joined: " + e.message, "vc-error");
+  }
+  log.debug("Leaving joinShares().");
+  return false;
+}
+
+function encodeParts() {
+  log.debug("Entering encodeParts().");
+  try {
+    var env = readField("ge_parts_input");
+    var max = parseInt(val("ge_parts_max"), 10) || 100;
+    var extra = Math.max(0, parseInt(val("ge_parts_extra"), 10) || 0);
+    var enc = new bcur.MultipartEncoder("envelope",
+                                        ge.encode(ge.toCbor(env)), max);
+    var n = enc.fragmentCount();
+    var parts = [];
+    for (var i = 0; i < n + extra; i++) parts.push(enc.nextPart());
+    setVal("ge_parts_list", parts.join("\n"));
+    setStatus("ge_parts_status", n + " fragment(s) of at most " + max +
+              " bytes, and " + extra + " fountain part(s) after them.",
+              "vc-ok");
+  } catch (e) {
+    setStatus("ge_parts_status", "No parts: " + e.message, "vc-error");
+  }
+  log.debug("Leaving encodeParts().");
+  return false;
+}
+
+function decodeParts() {
+  log.debug("Entering decodeParts().");
+  try {
+    var text = lines("ge_parts_list").join("\n");
+    var d = bcur.decodeAny(text);
+    if (d.type !== "envelope") {
+      throw new Error("ur:" + d.type + " is not an envelope.");
+    }
+    var env = ge.fromCbor(ge.decode(d.body));
+    setVal("ge_parts_output", ge.toUr(env));
+    setStatus("ge_parts_status", "Rebuilt from " + d.parts + " part(s) (" +
+              d.fragments + " fragment(s)). Root digest " +
+              cbytes.bytesToHex(env.digest).slice(0, 8) + "….", "vc-ok");
+  } catch (e) {
+    setStatus("ge_parts_status", "Not rebuilt: " + e.message, "vc-error");
+  }
+  log.debug("Leaving decodeParts().");
+  return false;
+}
+
 module.exports = {
   togglePane: togglePane,
   readEnvelope: readEnvelope,
@@ -332,5 +644,16 @@ module.exports = {
   showIssuerKey: showIssuerKey,
   loadExample: loadExample,
   issueEnvelope: issueEnvelope,
-  readIssued: readIssued
+  readIssued: readIssued,
+  readResult: readResult,
+  generateContentKey: generateContentKey,
+  encryptEnvelope: encryptEnvelope,
+  decryptEnvelope: decryptEnvelope,
+  makeRecipientKeys: makeRecipientKeys,
+  compressEnvelope: compressEnvelope,
+  decompressEnvelope: decompressEnvelope,
+  splitEnvelope: splitEnvelope,
+  joinShares: joinShares,
+  encodeParts: encodeParts,
+  decodeParts: decodeParts
 };
