@@ -32,17 +32,22 @@
 //      not others, at random, specifically to break implementations that
 //      compare it against a template. Measured happening here on 2026-08-08.
 //
-// A note on `crypto`: this module reaches Web Crypto through the GLOBAL
-// (`crypto.subtle`), never `require("crypto")`. That is the rule the whole
-// client tree follows — browserify substitutes a bare crypto require with
-// crypto-browserify, which drags in `elliptic` and its unpatchable
-// GHSA-848j-6mx2-7j84 — and it costs nothing, because node has exposed the same
-// global since 18. `tests/jwk_pem_encoding.js` enforces it.
+// A note on `crypto`: since #463 step 4 this module does no Web Crypto at
+// all; its signature checks and digests are common/crypto/crypto_provider.js's,
+// pure JS, so the decoder verifies on a plain-HTTP page too. It never does
+// `require("crypto")` either — browserify would substitute crypto-browserify,
+// which drags in `elliptic` and its unpatchable GHSA-848j-6mx2-7j84 —
+// and `tests/jwk_pem_encoding.js` enforces that. Note 1 above still applies:
+// the DER signature is converted to raw r‖s before it is verified.
 // ---------------------------------------------------------------------------
 
 var bunyan = require("bunyan");
 var cbor = require("./cbor");
 var cose = require("./cose");
+// The signature checks and the digests are crypto_provider.js's (#463 step
+// 4), pure JS: the WebAuthn decoder verifies on every deployment, and EdDSA
+// covers Ed448 as well as the Ed25519 Web Crypto knew.
+var provider = require("./crypto_provider");
 var pqc = require("./pqc");
 // The log level comes from the same configuration the pages use. A consumer
 // outside the browser bundles (a node-based test loading this module directly)
@@ -415,7 +420,7 @@ async function verifyAssertion(input) {
                expected.origin);
   }
   if (expected.rpId) {
-    var digest = await crypto.subtle.digest("SHA-256",
+    var digest = provider.digest("sha256",
         new TextEncoder().encode(expected.rpId));
     var ok = equalBytes(authData.rpIdHash, new Uint8Array(digest));
     record("rpIdHash is SHA-256 of the RP ID", ok,
@@ -451,8 +456,8 @@ async function verifyAssertion(input) {
 
   // The signed message: raw authenticator data followed by the HASH of the
   // client data. Note 2 in the header.
-  var clientDataHash = new Uint8Array(await crypto.subtle.digest("SHA-256",
-      clientDataBytes));
+  var clientDataHash = provider.digest("sha256",
+      new Uint8Array(clientDataBytes));
   var signedData = new Uint8Array(authDataBytes.length + clientDataHash.length);
   signedData.set(authDataBytes, 0);
   signedData.set(clientDataHash, authDataBytes.length);
@@ -474,7 +479,7 @@ async function verifyAssertion(input) {
     valid = pqc.verifyWithPub(spec.name, signature, signedData,
         base64urlToBytes(jwk.pub));
   } else {
-    valid = await verifyWithWebCrypto(spec, jwk, signature, signedData);
+    valid = verifyClassical(spec, jwk, signature, signedData);
   }
   record("signature verifies against the credential public key", valid,
          algName + " over " + signedData.length +
@@ -496,20 +501,39 @@ async function verifyAssertion(input) {
   };
 }
 
-// The classical algorithms: ECDSA (whose DER signature Web Crypto will not
-// take), RSA and EdDSA, all through crypto.subtle.
-async function verifyWithWebCrypto(spec, jwk, signature, signedData) {
-  log.debug("Entering verifyWithWebCrypto().");
+// The classical algorithms, ECDSA (whose DER signature becomes raw r || s
+// first: note 1 in the header), RSA PKCS#1 v1.5 and PSS, and EdDSA, by
+// crypto_provider.js. Never throws on a bad signature; a key that cannot be
+// read is a failed verification, not a crash of the decoder.
+var PROVIDER_SIG = {
+  ES256: "ecdsa-p256-sha256", ES384: "ecdsa-p384-sha384",
+  ES512: "ecdsa-p521-sha512",
+  RS256: "rsa-pkcs1-sha256", RS384: "rsa-pkcs1-sha384",
+  RS512: "rsa-pkcs1-sha512",
+  PS256: "rsa-pss-sha256", PS384: "rsa-pss-sha384", PS512: "rsa-pss-sha512"
+};
+
+function verifyClassical(spec, jwk, signature, signedData) {
+  log.debug("Entering verifyClassical(). " + spec.name);
   var sigForVerify = signature;
   if (spec.derSig) {
     sigForVerify = derToRawSignature(signature, COORDINATE_BYTES[jwk.crv] ||
         32);
   }
-  var key = await crypto.subtle.importKey("jwk", stripAlg(jwk), spec.webCrypto,
-      false, ["verify"]);
-  var valid = await crypto.subtle.verify(spec.verify, key, sigForVerify,
-      signedData);
-  log.debug("Leaving verifyWithWebCrypto().");
+  var alg = spec.name === "EdDSA"
+    ? (jwk.crv === "Ed448" ? "ed448" : "ed25519") : PROVIDER_SIG[spec.name];
+  var key;
+  try {
+    var bare = stripAlg(jwk);
+    delete bare.ext;
+    key = provider.importKey(bare);
+  } catch (e) {
+    log.debug("Leaving verifyClassical(). Unreadable key: " + e.message);
+    return false;
+  }
+  var valid = !!alg && provider.verify(alg, key, new Uint8Array(signedData),
+                                       new Uint8Array(sigForVerify));
+  log.debug("Leaving verifyClassical(). " + valid);
   return valid;
 }
 

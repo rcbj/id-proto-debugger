@@ -62,6 +62,10 @@ var cose = require("./cose");
 var bytes = require("./crypto_bytes");
 var dpop = require("./dpop");
 var jws = require("./jws");
+// Digests and the device signature are crypto_provider.js's (#463 step 4):
+// pure JS, so an mdoc is presented and checked on every deployment, plain
+// HTTP included, where crypto.subtle does not exist.
+var provider = require("./crypto_provider");
 var nobleSha256 = require("@noble/hashes/sha256").sha256;
 var nobleSha512 = require("@noble/hashes/sha512");
 
@@ -189,9 +193,7 @@ function embed(value) {
 function sha256(data) {
   log.debug("Entering sha256().");
   log.debug("Leaving sha256().");
-  return crypto.subtle.digest("SHA-256", data).then(function (d) {
-    return new Uint8Array(d);
-  });
+  return Promise.resolve(provider.digest("sha256", bytes.asBytes(data)));
 }
 
 function get(map, key) {
@@ -342,14 +344,12 @@ function sigStructure(protectedBytes, payload) {
 
 function verifyEs256(jwk, data, signature) {
   log.debug("Entering verifyEs256().");
-  var key = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y };
+  var key = provider.importKey({ kty: jwk.kty, crv: jwk.crv, x: jwk.x,
+                                  y: jwk.y });
   log.debug("Leaving verifyEs256().");
-  return crypto.subtle.importKey("jwk", key,
-      { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"])
-    .then(function (k) {
-      return crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, k,
-                                  signature, data);
-    });
+  // COSE ECDSA is raw r || s (RFC 9053 section 2.1), the provider's default.
+  return Promise.resolve(provider.verify("ecdsa-p256-sha256", key,
+      bytes.asBytes(data), bytes.asBytes(signature)));
 }
 
 // A COSE signature verified in pure JavaScript (#469, C8): `alg` is the COSE
@@ -558,12 +558,9 @@ function deviceResponse(opts) {
     delete priv.key_ops;
     delete priv.ext;
     delete priv.alg;
-    return crypto.subtle.importKey("jwk", priv,
-        { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])
-      .then(function (key) {
-        return crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key,
-                                  sigStructure(protectedBytes, auth));
-      })
+    // ES256 over the COSE Sig_structure, raw r || s (RFC 9053 section 2.1).
+    return Promise.resolve(provider.sign("ecdsa-p256-sha256",
+        provider.importKey(priv), sigStructure(protectedBytes, auth)))
       .then(function (sig) {
         var doc = new Map([
           ["docType", parsed.docType],
