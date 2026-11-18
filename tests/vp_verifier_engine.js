@@ -126,6 +126,8 @@ const vp = load("vp_protocols.js");
 const x509 = load("x509.js");
 const sdJwtVp = load("sd_jwt_vp.js");
 const bbs2023 = load("bbs2023.js");
+// ecdsa-sd-2023 (#476): the Verifier verifies it through data_integrity.js.
+const ecdsaSd = load("ecdsa_sd_2023.js");
 const bbs = load("bbs.js");
 const didLib = load("did.js");
 const joseJwe = load("jose_jwe.js");
@@ -1507,13 +1509,37 @@ async function ldpVcRoundTrip(env) {
             "relabelled eddsa-rdfc-2022 (that suite needs an Ed25519 key)");
   ok(/Ed25519/.test(checkById(r, "ld[0].vp.proof").detail),
      checkById(r, "ld[0].vp.proof").detail);
+  // A P-256 ecdsa-jcs-2019 proof relabelled ecdsa-sd-2023: that suite is
+  // verified now (#476), and this proofValue is not one of its own.
   const sdSuite = JSON.parse(JSON.stringify(wrapped));
   sdSuite.proof.cryptosuite = "ecdsa-sd-2023";
   r = await send(session, sdSuite);
-  eq(checkById(r, "ld[0].vp.proof").status, "skip",
-     "ecdsa-sd-2023 is a skip that says why");
-  ok(/ecdsa-sd-2023 is not verified/.test(
-     checkById(r, "ld[0].vp.proof").detail));
+  eq(checkById(r, "ld[0].vp.proof").status, "fail",
+     "an ecdsa-jcs-2019 proof relabelled ecdsa-sd-2023 fails");
+
+  // A genuine ecdsa-sd-2023 credential: an issuer base proof by a did:key
+  // P-256 key, derived to one claim by the holder and wrapped in the
+  // holder's VP. Then the same with the disclosed claim changed.
+  const sdIssuer = ecPair();
+  const sdDid = didLib.jwkToDidKey(sdIssuer.publicJwk);
+  const sdBase = await ecdsaSd.createBaseProof(Object.assign({}, unsecured,
+    { issuer: sdDid }), { privateJwk: sdIssuer.privateJwk,
+    verificationMethod: sdDid + "#" + sdDid.slice("did:key:".length),
+    mandatoryPointers: ["/issuer", "/type", "/validFrom"] });
+  const sdDerived = (await ecdsaSd.deriveProof(sdBase,
+    { selectivePointers: ["/credentialSubject/given_name"] })).document;
+  ok(!("family_name" in sdDerived.credentialSubject),
+     "ecdsa-sd-2023: the withheld claim is not disclosed");
+  r = await send(session, await inVp(sdDerived));
+  allPass(r, "ldp_vc ecdsa-sd-2023 derived credential in an " +
+          "ecdsa-jcs-2019 VP");
+  ok(/ecdsa-sd-2023/.test(checkById(r, "ld[0].vc.proof").detail),
+     checkById(r, "ld[0].vc.proof").detail);
+  const sdTampered = JSON.parse(JSON.stringify(sdDerived));
+  sdTampered.credentialSubject.given_name = "Mallory";
+  r = await send(session, await inVp(sdTampered));
+  failsOnly(r, ["ld[0].vc.proof"], "ldp_vc, a tampered ecdsa-sd-2023 " +
+            "disclosure re-wrapped by the holder");
   ok(verifier.vpFormatsSupported().ldp_vc.cryptosuite_values
      .indexOf("bbs-2023") !== -1, "bbs-2023 is advertised");
   log.info("PASS ldp_vc: W3C bbs-2023 reveal documents, bare and in an " +
@@ -3384,9 +3410,11 @@ async function securityFindings(env) {
      "u[0].vc.status.revocation.list").detail), "S2: the list row says why");
 
   // --- S4: an unsupported cryptosuite is not a pass. --------------------
+  // (It was ecdsa-sd-2023 until #476 made that suite verifiable; a name no
+  // registry has keeps the case about an UNSUPPORTED suite.)
   const sdSuite = await diSign(uniCred(UNI), "ecdsa-jcs-2019", uniSigner,
                                "assertionMethod");
-  sdSuite.proof.cryptosuite = "ecdsa-sd-2023";
+  sdSuite.proof.cryptosuite = "example-unsupported-2099";
   r = await sendLd(sdSuite);
   eq(failedIds(r), [], "S4: an unsupported cryptosuite fails nothing");
   eq([r.verdict, r.ok, r.incomplete], ["incomplete", false, 1],

@@ -523,10 +523,11 @@ function wholeLdpPresentation(text) {
     return null;
   }
   var suite = vcFormats.ldpSuiteOf([].concat(credential.proof)[0]);
-  // A derived BbsBlsSignatureProof2020 is a whole JSON-LD credential too,
-  // checked the same way; bbs-2023's envelope is not, and has its own path.
+  // A derived BbsBlsSignatureProof2020 or ecdsa-sd-2023 credential is a
+  // whole JSON-LD credential too, checked the same way by data_integrity.js;
+  // bbs-2023 has its own path below.
   if (vcFormats.isSelectiveLdpSuite(suite) &&
-      suite !== "BbsBlsSignatureProof2020") {
+      suite !== "BbsBlsSignatureProof2020" && suite !== "ecdsa-sd-2023") {
     log.debug("Leaving wholeLdpPresentation(). Selective: " + suite);
     return null;
   }
@@ -614,6 +615,16 @@ function recheckWholeLdp(whole) {
             .length + " canonical statement(s) went, proved by a " +
             "BbsBlsSignatureProof2020 derived from the issuer's " +
             "BbsBlsSignature2020. The rest were never sent."
+        });
+      } else if (whole.suite === "ecdsa-sd-2023") {
+        checks.push({
+          name: "Disclosure", ok: true,
+          detail: ((vcResult.proofs[0] || {}).disclosedStatements || [])
+            .length + " canonical statement(s) went, each with the " +
+            "issuer's own ecdsa-sd-2023 signature. Those signatures are the " +
+            "same in every presentation of this credential, so a Verifier " +
+            "can link them; only the holder's VP binds this one to the " +
+            "request."
         });
       } else {
         checks.push({

@@ -40,6 +40,8 @@ dataIntegrity.registerRdfc(canonize, jsonld);
 // BbsBlsSignature2020 and its derived proofs need RDFC and the jsonld
 // library, both of which are loaded by now; requiring it registers it.
 require("./bbs_bls_2020");
+// ecdsa-sd-2023 needs RDFC-1.0 too; requiring it registers it (#476).
+require("./ecdsa_sd_2023");
 log.debug("data_integrity_rdfc: RDFC-1.0 registered.");
 
 module.exports = dataIntegrity;

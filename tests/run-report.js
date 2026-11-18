@@ -3935,6 +3935,16 @@ function buildJobs() {
     env: {},
   });
 
+  // ecdsa-sd-2023: the specification's own vectors (canonical statements,
+  // hashes, and the derived proofValue byte for byte) and Digital Bazaar's
+  // released implementation in every direction (#476). Needs nothing.
+  jobs.push({
+    name: "ecdsa-sd-2023 (W3C test vectors byte for byte; base and derived " +
+        "proofs against Digital Bazaar, in node)",
+    script: "ecdsa_sd_2023_engine.js",
+    env: {},
+  });
+
   // BbsBlsSignature2020 and BbsBlsSignatureProof2020: the 2020 BBS+ scheme
   // and the JSON-LD suite over it, in both directions against MATTR's
   // released bbs-signatures and jsonld-signatures-bbs 1.2.0. Needs nothing.
