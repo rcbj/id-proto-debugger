@@ -3945,6 +3945,17 @@ function buildJobs() {
     env: {},
   });
 
+  // ACDC (#480, ToIP KERI Suite specifications): the issuer's KEL, the
+  // registry and issuance events and their anchors, and the credential,
+  // both ways with signify-ts 0.4.1 (the KERIA client vLEI uses), and the
+  // specifications' CESR and SAID vectors. No services.
+  jobs.push({
+    name: "ACDC (KEL, registry, anchors and credential, both ways with " +
+        "signify-ts, in node)",
+    script: "acdc_engine.js",
+    env: {},
+  });
+
   // SD-CWT (draft-ietf-spice-sd-cwt-09; #478): the working group's encoded
   // examples (issued, nested, decoys, both KBTs), our issuance and KBTs
   // checked by @auth0/cose and node's SHA-256, and what must fail.
@@ -4162,6 +4173,14 @@ function buildJobs() {
     jobs.push({
       name: "VC Presentation — AnonCreds (anoncreds-rs issuer and verifier)",
       script: "anoncreds_presentation.js",
+      env: {},
+    });
+    // The ACDC page (#480): signify-ts's presentation stream verifies, the
+    // page's own issuance verifies there and in node, revocation, a changed
+    // attribute. Needs only the client.
+    jobs.push({
+      name: "ACDC page — verify a presentation stream, issue and revoke",
+      script: "acdc_browser.js",
       env: {},
     });
     // JPT and SD-CWT through the presentation pages (#478, drafts): the

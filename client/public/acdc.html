@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — ACDC</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+    <style>
+      .acdc-wide { width: 95%; font-family: monospace; }
+      .acdc-checks td { vertical-align: top; padding: 2px 10px 2px 0; }
+      .acdc-pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; max-height: 420px; overflow: auto; }
+    </style>
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/acdc_page.js">
+</script>
+
+<p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="vc-title">ACDC &mdash; a credential verified by its issuer's history</h3>
+
+<p class="vc-intro"><a href="https://trustoverip.github.io/kswg-acdc-specification/" target="_blank" rel="noopener noreferrer">Authentic
+Chained Data Containers</a> (Trust over IP KERI Suite specification) carry <strong>no signature</strong>: a credential's
+SAID &mdash; the digest of its own bytes &mdash; is sealed by an <code>iss</code> event in the issuer's registry, and that event
+is anchored by a seal in an event of the issuer's <a href="https://trustoverip.github.io/kswg-keri-specification/" target="_blank" rel="noopener noreferrer">KERI</a>
+key event log, which <em>is</em> signed. Verifying one walks that chain, all of it in a
+<a href="https://trustoverip.github.io/kswg-cesr-specification/" target="_blank" rel="noopener noreferrer">CESR</a> stream.
+This reads the version 1 generation the released libraries issue credentials in (signify-ts, the KERIA client vLEI uses);
+CESR version 2 messages are refused by name. <strong>Nothing on this page is stored.</strong></p>
+
+<div class="step0 dbg-pane" id="pane_acdc_verify">
+  <legend class="dbg-legend" onclick="return acdcpage.togglePane('acdc_verify_fieldset');">Verify a Presentation</legend>
+  <fieldset name="acdc_verify_fieldset" id="acdc_verify_fieldset" style="display: block;">
+    <table border="0"><tbody>
+      <tr><td><div class="tooltip"><label for="acdc_stream">CESR stream: </label><span class="tooltiptext">The issuer's KEL, the registry inception (vcp), the credential's iss (and rev), and the ACDC with its -I seal source triple, concatenated as KERIA or keri-ts sends them.</span></div></td>
+        <td><textarea id="acdc_stream" name="acdc_stream" rows="8" class="acdc-wide"></textarea></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_schema">Schema: </label><span class="tooltiptext">Optional: the JSON Schema the credential's s names. Its $id is checked to be its own SAID.</span></div></td>
+        <td><textarea id="acdc_schema" name="acdc_schema" rows="3" class="acdc-wide"></textarea></td></tr>
+      <tr><td><input class="btn2" id="acdc_verify_button" type="button" value="Verify" onclick="return acdcpage.verifyStream();" /></td>
+        <td><div class="vc-status" id="acdc_verify_status">&nbsp;</div></td></tr>
+      <tr><td><label>Checks: </label></td><td><div id="acdc_checks"></div></td></tr>
+      <tr><td><label>Credential: </label></td><td><pre class="acdc-pre" id="acdc_credential"></pre></td></tr>
+    </tbody></table>
+  </fieldset>
+</div>
+
+<div class="step0 dbg-pane" id="pane_acdc_issue">
+  <legend class="dbg-legend" onclick="return acdcpage.togglePane('acdc_issue_fieldset');">Issue a Credential</legend>
+  <fieldset name="acdc_issue_fieldset" id="acdc_issue_fieldset" style="display: block;">
+    <p class="vc-note">A fresh issuer each time: an Ed25519 inception, a no-backer registry, the credential and its issuance, each anchored by its own interaction event (exactly one seal each, which keri-ts requires).</p>
+    <table border="0"><tbody>
+      <tr><td><label for="acdc_attributes">Attributes: </label></td>
+        <td><textarea id="acdc_attributes" name="acdc_attributes" rows="3" class="acdc-wide">{"name": "Sunspot College", "level": "gold"}</textarea></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_recipient">Issuee AID: </label><span class="tooltiptext">Optional: a.i, making the credential targeted.</span></div></td>
+        <td><input type="text" id="acdc_recipient" name="acdc_recipient" class="acdc-wide" /></td></tr>
+      <tr><td><input class="btn2" id="acdc_issue_button" type="button" value="Issue" onclick="return acdcpage.issueCredential();" /></td>
+        <td><input class="btn2" id="acdc_revoke_button" type="button" value="Revoke" onclick="return acdcpage.revokeCredential();" />
+          <div class="vc-status" id="acdc_issue_status">&nbsp;</div></td></tr>
+      <tr><td><label for="acdc_issue_output">Stream: </label></td>
+        <td><textarea id="acdc_issue_output" name="acdc_issue_output" rows="6" class="acdc-wide" readonly></textarea>
+          <input class="btn2" id="acdc_verify_issued_button" type="button" value="Verify It" onclick="return acdcpage.verifyIssued();" /></td></tr>
+      <tr><td><label for="acdc_issue_schema">Schema: </label></td>
+        <td><textarea id="acdc_issue_schema" name="acdc_issue_schema" rows="2" class="acdc-wide" readonly></textarea></td></tr>
+    </tbody></table>
+  </fieldset>
+</div>
+
+<!--#include file="/partials/vc_tools.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>
