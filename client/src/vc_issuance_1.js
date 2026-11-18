@@ -30,6 +30,9 @@ var metadataClient = require("./metadata_client");
 var metadataSchema = require("./metadata_schema");
 var opMetadata = require("./op_metadata");
 var vciMetadata = require("./vci_metadata");
+// What each credential format allows: the format and signing algorithm
+// suggestions on this page (#475).
+var vcFormats = require("./vc_formats");
 var sdJwtVc = require("./sd_jwt_vc");
 var vciClaims = require("./vci_claims");
 var didLib = require("./did");

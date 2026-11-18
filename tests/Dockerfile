@@ -402,6 +402,9 @@ COPY tests/vp_verifier_engine.js ./
 # data_integrity.js, read from /usr/src/source-tree), held to Digital
 # Bazaar's and Blockcerts' released implementations and to jose (#475).
 COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js ./
+# Every name the browser bundles use is bound (client/src and the staged
+# common/ modules, read from /usr/src/source-tree).
+COPY tests/client_module_bindings.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./

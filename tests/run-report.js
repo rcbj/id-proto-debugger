@@ -3893,6 +3893,17 @@ function buildJobs() {
     env: {},
   });
 
+  // Every `name.member` in the browser bundles' source names something bound
+  // in that file or a known global: a missing require is an Uncaught
+  // ReferenceError on the page that no node test sees (#482 lost five jobs
+  // to one). Reads client/src and the staged common/ modules. Needs nothing.
+  jobs.push({
+    name: "Browser bundle source binds every module it uses (no missing " +
+        "require, in node)",
+    script: "client_module_bindings.js",
+    env: {},
+  });
+
   // Every Data Integrity cryptosuite and legacy Linked Data proof type an
   // ldp_vc arrives with (client/src/data_integrity.js, #475), in both
   // directions against Digital Bazaar's and Blockcerts' released
