@@ -3935,6 +3935,17 @@ function buildJobs() {
     env: {},
   });
 
+  // W3C VC-JOSE-COSE (vc+jwt, vc+sd-jwt, vc+cose and their envelopes,
+  // #477): both directions against iya-sts's own vc_jose_cose.js (loaded
+  // from its image), jose, @sd-jwt/core and @auth0/cose, and the
+  // specification's rules. Fails, naming the image, without iya-sts's tree.
+  jobs.push({
+    name: "VC-JOSE-COSE (vc+jwt, vc+sd-jwt, vc+cose; against iya-sts, jose, " +
+        "@sd-jwt/core and @auth0/cose, in node)",
+    script: "vc_jose_cose_engine.js",
+    env: {},
+  });
+
   // ecdsa-sd-2023: the specification's own vectors (canonical statements,
   // hashes, and the derived proofValue byte for byte) and Digital Bazaar's
   // released implementation in every direction (#476). Needs nothing.
