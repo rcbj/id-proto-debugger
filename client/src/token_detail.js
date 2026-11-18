@@ -357,7 +357,8 @@ async function verifyCompact(jwt_) {
     // no algorithm selector, so the header's alg is the only thing
     // to go on.
     var result = await jwsLib.verifyJwsAsync({
-      jws: jwt_, publicKey: keyInput, backend: "webcrypto"
+      // jws.js's default pure-JS backend (#463, step 2c): every deployment.
+      jws: jwt_, publicKey: keyInput
     });
     var first = result.signatures[0] || {};
     log.debug("Leaving verifyCompact().");
