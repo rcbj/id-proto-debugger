@@ -3956,6 +3956,39 @@ function buildJobs() {
     env: {},
   });
 
+  // VC Barcodes (#480, W3C Working Draft): CBOR-LD 1.0 and ecdsa-xi-2023 —
+  // the specification's three printed payloads, its PDF417 and QR text, and
+  // Digital Bazaar's released cborld 8.1.0 and ecdsa-xi-2023-cryptosuite
+  // 1.2.0 byte for byte and both ways. No services.
+  jobs.push({
+    name: "VC Barcodes (CBOR-LD and ecdsa-xi-2023 against the spec's " +
+        "vectors and Digital Bazaar's library, in node)",
+    script: "vc_barcodes_engine.js",
+    env: {},
+  });
+
+  // Gordian Envelope (#480, IETF drafts): dCBOR, the digest tree, UR, and
+  // Schnorr / ECDSA / Ed25519, reproducing bc-envelope 0.43.0's and dcbor
+  // 0.25.2's own test vectors byte for byte, signatures included. No
+  // services.
+  jobs.push({
+    name: "Gordian Envelope (dCBOR, digests, signatures, elision against " +
+        "the Rust crates' vectors, in node)",
+    script: "gordian_envelope_engine.js",
+    env: {},
+  });
+
+  // ACDC (#480, ToIP KERI Suite specifications): the issuer's KEL, the
+  // registry and issuance events and their anchors, and the credential,
+  // both ways with signify-ts 0.4.1 (the KERIA client vLEI uses), and the
+  // specifications' CESR and SAID vectors. No services.
+  jobs.push({
+    name: "ACDC (KEL, registry, anchors and credential, both ways with " +
+        "signify-ts, in node)",
+    script: "acdc_engine.js",
+    env: {},
+  });
+
   // SD-CWT (draft-ietf-spice-sd-cwt-09; #478): the working group's encoded
   // examples (issued, nested, decoys, both KBTs), our issuance and KBTs
   // checked by @auth0/cose and node's SHA-256, and what must fail.
@@ -4187,6 +4220,33 @@ function buildJobs() {
     jobs.push({
       name: "VC Presentation — AnonCreds (anoncreds-rs issuer and verifier)",
       script: "anoncreds_presentation.js",
+      env: {},
+    });
+    // The VC Barcodes page (#480): the specification's two examples, a
+    // changed MRZ refused, and an MRZ and an AAMVA barcode issued in the
+    // page, the drawn QR code read back from its image. Needs only the
+    // client.
+    jobs.push({
+      name: "VC Barcodes page — read, verify and issue (MRZ QR code, " +
+          "AAMVA PDF417)",
+      script: "vc_barcodes_browser.js",
+      env: {},
+    });
+    // The Gordian Envelope page (#480): issue bc-envelope's example,
+    // present four claims (the root digest unchanged, verified in the page
+    // and in node), another key refused, salted Ed25519. Needs only the
+    // client.
+    jobs.push({
+      name: "Gordian Envelope page — issue, verify and present by elision",
+      script: "gordian_envelope_browser.js",
+      env: {},
+    });
+    // The ACDC page (#480): signify-ts's presentation stream verifies, the
+    // page's own issuance verifies there and in node, revocation, a changed
+    // attribute. Needs only the client.
+    jobs.push({
+      name: "ACDC page — verify a presentation stream, issue and revoke",
+      script: "acdc_browser.js",
       env: {},
     });
     // JPT and SD-CWT through the presentation pages (#478, drafts): the
