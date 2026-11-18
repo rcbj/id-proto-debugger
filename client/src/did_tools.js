@@ -647,6 +647,61 @@ function renderMembersTable() {
             " member(s).");
 }
 
+// Rebuild a DID Document OBJECT from the editable members table: a json-typed
+// member (verificationMethod, assertionMethod, ...) is parsed, a string one
+// (id, controller) is kept as text, and an empty field is omitted. This is
+// what makes the table actually editable — until it existed the fields could
+// be typed into but nothing read them back, so "break one deliberately to see
+// what the verification does" did nothing.
+function documentFromMembers() {
+  log.debug("Entering documentFromMembers().");
+  var doc = {};
+  var errors = [];
+  didLib.DID_METADATA.forEach(function (m) {
+    var raw = (val(didLib.idFor(m.name)) || "").trim();
+    if (!raw) {
+      return;
+    }
+    if (m.type === "json") {
+      try {
+        doc[m.name] = JSON.parse(raw);
+      } catch (e) {
+        errors.push(m.name + " is not valid JSON: " + e.message);
+      }
+    } else {
+      doc[m.name] = raw;
+    }
+  });
+  log.debug("Leaving documentFromMembers(). " + errors.length + " error(s).");
+  return { document: doc, errors: errors };
+}
+
+// Apply the edited members: make them THE document, so the resolved-document
+// table and the two verifications below read what was typed rather than only
+// what was resolved. A json field that does not parse is refused by name
+// rather than silently dropped.
+function applyMemberEdits() {
+  log.debug("Entering applyMemberEdits().");
+  var built = documentFromMembers();
+  if (built.errors.length) {
+    status("did_members_status", "Could not apply the edits: " +
+           built.errors.join("; "), "vc-bad");
+    log.debug("Leaving applyMemberEdits(). Invalid JSON.");
+    return false;
+  }
+  didDocument = built.document;
+  // Keep what was typed, so a reload opens on the edited document.
+  didLib.DID_METADATA.forEach(function (m) {
+    sdJwtVc.set(storeKey(didLib.idFor(m.name)),
+                val(didLib.idFor(m.name)) || "");
+  });
+  renderDidTable({ docLabel: "edited by hand on this page" });
+  status("did_members_status", "Applied. The document above and the Verify " +
+         "checks now use these members.", "vc-ok");
+  log.debug("Leaving applyMemberEdits().");
+  return false;
+}
+
 // Save the fields this page owns, so a reload does not lose them. The document
 // members are written by populateFromDidDocument() as they are resolved; these
 // two are typed by hand.
@@ -738,6 +793,7 @@ module.exports = {
   verifyDidBinding: verifyDidBinding,
   verifyDomainLinkage: verifyDomainLinkage,
   renderMembersTable: renderMembersTable,
+  applyMemberEdits: applyMemberEdits,
   renderHeldCredential: renderHeldCredential,
   saveState: saveState,
   togglePane: togglePane,
