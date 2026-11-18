@@ -105,20 +105,29 @@ something ties the key to the issuer:
   there. Anything else is a FAIL: "verification method not authorised by the
   issuer". Status list credentials follow the same rule.
 * **An `x5c` chain is never trusted on sight.** Beside the signature row,
-  `issuer.trust` (and `mdoc.issuer-trust` for an mdoc `x5chain`) reports:
-  * whether the leaf is self-signed;
-  * whether each certificate is signed by the next;
-  * whether a trust anchor travels in the chain (HAIP 1.0 section 6.1.1
-    forbids that and a self-signed leaf);
-  * whether every certificate is within its validity;
-  * whether `iss` is bound to the leaf by a dNSName or URI subjectAltName.
-
-  A broken link, an expired certificate or an unbound `iss` is a FAIL. With
-  `session.trustAnchors` (PEM or base64 DER) the row is a PASS or a FAIL.
-  Without them nothing anchors the chain, and the row is a SKIP. The
-  certificate verification is pure JavaScript (node-forge ASN.1,
-  @noble/curves, forge RSA). A Status List Token's own `x5c` is not reported
-  this way yet.
+  `issuer.trust` (and `mdoc.issuer-trust` for an mdoc `x5chain`) reports
+  whether each certificate is signed by the next and is within its
+  validity, and whether a supplied trust anchor anchors the chain. A broken
+  link or an expired certificate is a FAIL. With `session.trustAnchors`
+  (PEM or base64 DER, the page's "Trust anchors for issuers") the row is a
+  PASS or a FAIL; without them nothing anchors the chain, the row is an
+  essential SKIP, and the verdict is incomplete. The certificate checks are
+  pure JavaScript (node-forge ASN.1, @noble/curves, forge RSA).
+* **What is REPORTED and never fails (rcbj, 2026-11-17).** Each is a row of
+  its own, a SKIP that is not essential, so neither the signature row nor
+  the verdict changes because of it:
+  * `issuer.self-signed`: the signing certificate is self-signed (HAIP 1.0
+    section 6.1.1 says it MUST NOT be);
+  * `issuer.anchor-included`: a trust anchor travels in `x5c` (same
+    section);
+  * `issuer.iss`: whether `iss` is bound to the signing certificate. It is
+    bound by a URI subjectAltName equal to `iss`, a dNSName of its host, or
+    a configured mapping (SD-JWT VC -27 section 2.5 allows one; the page's
+    "Issuer bindings" field: `<iss> = sha256:<hex>` of a certificate of the
+    chain or its anchor, or `<iss> = cn:<common name>`). Bound is a PASS.
+    Unbound says plainly that `iss` is NOT authenticated by the certificate
+    and that the issuer is the certificate's subject, quoting the section's
+    "Issuers ... SHOULD NOT include an iss claim without such a binding".
 
 **The verdict.** Each check carries `essential: true` when it establishes
 authenticity: an issuer signature or proof, the issuer trust, a disclosure
@@ -236,5 +245,20 @@ which happened. `docs/vc-verifier-api.md` has the routes.
 | `tests/vp_verifier_engine.js` | node | the DCQL builder, the certificate, the Request Object read back by the Wallet's own `verifyX509Request()`, and a round trip per format, with a negative case for each check |
 | `tests/api_oid4vp_verifier.js` | node | the api's routes, limits and expiry |
 | `tests/vc_verifier_page.js` | browser | the page creates a request through the api; node plays the wallet and posts an answer; every check on the page passes, and a tampered answer fails the check it targets. Then a `decentralized_identifier` request under `request_uri_method=post`, where the wallet's `wallet_nonce` must come back in a Request Object signed live; the QR code; and the DC API button naming its absence in headless Chrome |
+| `tests/vc_verifier_oid4vc_wallet.js` | browser | the same page against **rcbj/oid4vc-wallet**, a native Rust wallet that shares no code with the debugger. A person makes a pre-authorized offer on iya-sts's `/portal/wallet`; the wallet redeems it by value with the Transaction Code (`accept`), then answers the page twice (`present --approve`): `x509_hash` + GET + `direct_post`, and `x509_san_dns` + `request_uri_method=post` + `direct_post.jwt`. Every check must pass. Then it refuses (`present --refuse`), and the page must report `access_denied` as a failure |
 
-The independent wallet in the suite, `rcbj/oid4vc-wallet`, is PR 2 of #364.
+### The independent wallet
+
+`rcbj/oid4vc-wallet` is built inside the tests image, the way iya-sts's own
+tests image builds it (its #694). The `oid4vc-wallet` stage of
+`tests/Dockerfile` starts from `rust:1.97-bookworm`, which the image mirror
+carries. It downloads the wallet's source at a pinned commit, checks the
+archive's SHA-256, and runs `cargo build --release --locked`. The binary is
+copied to `/opt/oid4vc-wallet/` and named by `OID4VC_WALLET_BIN`. The archive
+URL is listed in `KNOWN_FETCHES` in `tests/image_mirror_coverage.js`. To move
+to a newer wallet, change the commit and the SHA-256 and nothing else.
+
+The job gives the wallet a home of its own for each run, with
+`OID4VC_WALLET_KEY_FILE` in place of a desktop key ring and `SSL_CERT_FILE`
+pointed at the stack's CA bundle. A missing binary fails the job by name; it
+is never skipped. To run the job on a host, set `OID4VC_WALLET_BIN`.

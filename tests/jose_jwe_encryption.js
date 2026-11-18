@@ -46,7 +46,7 @@ var jose = paths.requireSharedModule(
 // Buffer and hash APIs rather than anything the module uses, so that agreement
 // between the two means something.
 // ---------------------------------------------------------------------------
-function independentConcatKdf(z, keyBytes, algId) {
+function independentConcatKdf(z, keyBytes, algId, apu, apv) {
   log.debug("Entering independentConcatKdf().");
   function uint32(n) {
     log.debug("Entering uint32().");
@@ -56,16 +56,22 @@ function independentConcatKdf(z, keyBytes, algId) {
     return b;
   }
   var alg = Buffer.from(algId, "utf8");
-  var input = Buffer.concat([
-    uint32(1), Buffer.from(z),
+  var u = Buffer.from(apu || []);
+  var v = Buffer.from(apv || []);
+  var otherInfo = Buffer.concat([
     uint32(alg.length), alg,
-    uint32(0),
-    uint32(0),
+    uint32(u.length), u,
+    uint32(v.length), v,
     uint32(keyBytes * 8)
   ]);
+  var out = [];
+  for (var round = 1; (round - 1) * 32 < keyBytes; round++) {
+    out.push(nodeCrypto.createHash("sha256")
+      .update(Buffer.concat([uint32(round), Buffer.from(z), otherInfo]))
+      .digest());
+  }
   log.debug("Leaving independentConcatKdf().");
-  return nodeCrypto.createHash("sha256").update(input).digest().subarray(0,
-                               keyBytes);
+  return Buffer.concat(out).subarray(0, keyBytes);
 }
 
 async function keyDerivationMatchesTheRfc() {
@@ -103,6 +109,203 @@ async function keyDerivationMatchesTheRfc() {
   log.info("[kdf] OK — " + cases.length +
            " derivations match, and the inputs demonstrably matter.");
   log.debug("Leaving keyDerivationMatchesTheRfc().");
+}
+
+// ---------------------------------------------------------------------------
+// apu / apv (#472). RFC 7518 section 4.6.2 makes the base64url-decoded "apu"
+// and "apv" header values the PartyUInfo and PartyVInfo of the Concat KDF.
+// The module ignored them, which round-trips against itself perfectly and
+// fails against every implementation that sets them — so both directions are
+// checked against a JWE built and opened by hand with node's own crypto
+// (ECDH, the KDF above, AES key wrap and AES-GCM), sharing no code with it.
+// X25519 is absent because the module implements ECDH-ES on the NIST curves
+// only (CURVE_BITS in jose_jwe.js).
+// ---------------------------------------------------------------------------
+var KW_BYTES = { "ECDH-ES+A128KW": 16, "ECDH-ES+A192KW": 24,
+                 "ECDH-ES+A256KW": 32 };
+var KW_IV = Buffer.from("A6A6A6A6A6A6A6A6", "hex");
+var NODE_CURVES = { "P-256": "prime256v1", "P-384": "secp384r1",
+                    "P-521": "secp521r1" };
+
+// The key the KDF derives from the agreed secret, for either side.
+function independentAgreement(alg, enc, header, privateKey, publicKey) {
+  log.debug("Entering independentAgreement().");
+  var z = nodeCrypto.diffieHellman({ privateKey: privateKey,
+                                     publicKey: publicKey });
+  var apu = header.apu === undefined ? null :
+    Buffer.from(header.apu, "base64url");
+  var apv = header.apv === undefined ? null :
+    Buffer.from(header.apv, "base64url");
+  var direct = alg === "ECDH-ES";
+  var key = independentConcatKdf(z, direct ? 32 : KW_BYTES[alg],
+                                 direct ? enc : alg, apu, apv);
+  log.debug("Leaving independentAgreement().");
+  return key;
+}
+
+// A compact JWE built entirely with node's crypto. enc is always A256GCM.
+function independentEncrypt(alg, crv, recipientPublic, extraHeader,
+                            plaintext) {
+  log.debug("Entering independentEncrypt().");
+  var eph = nodeCrypto.generateKeyPairSync("ec",
+    { namedCurve: NODE_CURVES[crv] });
+  var epk = eph.publicKey.export({ format: "jwk" });
+  var header = Object.assign({ alg: alg, enc: "A256GCM",
+    epk: { kty: "EC", crv: crv, x: epk.x, y: epk.y } }, extraHeader);
+  var derived = independentAgreement(alg, "A256GCM", header, eph.privateKey,
+                                     recipientPublic);
+  var cek = derived;
+  var encryptedKey = Buffer.alloc(0);
+  if (alg !== "ECDH-ES") {
+    cek = nodeCrypto.randomBytes(32);
+    var wrap = nodeCrypto.createCipheriv("id-aes" + (derived.length * 8) +
+        "-wrap", derived, KW_IV);
+    encryptedKey = Buffer.concat([wrap.update(cek), wrap.final()]);
+  }
+  var protectedB64 = Buffer.from(JSON.stringify(header)).toString("base64url");
+  var iv = nodeCrypto.randomBytes(12);
+  var gcm = nodeCrypto.createCipheriv("aes-256-gcm", cek, iv);
+  gcm.setAAD(Buffer.from(protectedB64, "ascii"));
+  var ct = Buffer.concat([gcm.update(plaintext, "utf8"), gcm.final()]);
+  log.debug("Leaving independentEncrypt().");
+  return [protectedB64, encryptedKey.toString("base64url"),
+          iv.toString("base64url"), ct.toString("base64url"),
+          gcm.getAuthTag().toString("base64url")].join(".");
+}
+
+// Open a compact A256GCM JWE with node's crypto alone.
+function independentDecrypt(jwe, recipientPrivate) {
+  log.debug("Entering independentDecrypt().");
+  var parts = jwe.split(".");
+  var header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
+  assert.strictEqual(header.enc, "A256GCM");
+  var epk = nodeCrypto.createPublicKey({ key: header.epk, format: "jwk" });
+  var derived = independentAgreement(header.alg, header.enc, header,
+                                     recipientPrivate, epk);
+  var cek = derived;
+  if (header.alg !== "ECDH-ES") {
+    var unwrap = nodeCrypto.createDecipheriv("id-aes" +
+        (derived.length * 8) + "-wrap", derived, KW_IV);
+    cek = Buffer.concat([unwrap.update(Buffer.from(parts[1], "base64url")),
+                         unwrap.final()]);
+  }
+  var gcm = nodeCrypto.createDecipheriv("aes-256-gcm", cek,
+                                        Buffer.from(parts[2], "base64url"));
+  gcm.setAAD(Buffer.from(parts[0], "ascii"));
+  gcm.setAuthTag(Buffer.from(parts[4], "base64url"));
+  var plain = Buffer.concat([gcm.update(Buffer.from(parts[3], "base64url")),
+                             gcm.final()]).toString("utf8");
+  log.debug("Leaving independentDecrypt().");
+  return plain;
+}
+
+// Replace one member of a compact JWE's protected header, leaving the other
+// four segments as they were.
+function withHeaderMember(jwe, name, value) {
+  log.debug("Entering withHeaderMember().");
+  var parts = jwe.split(".");
+  var header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
+  header[name] = value;
+  log.debug("Leaving withHeaderMember().");
+  return [Buffer.from(JSON.stringify(header)).toString("base64url")]
+    .concat(parts.slice(1)).join(".");
+}
+
+async function apuApvMatchAnIndependentImplementation() {
+  log.debug("Entering apuApvMatchAnIndependentImplementation().");
+  log.info("=== apu / apv in the Concat KDF, against node's own crypto ===");
+  var plaintext = JSON.stringify({ vp_token: { q: ["eyJ.e30.sig~"] } });
+  // What OpenID4VP wallets send: apu a nonce of the wallet's, apv the
+  // verifier's nonce. Arbitrary octets, so a zero and a 0xff are included.
+  var partyHeaders = [
+    ["without apu/apv", {}],
+    ["with apu and apv", {
+      apu: Buffer.from([0, 1, 2, 0xff, 0x41]).toString("base64url"),
+      apv: Buffer.from("verifier-nonce-n-0S6_WzA2Mj").toString("base64url")
+    }],
+    ["with apu only", { apu: Buffer.from("Alice").toString("base64url") }],
+    ["with apv only", { apv: Buffer.from("Bob").toString("base64url") }],
+    ["with empty apu and apv", { apu: "", apv: "" }]
+  ];
+  var algs = ["ECDH-ES", "ECDH-ES+A128KW", "ECDH-ES+A192KW",
+              "ECDH-ES+A256KW"];
+  var checked = 0;
+  for (var crv of Object.keys(NODE_CURVES)) {
+    var recipient = nodeCrypto.generateKeyPairSync("ec",
+      { namedCurve: NODE_CURVES[crv] });
+    var publicJwk = recipient.publicKey.export({ format: "jwk" });
+    var privateJwk = recipient.privateKey.export({ format: "jwk" });
+    for (var alg of algs) {
+      for (var ph of partyHeaders) {
+        var label = alg + " on " + crv + " " + ph[0];
+        // 1. node's JWE, opened by the module.
+        var theirs = independentEncrypt(alg, crv, recipient.publicKey, ph[1],
+                                        plaintext);
+        var opened = await jose.decryptCompact({ jwe: theirs,
+                                                 key: privateJwk });
+        assert.strictEqual(opened.plaintext, plaintext,
+          label + ": the module did not open node's JWE.");
+        // 2. the module's JWE, apu/apv placed by the caller, opened by node.
+        var mine = await jose.encryptCompact({ alg: alg, enc: "A256GCM",
+          plaintext: plaintext, key: publicJwk, header: ph[1] });
+        assert.strictEqual(mine.header.apu, ph[1].apu,
+          label + ": apu must be carried as given, never invented.");
+        assert.strictEqual(mine.header.apv, ph[1].apv,
+          label + ": apv must be carried as given, never invented.");
+        assert.strictEqual(independentDecrypt(mine.jwe, recipient.privateKey),
+          plaintext, label + ": node could not open the module's JWE.");
+        // 3. an apu altered after encryption must not open.
+        var altered = withHeaderMember(theirs, "apu",
+          Buffer.from("Mallory").toString("base64url"));
+        await assert.rejects(
+          jose.decryptCompact({ jwe: altered, key: privateJwk }),
+          label + ": a JWE whose apu was altered must not decrypt.");
+        checked++;
+      }
+    }
+  }
+
+  // The KDF on its own, since a header edit also breaks the AAD and so cannot
+  // show by itself that apu reached the derivation.
+  var z = nodeCrypto.randomBytes(32);
+  var withApu = Buffer.from(await jose.concatKdf(z, 32, "A256GCM",
+    new Uint8Array([1, 2, 3]), new Uint8Array(0)));
+  var plain = Buffer.from(await jose.concatKdf(z, 32, "A256GCM"));
+  assert.ok(!withApu.equals(plain), "apu must change the derived key.");
+  assert.ok(withApu.equals(independentConcatKdf(z, 32, "A256GCM",
+    [1, 2, 3], null)), "the module's KDF with apu disagrees with RFC 7518.");
+  var withApv = Buffer.from(await jose.concatKdf(z, 32, "A256GCM",
+    null, new Uint8Array([1, 2, 3])));
+  assert.ok(!withApv.equals(withApu),
+    "apu and apv must occupy different fields of OtherInfo.");
+  // Multi-round output (A256CBC-HS512 needs 64 octets) with apu and apv.
+  var long = Buffer.from(await jose.concatKdf(z, 64, "A256CBC-HS512",
+    new Uint8Array([9]), new Uint8Array([8, 7])));
+  assert.ok(long.equals(independentConcatKdf(z, 64, "A256CBC-HS512",
+    [9], [8, 7])), "a two-round derivation with apu/apv disagrees.");
+
+  // apu/apv that are not base64url are refused by name, both ways.
+  var bad = nodeCrypto.generateKeyPairSync("ec",
+    { namedCurve: "prime256v1" });
+  for (var value of ["not base64url!", "abc+/", "a", 42]) {
+    await assert.rejects(
+      jose.encryptCompact({ alg: "ECDH-ES", enc: "A256GCM", plaintext: "x",
+        key: bad.publicKey.export({ format: "jwk" }),
+        header: { apu: value } }),
+      /"apu" header parameter must be a base64url string/,
+      "an apu of " + JSON.stringify(value) + " should be refused by name.");
+  }
+  var good = independentEncrypt("ECDH-ES", "P-256", bad.publicKey,
+    { apv: "AAAA" }, "x");
+  await assert.rejects(
+    jose.decryptCompact({ jwe: withHeaderMember(good, "apv", "AA=="),
+      key: bad.privateKey.export({ format: "jwk" }) }),
+    /"apv" header parameter must be a base64url string/,
+    "a padded apv is base64, not base64url, and should be refused by name.");
+
+  log.info("[apu/apv] OK — " + checked + " cases interoperate with node's " +
+           "crypto in both directions, and an altered apu does not open.");
+  log.debug("Leaving apuApvMatchAnIndependentImplementation().");
 }
 
 async function everyAlgorithmRoundTrips() {
@@ -558,6 +761,7 @@ async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. Testing client/src/jose_jwe.js directly.");
   await keyDerivationMatchesTheRfc();
+  await apuApvMatchAnIndependentImplementation();
   await everyAlgorithmRoundTrips();
   await cbcHmacMatchesTheRfcVector();
   await theJavaScriptAesPathMatchesWebCrypto();

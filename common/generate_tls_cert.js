@@ -161,6 +161,15 @@ if (RUNNING_AS_SCRIPT) {
 // The project's own authoring modules. Required by path rather than through
 // tests/module_paths.js, which is the TEST suite's resolver and is not
 // reachable from a launcher.
+//
+// They require the pure-JS engines as siblings (`./pqc`), and those live in
+// common/crypto/ since #463 — the browser build stages them into client/src,
+// a node process does not. crypto_resolve.js closes that gap; it sits beside
+// this file in a checkout and in /usr/src/common in the tests image, where
+// this file is copied flat into /usr/src/app.
+require(fs.existsSync(path.join(__dirname, 'crypto_resolve.js'))
+  ? './crypto_resolve.js'
+  : '../common/crypto_resolve.js').install();
 const keys = require('../client/src/key_material.js');
 const x509 = require('../client/src/x509.js');
 

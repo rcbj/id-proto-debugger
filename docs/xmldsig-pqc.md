@@ -54,9 +54,9 @@ and a second copy is a copy that disagrees.
 
 | Draft § | Identifiers | Spec | Engine |
 |---|---|---|---|
-| 3.3.15 | `ml-dsa-44`, `-65`, `-87` | FIPS 204 | `client/src/pqc.js` |
-| 3.3.16 | `slh-dsa-{sha2,shake}-{128,192,256}{s,f}` — twelve | FIPS 205 | `client/src/pqc.js` |
-| 3.3.14 | `hss-lms` | RFC 8554 | `client/src/hbs.js` |
+| 3.3.15 | `ml-dsa-44`, `-65`, `-87` | FIPS 204 | `common/crypto/pqc.js` |
+| 3.3.16 | `slh-dsa-{sha2,shake}-{128,192,256}{s,f}` — twelve | FIPS 205 | `common/crypto/pqc.js` |
+| 3.3.14 | `hss-lms` | RFC 8554 | `common/crypto/hbs.js` |
 
 **The cryptography is not in `xmldsig.js` and that is the pre-existing rule
 rather than a new decision.** That file implements RSA and takes everything else
