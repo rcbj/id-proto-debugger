@@ -4146,6 +4146,16 @@ function buildJobs() {
       script: "ldp_vc_whole_presentation.js",
       env: {},
     });
+    // JPT and SD-CWT through the presentation pages (#478, drafts): the
+    // JPA-15 SU-ES256 example, a BBS JPT signed by Digital Bazaar and the
+    // SD-CWT-09 example, each presentation checked by node's crypto,
+    // Digital Bazaar's verifyProof and @auth0/cose. Needs only the client.
+    jobs.push({
+      name: "VC Presentation — JPT (SU-ES256, BBS) and SD-CWT, verified by " +
+          "node crypto, Digital Bazaar and @auth0/cose",
+      script: "jwp_sd_cwt_presentation.js",
+      env: {},
+    });
     // W3C VC-JOSE-COSE through the presentation pages (#477): a vc+jwt
     // (jose) and a vc+cose (@auth0/cose) enveloped in the holder's vp+jwt,
     // and a vc+sd-jwt (@sd-jwt/core) presented as one Disclosure and a Key

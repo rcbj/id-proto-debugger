@@ -26,6 +26,10 @@ var didLib = require("./did");
 var dataIntegrity = require("./data_integrity_rdfc");
 // A VC-JOSE-COSE credential's issuer signature (#477).
 var vcJoseCose = require("./vc_jose_cose");
+// JPT and SD-CWT, both drafts (#478).
+var jwpLib = require("./jwp");
+var sdCwt = require("./sd_cwt");
+var sdJwtVp = require("./sd_jwt_vp");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_3',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -323,6 +327,11 @@ function verify() {
     log.debug("Leaving verify(). " + parsed.format);
     return verifyJoseCose();
   }
+  if (parsed.format === sdJwtVc.FORMAT_JPT ||
+      parsed.format === sdJwtVc.FORMAT_SD_CWT) {
+    log.debug("Leaving verify(). " + parsed.format);
+    return verifyJptSdCwt();
+  }
   var checks = [];
   var payload = parsed.payload || {};
   var header = parsed.header || {};
@@ -561,6 +570,69 @@ function verifyJoseCose() {
            "signature: " + e.message, "vc-bad");
   });
   log.debug("Leaving verifyJoseCose().");
+  return false;
+}
+
+// A JPT or an SD-CWT as issued (#478): the holder's confirm interaction,
+// with the issuer key resolved from the kid (a DID URL) or iss.
+function verifyJptSdCwt() {
+  log.debug("Entering verifyJptSdCwt().");
+  var isJpt = parsed.format === sdJwtVc.FORMAT_JPT;
+  var bound = sdJwtVc.boundHolderJwk(parsed);
+  var checks = [{
+    name: "Format", ok: true,
+    detail: isJpt ? "JSON Proof Token, " + parsed.header.alg + " (" +
+      jwpLib.DRAFT + ", a DRAFT): " + parsed.disclosures.length +
+      " payload slot(s), each one claim." :
+      "SD-CWT (" + sdCwt.DRAFT + ", a DRAFT): " +
+      parsed.disclosures.length + " redacted claim(s) the holder may " +
+      "disclose, signed " + parsed.header.alg + "."
+  }, {
+    name: "Holder binding",
+    ok: !!bound || (isJpt && parsed.header.alg === "BBS"),
+    detail: bound ? "bound to a " + bound.kty + " " + (bound.crv || "") +
+      " key" + (holderKeyMatches(bound) ? " — the holder key generated " +
+      "in step 2." : " that is NOT the holder key generated in step 2.") :
+      isJpt && parsed.header.alg === "BBS" ? "BBS needs no holder key: " +
+      "the presentation proof itself is the binding." :
+      "no holder key is named."
+  }];
+  renderChecks(checks);
+  var kid;
+  var iss;
+  if (isJpt) {
+    kid = parsed.header.kid;
+    iss = parsed.header.iss;
+  } else {
+    var prot = parsed.sdCwt.parsed.sdCwt.protected;
+    var k = prot.get(sdCwt.HEADER.kid);
+    kid = k instanceof Uint8Array ? new TextDecoder().decode(k) : k;
+    iss = parsed.payload.iss;
+  }
+  status("vc_credential_status", "Resolving the issuer's key …",
+         "vc-pending");
+  sdJwtVp.issuerKeyFor(kid, iss).then(function (key) {
+    if (!key) {
+      checks.push({ name: "Issuer signature", ok: false, detail: "the " +
+        "issuer's key (" + (kid || iss || "none named") + ") could not be " +
+        "resolved, so the signature was not checked." });
+      renderChecks(checks);
+      status("vc_credential_status", "The issuer's key could not be " +
+             "resolved.", "vc-bad");
+      return;
+    }
+    var r = isJpt ? jwpLib.confirm(parsed.serialized, { issuerKey: key }) :
+      sdCwt.confirm(parsed.serialized, { issuerKey: key });
+    checks.push({ name: "Issuer proof", ok: r.valid, detail: r.valid ?
+      "the issuer's proof over every " + (isJpt ? "payload" :
+      "claim and disclosure") + " verifies." : r.errors.join(" ") });
+    renderChecks(checks);
+    status("vc_credential_status", r.valid ?
+           "The credential's issuer proof is valid." :
+           "The credential's issuer proof is INVALID.",
+           r.valid ? "vc-ok" : "vc-bad");
+  });
+  log.debug("Leaving verifyJptSdCwt().");
   return false;
 }
 

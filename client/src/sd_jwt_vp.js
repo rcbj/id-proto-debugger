@@ -56,6 +56,9 @@ var vcFormats = require("./vc_formats");
 // W3C VC-JOSE-COSE presentations (#477).
 var vcJoseCose = require("./vc_jose_cose");
 var bytes = require("./crypto_bytes");
+// JPT and SD-CWT presentations (#478).
+var jwpLib = require("./jwp");
+var sdCwt = require("./sd_cwt");
 
 var KEYS = {
   // Which way the presentation is being started (see USE_CASES).
@@ -537,7 +540,8 @@ function claimNameForPath(path, format) {
   // its own (org.iso.18013.5.1), so the dotted form cannot be split on its
   // first one: the element is the LAST segment. ISO/IEC 18013-5 element
   // identifiers are snake_case and carry no dot.
-  if (format === sdJwtVc.FORMAT_MSO_MDOC && parts.length > 1) {
+  if ((format === sdJwtVc.FORMAT_MSO_MDOC ||
+       format === sdJwtVc.FORMAT_SD_CWT) && parts.length > 1) {
     parts = parts.slice(-1);
   }
   log.debug("Leaving claimNameForPath().");
@@ -797,6 +801,14 @@ function buildPresentationFor(opts) {
       return Promise.reject(e);
     }
   }
+  if (format === sdJwtVc.FORMAT_JPT) {
+    log.debug("Leaving buildPresentationFor(). jpt.");
+    return presentJpt(opts);
+  }
+  if (format === sdJwtVc.FORMAT_SD_CWT) {
+    log.debug("Leaving buildPresentationFor(). sd-cwt.");
+    return presentSdCwt(opts);
+  }
   // A W3C vc+sd-jwt is an SD-JWT on the wire: selected Disclosures and a
   // Key Binding JWT, exactly as a dc+sd-jwt.
   if (format !== sdJwtVc.FORMAT_JWT_VC_JSON) {
@@ -816,6 +828,71 @@ function buildPresentationFor(opts) {
     return { presentation: vp.jwt, prefix: "", sdHash: "", kb: null, vp: vp,
              format: sdJwtVc.FORMAT_JWT_VC_JSON };
   });
+}
+
+// The issuer's key for a JWP or SD-CWT credential: its kid as a DID URL (or
+// a URL), else its iss, through the resolver VC-JOSE-COSE uses.
+function issuerKeyFor(kid, iss) {
+  log.debug("Entering issuerKeyFor().");
+  var vm = vcJoseCose.verificationMethodFor(kid, iss);
+  if (!vm) {
+    log.debug("Leaving issuerKeyFor(). Nothing to resolve.");
+    return Promise.resolve(null);
+  }
+  log.debug("Leaving issuerKeyFor(). " + vm.slice(0, 60));
+  return vcJoseCose.defaultResolveKey()(vm).catch(function (e) {
+    log.debug("issuerKeyFor(): " + e.message);
+    return null;
+  });
+}
+
+// A JPT presented (draft-ietf-jose-json-proof-algorithms-15): the selected
+// payload slots, a Presentation Header carrying the Verifier's Client
+// Identifier as aud and the request's nonce, and the algorithm's proof —
+// the holder's signature for SU and MAC, ProofGen for BBS (which needs the
+// issuer's public key, resolved from the Issuer Header's kid).
+function presentJpt(opts) {
+  log.debug("Entering presentJpt().");
+  var jwp = jwpLib.parse(opts.credential);
+  var h = jwp.issuerHeader.value;
+  var header = {};
+  if (opts.aud !== undefined) header.aud = opts.aud;
+  if (opts.nonce !== undefined) header.nonce = opts.nonce;
+  var disclose = (opts.selected || []).map(Number);
+  var keyed = h.alg === "BBS" ? issuerKeyFor(h.kid, h.iss) :
+    Promise.resolve(null);
+  log.debug("Leaving presentJpt().");
+  return keyed.then(function (issuerKey) {
+    if (h.alg === "BBS" && !issuerKey) {
+      throw new Error("a BBS presentation needs the issuer's public key, " +
+                      "and the Issuer Header's kid (" + h.kid + ") did not " +
+                      "resolve to one.");
+    }
+    var presented = jwpLib.present(jwp, { disclose: disclose, header: header,
+      holderKey: opts.holderPrivateJwk, issuerKey: issuerKey });
+    return { presentation: presented, prefix: "", sdHash: "", kb: null,
+             vp: null, format: sdJwtVc.FORMAT_JPT };
+  });
+}
+
+// An SD-CWT presented (draft-ietf-spice-sd-cwt-09 section 8.1): a Key
+// Binding Token by the cnf key, carrying the SD-CWT with only the chosen
+// disclosures, aud the Verifier's Client Identifier, cnonce the request's
+// nonce and iat now. Sent as base64url.
+function presentSdCwt(opts) {
+  log.debug("Entering presentSdCwt().");
+  try {
+    var kbt = sdCwt.present(opts.credential, {
+      disclose: opts.selected || [], holderKey: opts.holderPrivateJwk,
+      aud: opts.aud, cnonce: opts.nonce });
+    log.debug("Leaving presentSdCwt().");
+    return Promise.resolve({ presentation: bytes.bytesToB64u(kbt),
+      prefix: "", sdHash: "", kb: null, vp: null,
+      format: sdJwtVc.FORMAT_SD_CWT });
+  } catch (e) {
+    log.debug("Leaving presentSdCwt(). " + e.message);
+    return Promise.reject(e);
+  }
 }
 
 // The vp_token: a JSON object keyed by the DCQL credential query id, each value
@@ -851,6 +928,34 @@ function presentedClaims(presentation) {
     log.debug("Leaving presentedClaims(). jwt_vc_json, " +
               Object.keys(inner.claims).length + " claim(s).");
     return { parsed: inner, claims: inner.claims, outer: outer };
+  }
+  // A presented JPT: the claims of the disclosed slots.
+  if (jwpLib.looksLikeJwp(presentation)) {
+    var jp = jwpLib.parse(presentation);
+    var jclaims = {};
+    try {
+      jclaims = jwpLib.claimsOf(jp);
+    } catch (e) {
+      log.debug("presentedClaims(): " + e.message);
+    }
+    log.debug("Leaving presentedClaims(). jpt.");
+    return { parsed: { format: sdJwtVc.FORMAT_JPT, jwp: jp,
+                       disclosures: Object.keys(jclaims) },
+             claims: jclaims, jpt: jp };
+  }
+  // A KBT around an SD-CWT: the claims its disclosures restore.
+  if (String(presentation).indexOf(".") === -1 &&
+      sdCwt.looksLikeSdCwt(presentation)) {
+    var kv = sdCwt.verify(presentation, {});
+    var plain = sdCwt.toPlainClaims(kv.claims || new Map());
+    ["iss", "sub", "aud", "exp", "nbf", "iat", "cti", "cnf",
+     "cnonce"].forEach(function (k) {
+      delete plain[k];
+    });
+    log.debug("Leaving presentedClaims(). sd-cwt.");
+    return { parsed: { format: sdJwtVc.FORMAT_SD_CWT,
+                       disclosures: kv.disclosed || [] },
+             claims: plain, sdCwt: kv };
   }
   // A vp+jwt enveloping a VC-JOSE-COSE credential: read the credential out
   // of the envelope, as the Verifier will.
@@ -901,6 +1006,7 @@ module.exports = {
   apiBase: apiBase,
   viaApi: viaApi,
   verifierFetch: verifierFetch,
+  issuerKeyFor: issuerKeyFor,
   apiRouteAvailable: apiRouteAvailable,
   storeRequest: storeRequest,
   storedRequest: storedRequest,

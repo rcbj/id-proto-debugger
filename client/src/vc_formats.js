@@ -167,6 +167,30 @@ var FORMATS = {
     holderBinding: "an EnvelopedVerifiableCredential inside a vp+jwt the " +
       "holder signs", selective: false, typeMember: "type"
   },
+  // JSON Proof Token and SD-CWT (#478), both DRAFTS. Neither OpenID4VCI 1.0
+  // nor OpenID4VP 1.0 names a format identifier for them; the media types'
+  // names are used.
+  "jpt": {
+    name: "JSON Proof Token (draft-ietf-jose-json-proof-token-15, DRAFT)",
+    spec: "draft-ietf-jose-json-web-proof-15, -json-proof-algorithms-15",
+    signingAlgs: ["SU-ES256", "SU-ES384", "SU-ES512", "MAC-H256",
+                  "MAC-H384", "MAC-H512", "MAC-H256K", "BBS"],
+    defaultSigningAlgs: ["SU-ES256"],
+    bindingMethods: ["jwk"], defaultBinding: "jwk", proofTypes: ["jwt"],
+    holderBinding: "the holder's signature by the Issuer Header's hpk " +
+      "(SU, MAC), or the BBS presentation proof itself",
+    selective: true, typeMember: null
+  },
+  "sd-cwt": {
+    name: "SD-CWT (draft-ietf-spice-sd-cwt-09, DRAFT)",
+    spec: "draft-ietf-spice-sd-cwt-09",
+    // Section 6.1: a fully-specified algorithm (RFC 9864).
+    signingAlgs: [-9, -51, -52, -19, -53, -47], defaultSigningAlgs: [-9],
+    bindingMethods: ["cose_key"], defaultBinding: "cose_key",
+    proofTypes: ["cwt"],
+    holderBinding: "a Key Binding Token by the cnf key", selective: true,
+    typeMember: null
+  },
   "mso_mdoc": {
     name: "ISO/IEC 18013-5 mdoc", spec: "OpenID4VCI 1.0 Appendix A.2",
     signingAlgs: COSE_ALGS, defaultSigningAlgs: [-7],
@@ -429,6 +453,9 @@ function vpFormatsSupported() {
     "vc+jwt": { alg_values: jose },
     "vc+sd-jwt": { "sd-jwt_alg_values": jose, "kb-jwt_alg_values": jose },
     "vc+cose": { alg_values: COSE_ALGS.slice() },
+    "jpt": { alg_values: ["SU-ES256", "SU-ES384", "SU-ES512", "MAC-H256",
+                          "MAC-H384", "MAC-H512", "MAC-H256K", "BBS"] },
+    "sd-cwt": { alg_values: [-9, -51, -52, -19, -53, -47] },
     "ldp_vc": { proof_type_values: ldpTypes, cryptosuite_values: ldpDi },
     "mso_mdoc": { issuerauth_alg_values: COSE_ALGS.slice(),
                   deviceauth_alg_values: COSE_ALGS.slice() }

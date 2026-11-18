@@ -532,6 +532,14 @@ function renderRequest() {
         held.parsed.ldpSuite + " proof, so no holder key is needed: " +
       "the derived proof itself is what proves the holder made this presentation.";
   }
+  // A BBS JPT likewise: JPA section 7.3.2 needs no holder key, the
+  // presentation proof being the binding (#478).
+  else if (held.parsed && held.parsed.format === sdJwtVc.FORMAT_JPT &&
+           (held.parsed.header || {}).alg === "BBS") {
+    holderKeyAdvisory = "This credential is a BBS JSON Proof Token, so no " +
+      "holder key is needed: the presentation proof itself binds it to " +
+      "this request.";
+  }
   else if (!sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK)) {
     if (sdJwtVc.holderPrivateKeyMayBeStored()) {
       // Saving is on and it is still absent: the key was never generated in
