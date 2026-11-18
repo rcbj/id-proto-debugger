@@ -34,6 +34,11 @@ var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 var bbs2023 = require("./bbs2023");
+// RDFC-1.0 for the holder's VP proof when the Verifier accepts only an RDFC
+// suite or a legacy proof type (#475); loading it registers the
+// canonicalizer with data_integrity.js, which vp_protocols.js signs through.
+require("./data_integrity_rdfc");
+var vcFormats = require("./vc_formats");
 var didLib = require("./did");
 var vpProtocols = require("./vp_protocols");
 var cbor = require("./cbor");
@@ -157,7 +162,8 @@ function loadState() {
   // something the verifier cannot read.
   state.formatMismatch = !!(state.requestedFormat && state.heldFormat &&
                             state.requestedFormat !== state.heldFormat);
-  state.selectable = state.format !== sdJwtVc.FORMAT_JWT_VC_JSON;
+  state.selectable = state.format !== sdJwtVc.FORMAT_JWT_VC_JSON &&
+      !ldpWhole();
   // SIOPv2: whether an ID Token is asked for, and whether it is ALL that is.
   state.wantsIdToken = vpProtocols.asksForIdToken(params);
   state.idTokenOnly = state.wantsIdToken && !vpProtocols.asksForVpToken(params);
@@ -178,6 +184,17 @@ function loadState() {
   });
   log.debug("Leaving loadState(). " + state.rows.length + " Disclosure(s), " +
             state.requested.length + " requested.");
+}
+
+// An ldp_vc whose proof is NOT selective (eddsa-rdfc-2022, ecdsa-jcs-2019,
+// Ed25519Signature2020, ...): presented whole inside the holder's VP, the way
+// a jwt_vc_json is, rather than derived from as a bbs-2023 one is (#475).
+function ldpWhole() {
+  log.debug("Entering ldpWhole().");
+  var whole = state.format === sdJwtVc.FORMAT_LDP_VC && !!state.parsed &&
+    state.parsed.format === sdJwtVc.FORMAT_LDP_VC && !state.parsed.ldpSelective;
+  log.debug("Leaving ldpWhole(). " + whole);
+  return whole;
 }
 
 function selectedEncoded() {
@@ -313,7 +330,7 @@ function renderDisclosureTable() {
   // With no Disclosures the table would render as an empty box, which reads as
   // a credential that carries nothing. Show what will actually be sent instead,
   // and say why none of it can be withheld.
-  if (state.format === sdJwtVc.FORMAT_LDP_VC) {
+  if (state.format === sdJwtVc.FORMAT_LDP_VC && !ldpWhole()) {
     var stmts = state.rows || [];
     setHtml("vp_disclosures_table",
       "<thead><tr><th style='width:6%'>Send</th><th " +
@@ -372,14 +389,16 @@ function renderDisclosureTable() {
           }).join("")
         : "<tr><td colspan='3'>This credential carries no claims.</td></tr>") +
       "</tbody>");
+    var what = ldpWhole() ? "ldp_vc secured with " +
+        esc(state.parsed.ldpSuite) : "jwt_vc_json";
     setHtml("vp_selection_summary",
-      '<span class="vc-status vc-pending">This credential is jwt_vc_json, ' +
-          'which has no selective ' +
+      '<span class="vc-status vc-pending">This credential is ' + what +
+          ', which has no selective ' +
       'disclosure: all ' + names.length +
           ' claim(s) above are sent, including any this verifier did not ' +
       'ask for. Withholding one would mean asking the issuer for a different ' +
           'credential.</span>');
-    log.debug("Leaving renderDisclosures(). jwt_vc_json — " + names.length +
+    log.debug("Leaving renderDisclosures(). " + what + " — " + names.length +
               " claim(s), none selectable.");
     log.debug("Leaving renderDisclosureTable().");
     return;
@@ -488,6 +507,25 @@ function buildPresentation() {
               state.requestedFormat +
               ", holding " + state.heldFormat + ".");
     return Promise.resolve(false);
+  }
+  if (ldpWhole()) {
+    // The whole credential, exactly as the issuer signed it: its proof covers
+    // every statement, so nothing can be left out without breaking it. The
+    // holder's VP around it is added by finishResponse().
+    var doc = state.parsed.document;
+    state.built = { presentation: JSON.stringify(doc), vpElement: doc,
+                    format: sdJwtVc.FORMAT_LDP_VC };
+    setValue("vp_presentation", state.built.presentation);
+    setText("vp_sd_hash", "");
+    setValue("vp_kb_jwt", "");
+    setJson("vp_kb_header", null);
+    setJson("vp_kb_payload", null);
+    setJson("vp_presented_claims", state.parsed.claims);
+    status("vp_present_status", "The whole " + state.parsed.ldpSuite +
+           " credential goes, inside the holder's Verifiable Presentation.",
+           "vc-ok");
+    log.debug("Leaving buildPresentation(). ldp_vc, whole.");
+    return finishResponse();
   }
   if (state.format === sdJwtVc.FORMAT_LDP_VC) {
     // No holder private key is needed: the BBS derived proof IS the holder's
@@ -699,7 +737,10 @@ function wrapLdpForHolder() {
     holder: holder,
     privateJwk: key.jwk,
     nonce: params.nonce,
-    aud: params.client_id
+    aud: params.client_id,
+    // The suite is the one this key signs that the Verifier said it accepts
+    // (vc_formats.holderSuiteFor()), so nobody has to pick a valid pair.
+    accepts: verifierLdpAccepts()
   }).then(function (vp) {
     state.built.envelope = state.built.vpElement;
     state.built.vpElement = vp;
@@ -708,7 +749,23 @@ function wrapLdpForHolder() {
     setJson("vp_kb_header", vp.proof);
     log.debug("Leaving wrapLdpForHolder(). Wrapped.");
     return true;
+  }).catch(function (e) {
+    status("vp_present_status", "Could not sign the holder's Verifiable " +
+           "Presentation: " + e.message, "vc-bad");
+    log.debug("Leaving wrapLdpForHolder(). " + e.message);
+    return false;
   });
+}
+
+// What the Verifier said it accepts for ldp_vc: client_metadata's
+// vp_formats_supported (OpenID4VP 1.0 section 11.1), which may name
+// cryptosuite_values and proof_type_values. Empty when it said nothing.
+function verifierLdpAccepts() {
+  log.debug("Entering verifierLdpAccepts().");
+  var meta = (state.request && state.request.clientMetadata) || {};
+  var formats = meta.vp_formats_supported || meta.vp_formats || {};
+  log.debug("Leaving verifierLdpAccepts().");
+  return formats[sdJwtVc.FORMAT_LDP_VC] || {};
 }
 
 // The pairwise key for this Verifier: made the first time, then reused so the
@@ -1042,7 +1099,7 @@ function recordSent(response) {
       enc: r.encryption.enc, kid: r.encryption.key.kid || "",
       plaintext: r.encryption.plaintext, jwe: r.encryption.jwe } : null,
     holderBinding: built.envelope ? "VerifiablePresentation, " +
-      ((built.vpElement || {}).proof || {}).cryptosuite : "",
+      vcFormats.ldpSuiteOf((built.vpElement || {}).proof) : "",
     sentAt: new Date().toISOString(),
     responseUri: r.delivery ? r.delivery.target : "",
     // The public key the answer was encrypted to: an mdoc's device signature
@@ -1456,7 +1513,7 @@ function onload() {
   // ldp_vc needs its canonical statements before anything can be selected or
   // derived, and that is async. The issuer's BBS key is fetched from the
   // credential's own verificationMethod — the credential says where its key is.
-  if (state.format === sdJwtVc.FORMAT_LDP_VC) {
+  if (state.format === sdJwtVc.FORMAT_LDP_VC && !ldpWhole()) {
     var vm = ((state.parsed.document || {}).proof || {}).verificationMethod ||
         "";
     // Resolved rather than fetched, because a verificationMethod is not always

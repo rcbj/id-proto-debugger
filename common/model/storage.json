@@ -3651,7 +3651,7 @@
     {
       "key": "vc_jsonld_contexts",
       "class": "ordinary",
-      "group": "client/src/bbs2023.js"
+      "group": "client/src/jsonld_contexts.js"
     },
     {
       "key": "vci_authorization_servers",

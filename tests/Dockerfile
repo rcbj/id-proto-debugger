@@ -388,7 +388,10 @@ COPY tests/bbs_vectors.json ./
 # so the STS's is renamed on the way in; the test resolves either layout.
 # client/src/bbs2023.js does require("./contexts/..."), so the vendored JSON-LD
 # contexts come too: canonicalization must never depend on fetching one.
-COPY client/src/bbs2023.js ./
+# bbs2023.js takes its contexts and offline loader from jsonld_contexts.js
+# (#475), which every Data Integrity cryptosuite shares; without it beside
+# the flat copy, bbs2023.js is a MODULE_NOT_FOUND at require.
+COPY client/src/bbs2023.js client/src/jsonld_contexts.js ./
 # (iya-sts's copy is NOT flattened here any more. It was, as ./sts_bbs2023.js,
 # on the grounds that it had no relative requires; since iya-sts v1.0.0 it
 # reads its JSON-LD contexts from ./contexts beside itself, which a flat copy
@@ -412,6 +415,11 @@ COPY client/src/vci_wallet.js client/src/sd_jwt_vc.js ./
 # requires (cbor, cose, crypto_bytes, dpop, jws, jose_jwe, did,
 # metadata_client) is already copied flat elsewhere in this file.
 COPY client/src/mdoc.js client/src/vp_protocols.js ./
+# What those now require (#475): sd_jwt_vc.js, vci_metadata.js and
+# vp_protocols.js read the format table, and vp_protocols.js signs the
+# holder's VP through data_integrity.js; data_integrity_rdfc.js is what
+# registers RDFC-1.0 with it.
+COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js ./
 # The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
 # and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
 # directory is flat and the last COPY wins, so a test of that name would
@@ -426,6 +434,13 @@ COPY tests/vc_presentation_protocols.js tests/vp_protocols_engine.js ./
 # from /usr/src/source-tree); it also requires mdoc_test_issuer.js, copied
 # below.
 COPY tests/vp_verifier_engine.js ./
+# The Data Integrity and Linked Data proof engine (client/src/
+# data_integrity.js, read from /usr/src/source-tree), held to Digital
+# Bazaar's and Blockcerts' released implementations and to jose (#475).
+# And tests/client_module_bindings.js: every name the browser bundles use is
+# bound (client/src and the staged common/ modules, read from
+# /usr/src/source-tree).
+COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./
