@@ -12,6 +12,7 @@
     "devDependencies": "Build-only tools: the bundler, its transform, and the three minifiers. They are separated from dependencies because they are not part of anything that runs or ships to a browser, and because browserify carries elliptic (GHSA-848j-6mx2-7j84, for which no patched version exists) through crypto-browserify. Nothing bundled requires elliptic any more — tests/jwk_pem.js is what holds that — so the advisory now describes a build tool only, and `npm audit --omit=dev` says so. Both images install with plain `npm ci`, which includes these, so the build is unaffected."
   },
   "dependencies": {
+    "@cfworker/json-schema": "4.1.6",
     "@noble/curves": "1.4.0",
     "@noble/curves-v1.9": "npm:@noble/curves@1.9.7",
     "@noble/hashes": "1.4.0",

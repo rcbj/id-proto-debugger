@@ -3989,6 +3989,17 @@ function buildJobs() {
     env: {},
   });
 
+  // ACDC against keri-ts 2.2.9 and cesr-ts 2.2.1 (#480): CESR version 2
+  // KELs, weighted thresholds, delegation, witness receipts, credentials
+  // (no-backer and backer registries, chains), IPEX and v2 ACDC messages,
+  // both ways, in memory. No services.
+  jobs.push({
+    name: "ACDC (CESR v2, thresholds, delegation, witnesses, chains and " +
+        "IPEX, both ways with keri-ts and cesr-ts, in node)",
+    script: "acdc_keri_ts.js",
+    env: {},
+  });
+
   // SD-CWT (draft-ietf-spice-sd-cwt-09; #478): the working group's encoded
   // examples (issued, nested, decoys, both KBTs), our issuance and KBTs
   // checked by @auth0/cose and node's SHA-256, and what must fail.
