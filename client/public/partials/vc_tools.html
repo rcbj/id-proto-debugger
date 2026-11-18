@@ -5,10 +5,16 @@
 
      Its fieldset is `vc_tools_fieldset`, which each page adds to its own
      collapse-all list so the toggle at the top covers this pane too.
+
+     It ships COLLAPSED (the fieldset is display:none), because it belongs to
+     no step of any workflow and should not push a page's own panes down on
+     load. The legend toggles it open, and the pages' collapse-all/expand-all
+     control sets its display like every other pane's — so the default is the
+     only thing this changes.
 ================================================================= -->
 <div class="step0 dbg-pane" id="pane_vc_tools">
   <legend class="dbg-legend" id="vc_tools_expand_button" onclick="var fs=document.getElementById('vc_tools_fieldset'); if (fs) fs.style.display = (fs.style.display === 'none') ? 'block' : 'none'; return false;">VC Tools</legend>
-  <fieldset name="vc_tools_fieldset" id="vc_tools_fieldset" style="display: block;">
+  <fieldset name="vc_tools_fieldset" id="vc_tools_fieldset" style="display: none;">
     <p class="vc-note">Tools that are useful at any point in these workflows, and belong to none of their
     steps.</p>
     <table border="0">
