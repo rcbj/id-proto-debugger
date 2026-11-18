@@ -26,12 +26,9 @@
 //    that no element was injected AND that the payload is visible as text (a
 //    payload silently dropped would also pass the first check and would be a
 //    different bug).
-//  * **Decryption in the browser.** The crypto runs on Web Crypto here rather
-//    than on node's, which is a different implementation of the same code path.
-//    An AS-REP is decrypted from a password and a salt, in the browser.
-//  * **The secure-context refusal is honest.** Web Crypto does not exist on a
-//    plain-http non-localhost origin, so the page says decryption is unavailable
-//    instead of letting it fail with something that names AES.
+//  * **Decryption in the browser.** An AS-REP is decrypted from a password and
+//    a salt, in the browser, on crypto_provider.js (pure JS since #463), and
+//    the page carries no secure-context warning, because it needs none.
 //
 // It needs no services: the page talks to no KDC and has no back end, which is
 // the whole reason it can ship to the static deployments. It needs only the site.
@@ -241,24 +238,16 @@ async function renderesHostileValuesAsTextAndNotAsMarkup(driver) {
 }
 
 // ---------------------------------------------------------------------------
-// Decryption, in the browser, on Web Crypto.
+// Decryption, in the browser, in pure JS.
 // ---------------------------------------------------------------------------
 async function decryptsAnAsRepFromAPasswordAndSalt(driver) {
   log.debug("Entering decryptsAnAsRepFromAPasswordAndSalt().");
-  const secure = await driver.executeScript("return !!(window.crypto && " +
-      "window.crypto.subtle);");
-  if (!secure) {
-    // Not a skip to be quiet about: the page's own note must say so, and that
-    // is the assertion. An environment without Web Crypto is a capability
-    // limit, not a defect, but a page that failed silently in it would be.
-    const note = await driver.findElement(By.id("krb_crypto_note")).getText();
-    assert.ok(/not in a secure context/.test(note),
-      "without Web Crypto the page must SAY decryption is unavailable, got: " +
-          JSON.stringify(note));
-    log.info("Web Crypto is unavailable on this origin; the page says so, " +
-        "which is what matters here.");
-    return;
-  }
+  // No secure-context branch since #463: decryption is pure JS on every
+  // origin, so the page must decrypt, and must not warn that it cannot.
+  const note = await driver.findElement(By.id("krb_crypto_note")).getText();
+  assert.strictEqual(note.trim(), "",
+    "the page warns about Web Crypto although it needs none: " +
+        JSON.stringify(note));
 
   const e = kcrypto.etypeById(18);
   const salt = "EXAMPLE.COMalice";
