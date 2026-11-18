@@ -1375,6 +1375,15 @@ function buildJobs() {
     env: {},
   });
 
+  // No browser code calls Web Crypto except common/crypto/crypto_webcrypto.js,
+  // the opt-in backend (#463): every operation must work on a plain-HTTP
+  // page, where crypto.subtle does not exist. Read in node, no browser.
+  jobs.push({
+    name: "Only the opt-in backend calls Web Crypto (in node)",
+    script: "no_direct_webcrypto_engine.js",
+    env: {},
+  });
+
   // Every script a job above or below names must be in the tests image.
   // A missing COPY otherwise surfaces minutes into a run as
   // `Cannot find module`, and it reached develop three times in a row.
