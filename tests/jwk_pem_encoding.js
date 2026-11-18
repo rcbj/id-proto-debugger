@@ -1780,25 +1780,62 @@ function stagedSharedModuleListsAreComplete() {
     });
     checked += direct.length;
   });
-  // common/crypto (#463) is staged WHOLE rather than per bundle, so there is
-  // no list of consumers to hold — but client/.gitignore names each staged
-  // file, so a build killed before its `finally` cannot leave a copy in
-  // client/src that `git add` picks up as source. A module added to
-  // common/crypto/ needs its line there.
-  const cryptoDir = path.join(__dirname, "..", "common", "crypto");
+  // Every file client/build.js stages out of common/ — the whole of
+  // common/crypto (#463), common/krb5 and common/spiffe, and data.js and
+  // xmldsig.js — must be named in client/.gitignore, so a build killed
+  // before its `finally` cannot leave a copy that `git add` picks up as
+  // source; and must NOT be tracked under client/src, because a tracked copy
+  // is one the build used to overwrite and then delete (thirteen krb5 copies
+  // were, until 2026-11-17, three of them drifted from the source). The
+  // tracked half needs git and a checkout, so it is skipped in the tests
+  // image, which has neither.
+  const common = path.join(__dirname, "..", "common");
   const clientIgnore = path.join(__dirname, "..", "client", ".gitignore");
-  if (fs.existsSync(cryptoDir) && fs.existsSync(clientIgnore)) {
-    const ignored = fs.readFileSync(clientIgnore, "utf8").split(/\r?\n/);
-    fs.readdirSync(cryptoDir).filter(function (f) {
+  const stagedCopies = [];
+  ["crypto", "krb5", "spiffe"].forEach(function (dir) {
+    const full = path.join(common, dir);
+    if (!fs.existsSync(full)) return;
+    fs.readdirSync(full).filter(function (f) {
       return /\.js$/.test(f);
     }).forEach(function (f) {
-      assert.ok(ignored.indexOf("src/" + f) >= 0,
-        "common/crypto/" + f + " is staged into client/src by " +
-        "client/build.js " +
-        "but client/.gitignore has no `src/" + f + "` line, so a build " +
+      stagedCopies.push({ from: "common/" + dir + "/" + f, name: f });
+    });
+  });
+  ["data.js", "xmldsig.js"].forEach(function (f) {
+    if (fs.existsSync(path.join(common, f))) {
+      stagedCopies.push({ from: "common/" + f, name: f });
+    }
+  });
+  if (fs.existsSync(clientIgnore)) {
+    const ignored = fs.readFileSync(clientIgnore, "utf8").split(/\r?\n/);
+    stagedCopies.forEach(function (s) {
+      assert.ok(ignored.indexOf("src/" + s.name) >= 0,
+        s.from + " is staged into client/src by client/build.js but " +
+        "client/.gitignore has no `src/" + s.name + "` line, so a build " +
         "interrupted before it cleans up leaves a copy that looks like " +
         "source. Add the line.");
     });
+  }
+  let tracked = null;
+  try {
+    tracked = require("child_process").execFileSync("git", ["ls-files",
+      "--", "client/src"], { cwd: path.join(__dirname, ".."),
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      .split(/\r?\n/);
+  } catch (e) {
+    log.info("[staged lists] not a git checkout here; the tracked-copy " +
+             "check is skipped: " + e.message.split("\n")[0]);
+  }
+  if (tracked) {
+    const copies = stagedCopies.filter(function (s) {
+      return tracked.indexOf("client/src/" + s.name) >= 0;
+    }).map(function (s) {
+      return "client/src/" + s.name + " (of " + s.from + ")";
+    });
+    assert.deepStrictEqual(copies, [], "git tracks copies of staged " +
+      "modules under client/src. client/build.js stages the source over " +
+      "them and refuses to when they differ; delete them with git rm: " +
+      copies.join(", "));
   }
   log.info("[staged lists] OK — " + checked + " bundle(s) that require a " +
            "module staged out of common/ are named by the list that stages " +
