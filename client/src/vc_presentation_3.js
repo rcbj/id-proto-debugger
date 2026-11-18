@@ -630,17 +630,23 @@ function recheckAnoncreds() {
   try {
     var b = anoncredsWallet.parseBundle(held);
     var names = Object.keys(anoncredsWallet.revealedClaims(pres, null));
-    var request = anoncredsWallet.presentationRequestFor(names, sent.nonce);
+    var revocation = anoncredsWallet.revocationOf(b);
+    var request = anoncredsWallet.presentationRequestFor(names, sent.nonce,
+      revocation ? revocation.list.timestamp : null);
     var schemas = {};
     schemas[b.schemaId] = b.schema;
     var cds = {};
     cds[b.credDefId] = b.credentialDefinition;
     var r = anoncreds.verifyPresentation(pres, { presentationRequest: request,
-      schemas: schemas, credentialDefinitions: cds });
+      schemas: schemas, credentialDefinitions: cds,
+      revocationRegistryDefinitions: revocation ? revocation.definitions : {},
+      revocationStatusLists: revocation ? [revocation.list] : [] });
     checks.push({ name: "AnonCreds presentation (CL)", ok: r.valid,
       detail: r.valid ? names.length + " attribute(s) revealed; the proof " +
         "verifies under the request nonce " + request.nonce + " (from the " +
-        "OpenID4VP nonce by this debugger's mapping)." :
+        "OpenID4VP nonce by this debugger's mapping)" + (revocation ?
+        ", with a non-revocation proof at the status list of " +
+        revocation.list.timestamp : "") + "." :
         r.errors.join(" ") });
     (r.warnings || []).forEach(function (w) {
       checks.push({ name: "Note", ok: true, detail: w });

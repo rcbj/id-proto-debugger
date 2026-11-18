@@ -8,9 +8,8 @@
 // where JSON would have been kinder: the attestation object, and the credential
 // public key (a COSE_Key) buried inside the authenticator data.
 //
-// Decode only, deliberately. Nothing in this debugger produces CBOR — it reads
-// what an authenticator produced — and an encoder would be code with no caller
-// that still has to be maintained and kept safe.
+// Decode only. The encoders that need one (mdoc.js, cborld.js) write their
+// own deterministic CBOR; this is the one reader they all decode with.
 //
 // It reads UNTRUSTED input. Everything this module is handed came from an
 // authenticator, or from a text box somebody pasted into, so the failure modes
@@ -125,6 +124,10 @@ function readHead(reader) {
     arg = reader.uint(2);
   } else if (info === 26) {
     arg = reader.uint(4);
+  } else if (info === 27 && major === MT_SIMPLE) {
+    // A 64-bit float: its eight bytes are the value, not a count, so they
+    // are handed back as they are for readValue() to read as IEEE 754.
+    arg = reader.take(8);
   } else if (info === 27) {
     // Beyond 2^53 the value cannot be held exactly in a JS number. Nothing
     // WebAuthn carries is that large, and quietly rounding a length would be
@@ -223,9 +226,7 @@ function readValue(reader, depth) {
         (head.arg >>> 24) & 0xff, (head.arg >>> 16) & 0xff,
         (head.arg >>> 8) & 0xff, head.arg & 0xff]).buffer).getFloat32(0);
       if (head.info === 27) {
-        throw CborError("64-bit floats are not decoded here; nothing in " +
-                        "WebAuthn uses one",
-                        reader.offset);
+        return new DataView(new Uint8Array(head.arg).buffer).getFloat64(0);
       }
       if (head.info === 31) {
         throw CborError("a break stop code outside an indefinite-length item",

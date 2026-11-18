@@ -3935,6 +3935,17 @@ function buildJobs() {
     env: {},
   });
 
+  // OAuth 2.0 client authentication at the token endpoint
+  // (client/src/client_auth.js): each method's wire form from RFC 6749,
+  // RFC 7523 / 7523bis-11 and draft-ietf-oauth-attestation-based-client-
+  // auth-12, every signature verified by node. No services.
+  jobs.push({
+    name: "Client authentication (basic, post, client_secret_jwt, " +
+        "private_key_jwt, Client Attestation; in node)",
+    script: "client_auth_engine.js",
+    env: {},
+  });
+
   // AnonCreds (#479): the holder and verifier of client/src/anoncreds.js
   // against anoncreds-rs v0.2.3 (tests/anoncreds_witness.js, from the
   // private mirror's anoncreds-witness image) in every direction, and what
@@ -3942,6 +3953,28 @@ function buildJobs() {
   jobs.push({
     name: "AnonCreds (CL holder and verifier against anoncreds-rs, in node)",
     script: "anoncreds_engine.js",
+    env: {},
+  });
+
+  // VC Barcodes (#480, W3C Working Draft): CBOR-LD 1.0 and ecdsa-xi-2023 —
+  // the specification's three printed payloads, its PDF417 and QR text, and
+  // Digital Bazaar's released cborld 8.1.0 and ecdsa-xi-2023-cryptosuite
+  // 1.2.0 byte for byte and both ways. No services.
+  jobs.push({
+    name: "VC Barcodes (CBOR-LD and ecdsa-xi-2023 against the spec's " +
+        "vectors and Digital Bazaar's library, in node)",
+    script: "vc_barcodes_engine.js",
+    env: {},
+  });
+
+  // Gordian Envelope (#480, IETF drafts): dCBOR, the digest tree, UR, and
+  // Schnorr / ECDSA / Ed25519, reproducing bc-envelope 0.43.0's and dcbor
+  // 0.25.2's own test vectors byte for byte, signatures included. No
+  // services.
+  jobs.push({
+    name: "Gordian Envelope (dCBOR, digests, signatures, elision against " +
+        "the Rust crates' vectors, in node)",
+    script: "gordian_envelope_engine.js",
     env: {},
   });
 
@@ -4093,6 +4126,20 @@ function buildJobs() {
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
+    // Client authentication at the token endpoint against a CONFIDENTIAL
+    // client this job provisions in a trust realm of its own (RFC 9700 mode
+    // on there, so a wrong secret IS refused): basic, a wrong secret, post,
+    // private_key_jwt and a Client Attestation by an attester that realm
+    // trusts. Configures nothing any other job reads, so it takes no lock.
+    jobs.push({
+      name: "VC Issuance — client authentication at the token endpoint " +
+          "(confidential client on iya-sts)",
+      script: "vc_issuance_client_auth.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
   }
 
   // The BBS signatures the debugger produces, checked by a DIFFERENT BBS
@@ -4173,6 +4220,25 @@ function buildJobs() {
     jobs.push({
       name: "VC Presentation — AnonCreds (anoncreds-rs issuer and verifier)",
       script: "anoncreds_presentation.js",
+      env: {},
+    });
+    // The VC Barcodes page (#480): the specification's two examples, a
+    // changed MRZ refused, and an MRZ and an AAMVA barcode issued in the
+    // page, the drawn QR code read back from its image. Needs only the
+    // client.
+    jobs.push({
+      name: "VC Barcodes page — read, verify and issue (MRZ QR code, " +
+          "AAMVA PDF417)",
+      script: "vc_barcodes_browser.js",
+      env: {},
+    });
+    // The Gordian Envelope page (#480): issue bc-envelope's example,
+    // present four claims (the root digest unchanged, verified in the page
+    // and in node), another key refused, salted Ed25519. Needs only the
+    // client.
+    jobs.push({
+      name: "Gordian Envelope page — issue, verify and present by elision",
+      script: "gordian_envelope_browser.js",
       env: {},
     });
     // The ACDC page (#480): signify-ts's presentation stream verifies, the

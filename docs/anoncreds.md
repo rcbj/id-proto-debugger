@@ -96,10 +96,71 @@ so:
 
 Native code is used in the tests only. The browser-side engine is pure JS.
 
+## Revocation
+
+`client/src/anoncreds_revocation.js`, over `client/src/amcl_bn254.js`:
+the CKS accumulator and the non-revocation proof, for the holder and the
+Verifier.
+
+**The curve is not alt_bn128.** anoncreds-clsignatures uses Apache Milagro's
+"BN254", which is Nogami's Barreto–Naehrig curve. `amcl_bn254.js` builds
+it over `@noble/curves` 1.9's field tower, added under the alias
+`@noble/curves-v1.9` so nothing using 1.4.0 changes:
+
+| | |
+|---|---|
+| BN `x` | −(2⁶² + 2⁵⁵ + 1) |
+| G1 | y² = x³ + 2, generator (−1, 1) |
+| Fp2 | Fp[i]/(i²+1) |
+| ξ | 1 + i |
+| G2 | the D-type twist y² = x³ + (1 − i) |
+
+**The pairing must be bit-identical to amcl's,** because pairing values
+are hashed into the proof's challenge. So it is the optimal ate pairing
+written plainly in Fp12, with the exact final exponentiation
+`f^((p¹²−1)/r)`. It is checked against anoncreds-rs's own data by the
+holder's equation `e(g_i, V) · e(−g, ω) = accumKey.z`.
+
+**amcl's encodings:**
+- **JSON text:** Montgomery residues in homogeneous projective coordinates
+  (`"xes HEX"` tokens, R = 2²⁸⁰).
+- **Challenge-hash bytes:** fixed-length and affine. G1 is `04‖x‖y`
+  followed by 63 zero bytes; G2 is 128 bytes; GT is 512 bytes.
+
+**What it does:**
+- **Request:** blinds `vr′` as `ur = vr′·h2`.
+- **Processing:** sets `vr = vr′ + vr″` and runs the three pairing checks.
+- **Revocation state:** comes from the tails file. That file is `00 02`
+  followed by 2L+1 G2 points. Its name, `tailsHash`, is the base58 of its
+  SHA-256, which is checked here although anoncreds-rs does not check it.
+- **Witness:** the sum of `tail[L+1−j+i]` over the issued `j ≠ i`. Both
+  readings of index L are tried and the one that verifies is kept, because
+  anoncreds-rs's own holder always counts it as issued. That is right for
+  an issuance-by-default registry and wrong for an on-demand one, which the
+  engine test covers.
+- **The proof:** the seven commitments and eight tau values go ahead of
+  the sub-proof's primary items. They share the primary proof's `m̃2`; the
+  Verifier uses the primary `m̂2` reduced mod r, which ties the two proofs
+  to one credential.
+- **The Verifier:** applies anoncreds-rs's interval and timestamp rules,
+  and selects the status list by exact `(revRegDefId, timestamp)`. It is
+  **stricter than anoncreds-rs 0.2.3** in two ways:
+  - It requires a non-revocation proof whenever an interval applies to a
+    revocable credential. anoncreds-rs verifies such a sub-proof as if none
+    had been asked for.
+  - It checks that the `c_list` bytes match the proof's points.
+
+**In the wallet,** a revocable bundle carries the revocation material, and
+the debugger's mapping asks for non-revocation at the status list's
+timestamp:
+
+```json
+"revocation": { "registry_definition": {...}, "status_list": {...},
+                "tails": "<base64url>" }
+```
+
 ## Not yet
 
-- **Revocation:** CKS accumulators, `non_revoc_proof`. A presentation
-  carrying a non-revocation proof is refused by name, not passed.
 - **The W3C form** (`anoncredsvc-2023` / `anoncredspresvc-2023`).
 - **Predicates from DCQL,** which has no way to express them.
 
@@ -107,5 +168,5 @@ Native code is used in the tests only. The browser-side engine is pure JS.
 
 | Test | What it checks |
 |---|---|
-| `tests/anoncreds_engine.js` | The hash vector and twelve attribute encodings. Then anoncreds-rs issuing against our requests, and both holders reaching the same `v`. Then our presentations verifying in anoncreds-rs and its presentations here: two credentials, groups, unrevealed and self-attested referents, all four predicate types including over a negative value, and restrictions. Plus the negative cases. |
-| `tests/anoncreds_presentation.js` | The presentation pages in Chrome. anoncreds-rs issues, the wallet reveals two of three attributes under a non-numeric OpenID4VP nonce, and anoncreds-rs verifies. |
+| `tests/anoncreds_engine.js` | Revocation in both issuance modes: our request, processing, witness and non-revocation proof verified by anoncreds-rs, anoncreds-rs's proof verified here, a stripped proof named, and a revoked credential refused. Plus: the hash vector and twelve attribute encodings. Then anoncreds-rs issuing against our requests, and both holders reaching the same `v`. Then our presentations verifying in anoncreds-rs and its presentations here: two credentials, groups, unrevealed and self-attested referents, all four predicate types including over a negative value, and restrictions. Plus the negative cases. |
+| `tests/anoncreds_presentation.js` | The presentation pages in Chrome, plain and revocable (with a non-revocation proof). anoncreds-rs issues, the wallet reveals two of three attributes under a non-numeric OpenID4VP nonce, and anoncreds-rs verifies. |

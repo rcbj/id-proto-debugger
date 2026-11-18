@@ -12,7 +12,12 @@
 //     wallet with no ledger cannot fetch them:
 //       { "format": "anoncreds", "credential": {...}, "schema": {...},
 //         "schema_id": "...", "credential_definition": {...},
-//         "cred_def_id": "..." }
+//         "cred_def_id": "...",
+//         "revocation": { "registry_definition": {...},
+//                         "status_list": {...}, "tails": "<base64url>" } }
+//     — the revocation member only for a revocable credential, and then
+//     the presentation proves non-revocation at the status list's
+//     timestamp (the mapping's non_revoked interval is that instant);
 //   * The LINK SECRET is the holder's key material, so it lives where the
 //     holder key does (sd_jwt_vc.js KEYS.HOLDER_PRIVATE_JWK, behind the same
 //     save-key preference and paste field): an oct JWK whose k is the
@@ -29,6 +34,7 @@
 var provider = require("./crypto_provider");
 var bytes = require("./crypto_bytes");
 var anoncreds = require("./anoncreds");
+var rev = require("./anoncreds_revocation");
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({
@@ -77,7 +83,8 @@ function parseBundle(text) {
   return { credential: cred, schema: o.schema,
            schemaId: o.schema_id || cred.schema_id,
            credentialDefinition: o.credential_definition,
-           credDefId: o.cred_def_id || cred.cred_def_id };
+           credDefId: o.cred_def_id || cred.cred_def_id,
+           revocation: o.revocation || null };
 }
 
 function bundle(credential, schema, credentialDefinition) {
@@ -131,16 +138,37 @@ function nonceFor(oid4vpNonce) {
 // attribute per claim, its referent the attribute's own name (a referent
 // is any string), so a presentation read back without its request still
 // names what it reveals.
-function presentationRequestFor(names, oid4vpNonce) {
+function presentationRequestFor(names, oid4vpNonce, revocationTimestamp) {
   log.debug("Entering presentationRequestFor(). " + names.length);
   var attrs = {};
   names.forEach(function (n) {
     attrs[String(n)] = { name: String(n) };
   });
+  var out = { nonce: nonceFor(oid4vpNonce), name: "OpenID4VP request",
+              version: "1.0", requested_attributes: attrs,
+              requested_predicates: {} };
+  if (revocationTimestamp !== undefined && revocationTimestamp !== null) {
+    out.non_revoked = { from: revocationTimestamp, to: revocationTimestamp };
+  }
   log.debug("Leaving presentationRequestFor().");
-  return { nonce: nonceFor(oid4vpNonce), name: "OpenID4VP request",
-           version: "1.0", requested_attributes: attrs,
-           requested_predicates: {} };
+  return out;
+}
+
+// The revocation material a bundle carries, as anoncreds.js takes it.
+function revocationOf(b) {
+  log.debug("Entering revocationOf().");
+  if (!b.revocation || !b.credential.rev_reg_id) {
+    log.debug("Leaving revocationOf(). Not revocable here.");
+    return null;
+  }
+  var list = Object.assign({ revRegDefId: b.credential.rev_reg_id },
+                           b.revocation.status_list);
+  var defs = {};
+  defs[b.credential.rev_reg_id] = b.revocation.registry_definition;
+  log.debug("Leaving revocationOf().");
+  return { list: list, definitions: defs,
+           definition: b.revocation.registry_definition,
+           tails: bytes.b64uToBytes(b.revocation.tails) };
 }
 
 // Present the held bundle, revealing `names` (attribute names as the
@@ -148,13 +176,23 @@ function presentationRequestFor(names, oid4vpNonce) {
 function present(held, names, linkSecretJwkValue, oid4vpNonce) {
   log.debug("Entering present().");
   var b = parseBundle(held);
-  var request = presentationRequestFor(names, oid4vpNonce);
+  var revocation = revocationOf(b);
+  var request = presentationRequestFor(names, oid4vpNonce,
+    revocation ? revocation.list.timestamp : null);
+  var entry = { credential: b.credential };
+  if (revocation) {
+    entry.timestamp = revocation.list.timestamp;
+    entry.revocationState = rev.revocationState({ credential: b.credential,
+      credentialDefinition: b.credentialDefinition,
+      revocationRegistryDefinition: revocation.definition,
+      revocationStatusList: revocation.list, tailsBytes: revocation.tails });
+  }
   var schemas = {};
   schemas[b.schemaId] = b.schema;
   var cds = {};
   cds[b.credDefId] = b.credentialDefinition;
   var presentation = anoncreds.createPresentation({
-    presentationRequest: request, credentials: [{ credential: b.credential }],
+    presentationRequest: request, credentials: [entry],
     credentialsProve: Object.keys(request.requested_attributes).map(
       function (ref) {
         return { entryIndex: 0, referent: ref, isPredicate: false,
@@ -213,5 +251,6 @@ module.exports = {
   presentationRequestFor: presentationRequestFor,
   present: present,
   revealedClaims: revealedClaims,
+  revocationOf: revocationOf,
   looksLikePresentation: looksLikePresentation
 };

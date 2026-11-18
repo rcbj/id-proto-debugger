@@ -71,6 +71,14 @@ var CONTEXTS = {
   "https://w3id.org/security/suites/secp256k1-2019/v1": require(
       "./contexts/secp256k1_2019_v1.json"),
   "https://w3id.org/security/bbs/v1": require("./contexts/bbs_v1.json"),
+  // VC Barcodes v1.0 (#480), and the two example vocabularies its test
+  // vectors are written in: CBOR-LD numbers terms from these documents, so a
+  // barcode decodes only against the exact copy it was encoded with.
+  "https://w3id.org/vc-barcodes/v1": require(
+      "./contexts/vc_barcodes_v1.json"),
+  "https://w3id.org/utopia/v2": require("./contexts/utopia_v2.json"),
+  "https://w3id.org/vital-records/v1rc1": require(
+      "./contexts/vital_records_v1rc1.json"),
   // This deployment's own terms. A credential must use a context that DEFINES
   // every claim it carries: canonicalization runs in `safe` mode, which refuses
   // to drop a term that does not expand to an absolute IRI. That refusal is the

@@ -1,0 +1,27 @@
+{
+  "@context": {
+    "@protected": true,
+    "id": "@id",
+    "type": "@type",
+    "MachineReadableZone": "https://w3id.org/vc-barcodes#MachineReadableZone",
+    "AamvaDriversLicenseScannableInformation": "https://w3id.org/vc-barcodes#AamvaDriversLicenseScannableInformation",
+    "protectedComponentIndex": {
+      "@id": "https://w3id.org/vc-barcodes#protectedComponentIndex",
+      "@type": "https://w3id.org/security#multibase"
+    },
+    "OpticalBarcodeCredential": "https://w3id.org/vc-barcodes#OpticalBarcodeCredential",
+    "TerseBitstringStatusListEntry": {
+      "@id": "https://w3id.org/vc-barcodes#TerseBitstringStatusListEntry",
+      "@context": {
+        "@protected": true,
+        "id": "@id",
+        "type": "@type",
+        "terseStatusListBaseUrl": {
+          "@type": "@id",
+          "@id": "https://w3id.org/vc-barcodes#terseStatusListBaseUrl"
+        },
+        "terseStatusListIndex": "https://w3id.org/vc-barcodes#terseStatusListIndex"
+      }
+    }
+  }
+}
