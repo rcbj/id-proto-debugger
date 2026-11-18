@@ -59,6 +59,15 @@ function vcSetAllPanes(expand) {
 </script>
 
 <!-- ====== Pane 0: the Token Request, for a pre-authorized offer (H.2/H.3) ====== -->
+<!-- ============ Client authentication at the token endpoint ============ -->
+<div class="step0 dbg-pane" id="pane_client_auth">
+  <legend class="dbg-legend">Client Authentication (token endpoint)</legend>
+  <fieldset>
+    <p class="vc-note">The method chosen on step 1. A secret is typed here, for this page load only.</p>
+    <div id="vc_client_auth_pane"></div>
+  </fieldset>
+</div>
+
 <div class="step0 dbg-pane" id="pane_pre_authorized" style="display: none;">
   <legend class="dbg-legend" id="preauth_expand_button" onclick="return vcissuance2.togglePane('preauth_fieldset');">Token Request (pre-authorized code)</legend>
   <fieldset name="preauth_fieldset" id="preauth_fieldset" style="display: block;">

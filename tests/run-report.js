@@ -3935,6 +3935,17 @@ function buildJobs() {
     env: {},
   });
 
+  // OAuth 2.0 client authentication at the token endpoint
+  // (client/src/client_auth.js): each method's wire form from RFC 6749,
+  // RFC 7523 / 7523bis-11 and draft-ietf-oauth-attestation-based-client-
+  // auth-12, every signature verified by node. No services.
+  jobs.push({
+    name: "Client authentication (basic, post, client_secret_jwt, " +
+        "private_key_jwt, Client Attestation; in node)",
+    script: "client_auth_engine.js",
+    env: {},
+  });
+
   // AnonCreds (#479): the holder and verifier of client/src/anoncreds.js
   // against anoncreds-rs v0.2.3 (tests/anoncreds_witness.js, from the
   // private mirror's anoncreds-witness image) in every direction, and what
@@ -4090,6 +4101,20 @@ function buildJobs() {
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         KEYCLOAK_BASE_URL: env.KEYCLOAK_BASE_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // Client authentication at the token endpoint against a CONFIDENTIAL
+    // client this job provisions in a trust realm of its own (RFC 9700 mode
+    // on there, so a wrong secret IS refused): basic, a wrong secret, post,
+    // private_key_jwt and a Client Attestation by an attester that realm
+    // trusts. Configures nothing any other job reads, so it takes no lock.
+    jobs.push({
+      name: "VC Issuance — client authentication at the token endpoint " +
+          "(confidential client on iya-sts)",
+      script: "vc_issuance_client_auth.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });

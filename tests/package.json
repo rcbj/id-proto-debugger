@@ -30,6 +30,7 @@
     "@mattrglobal/bbs-signatures": "^1.2.0",
     "@mattrglobal/jsonld-signatures-bbs": "^1.2.0",
     "@noble/curves": "1.4.0",
+    "@noble/curves-v1.9": "npm:@noble/curves@1.9.7",
     "@noble/hashes": "1.4.0",
     "@noble/post-quantum": "^0.4.1",
     "@sd-jwt/core": "^0.25.0",

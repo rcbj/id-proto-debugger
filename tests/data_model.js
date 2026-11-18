@@ -275,7 +275,9 @@ const REPLACED = {
   secretKeys: ["client_secret", "token_client_secret",
     "refresh_client_secret", "revocation_client_secret",
     "tokenexchange_client_secret", "introspection_client_secret",
-    "userinfo_client_secret", "token_password", "password"],
+    "userinfo_client_secret", "token_password", "password",
+    // The VC issuance workflow's client secret field (vc_client_auth_pane.js).
+    "vc_client_secret"],
   sessionKeys: ["registration_access_token", "dcr_initial_access_token",
     "introspection_bearer_token"],
   secretMembers: ["client_secret", "registration_access_token"],
@@ -292,6 +294,12 @@ const REPLACED = {
     // Added with SIOPv2 (#432/#436), after the lists above were replaced:
     // the presentation workflow's pairwise subject keys and their checkbox.
     sdjwtvp_siop_save_pairwise: ["sdjwtvp_siop_pairwise_keys"],
+    // The VC issuance workflow's client authentication key material
+    // (vc_client_auth_pane.js): private_key_jwt's key, the Client
+    // Attestation with its instance key, and a locally made attester key.
+    sdjwtvc_save_client_key: ["sdjwtvc_client_attestation",
+      "sdjwtvc_client_attester_private_jwk",
+      "sdjwtvc_client_instance_private_jwk", "sdjwtvc_client_private_jwk"],
     // smartcard.js's three opt-in secrets, found by storage_keys_recorded.js
     // on 2026-11-16 (the static inventory did not read its SAVE table).
     sc_save_otp_key: ["sc_otp_aes_key"],

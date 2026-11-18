@@ -2715,6 +2715,60 @@
       "group": "client/src/oauth2_oidc_1.js"
     },
     {
+      "key": "sdjwtvc_client_attestation",
+      "class": "keypair",
+      "group": "client/src/vc_client_auth_pane.js",
+      "optOut": "sdjwtvc_save_client_key"
+    },
+    {
+      "key": "sdjwtvc_client_attestation_challenge",
+      "class": "ordinary",
+      "group": "client/src/vc_client_auth_pane.js"
+    },
+    {
+      "key": "sdjwtvc_client_attester_private_jwk",
+      "class": "keypair",
+      "group": "client/src/vc_client_auth_pane.js",
+      "optOut": "sdjwtvc_save_client_key"
+    },
+    {
+      "key": "sdjwtvc_client_auth_alg",
+      "class": "ordinary",
+      "group": "client/src/vc_client_auth_pane.js"
+    },
+    {
+      "key": "sdjwtvc_client_auth_audience",
+      "class": "ordinary",
+      "group": "client/src/vc_client_auth_pane.js"
+    },
+    {
+      "key": "sdjwtvc_client_auth_kid",
+      "class": "ordinary",
+      "group": "client/src/vc_client_auth_pane.js"
+    },
+    {
+      "key": "sdjwtvc_client_auth_method",
+      "class": "ordinary",
+      "group": "client/src/vc_client_auth_pane.js"
+    },
+    {
+      "key": "sdjwtvc_client_auth_typed",
+      "class": "ordinary",
+      "group": "client/src/vc_client_auth_pane.js"
+    },
+    {
+      "key": "sdjwtvc_client_instance_private_jwk",
+      "class": "keypair",
+      "group": "client/src/vc_client_auth_pane.js",
+      "optOut": "sdjwtvc_save_client_key"
+    },
+    {
+      "key": "sdjwtvc_client_private_jwk",
+      "class": "keypair",
+      "group": "client/src/vc_client_auth_pane.js",
+      "optOut": "sdjwtvc_save_client_key"
+    },
+    {
       "key": "sdjwtvc_credential",
       "class": "ordinary",
       "group": "client/src/sd_jwt_vc.js"
@@ -2877,6 +2931,11 @@
       "key": "sdjwtvc_return",
       "class": "ordinary",
       "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_save_client_key",
+      "class": "ordinary",
+      "group": "client/src/vc_client_auth_pane.js"
     },
     {
       "key": "sdjwtvc_save_holder_key",
@@ -3647,6 +3706,12 @@
       "key": "userinfo_signing_alg_values_supported",
       "class": "ordinary",
       "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "vc_client_secret",
+      "class": "secret",
+      "group": "client/src/vc_client_auth_pane.js",
+      "area": "none"
     },
     {
       "key": "vc_jsonld_contexts",
