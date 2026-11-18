@@ -135,7 +135,8 @@ function headBig(major, n) {
   } else if (n < BigInt(0x100)) {
     out.push((major << 5) | 24, Number(n));
   } else if (n < BigInt(0x10000)) {
-    out.push((major << 5) | 25, Number(n >> BigInt(8)), Number(n & BigInt(255)));
+    out.push((major << 5) | 25, Number(n >> BigInt(8)),
+             Number(n & BigInt(255)));
   } else if (n < BigInt(0x100000000)) {
     out.push((major << 5) | 26);
     for (var i = 3; i >= 0; i--) {
