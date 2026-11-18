@@ -72,6 +72,15 @@
 #   * GIT_COMMIT and BUILD_NUMBER are what build.rs stamps into `--version`
 #     (an archive has no .git to read them from).
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# THE ANONCREDS WITNESS (#479): anoncreds-rs v0.2.3 and its node binding,
+# built into the private mirror (tests/anoncreds-witness/Dockerfile,
+# .github/image-mirror-builds.txt) so this build downloads nothing. The
+# AnonCreds jobs require @hyperledger/anoncreds-nodejs from
+# /usr/src/anoncreds-witness (tests/anoncreds_witness.js).
+# ---------------------------------------------------------------------------
+FROM anoncreds-witness:0.5.0-0.2.3 AS anoncreds-witness
+
 FROM rust:1.97-bookworm AS oid4vc-wallet
 ENV OID4VC_WALLET_COMMIT=7cf061a63e2c1f9814b404b0415e65765f1b979a
 ENV OID4VC_WALLET_SHA256=377c1c266d65492f084d04e37e98181c6840a6ca95d0ac971225ead9756b2c57
@@ -424,7 +433,7 @@ COPY client/src/mdoc.js client/src/vp_protocols.js ./
 # holder's VP through data_integrity.js; data_integrity_rdfc.js is what
 # registers RDFC-1.0 with it, and requires bbs_bls_2020.js (which needs
 # bbs_plus_2020.js) so the BbsBlsSignature2020 suites register too.
-COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js client/src/bbs_bls_2020.js client/src/bbs_plus_2020.js client/src/ecdsa_sd_2023.js client/src/vc_jose_cose.js client/src/jwp.js client/src/sd_cwt.js ./
+COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js client/src/bbs_bls_2020.js client/src/bbs_plus_2020.js client/src/ecdsa_sd_2023.js client/src/vc_jose_cose.js client/src/jwp.js client/src/sd_cwt.js client/src/anoncreds.js ./
 # The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
 # and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
 # directory is flat and the last COPY wins, so a test of that name would
@@ -445,7 +454,7 @@ COPY tests/vp_verifier_engine.js ./
 # And tests/client_module_bindings.js: every name the browser bundles use is
 # bound (client/src and the staged common/ modules, read from
 # /usr/src/source-tree).
-COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js tests/holder_key_algs.js tests/ldp_vc_whole_presentation.js tests/ecdsa_sd_2023_engine.js tests/vc_jose_cose_engine.js tests/vc_jose_cose_presentation.js tests/jwp_engine.js tests/sd_cwt_engine.js tests/jwp_sd_cwt_presentation.js ./
+COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js tests/holder_key_algs.js tests/ldp_vc_whole_presentation.js tests/ecdsa_sd_2023_engine.js tests/vc_jose_cose_engine.js tests/vc_jose_cose_presentation.js tests/jwp_engine.js tests/sd_cwt_engine.js tests/jwp_sd_cwt_presentation.js tests/anoncreds_engine.js tests/anoncreds_witness.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./
@@ -832,6 +841,7 @@ COPY .github/image-mirror-builds.txt .github/workflows/terraform.yml \
      .github/workflows/website-deploy.yml .github/workflows/dockerimage.yml \
      deploy/deploy-local.sh infra/terraform-local.sh ./
 COPY shibboleth-idp/dist/Dockerfile ./shibboleth-idp-dist_Dockerfile
+COPY tests/anoncreds-witness/Dockerfile ./tests-anoncreds-witness_Dockerfile
 COPY infra/Dockerfile ./infra_Dockerfile
 COPY deploy/Dockerfile ./deploy_Dockerfile
 COPY embedded/Dockerfile ./embedded_Dockerfile
@@ -1289,6 +1299,7 @@ RUN apt-get update \
 # time; the window's X11 and GL are opened only by `--ui`, which no job
 # passes.
 COPY --from=oid4vc-wallet /out/ /opt/oid4vc-wallet/
+COPY --from=anoncreds-witness /anoncreds/ /usr/src/anoncreds-witness/
 ENV OID4VC_WALLET_BIN=/opt/oid4vc-wallet/oid4vc-wallet
  
 # Create app directory

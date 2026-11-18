@@ -43,6 +43,9 @@ x-mirror-contexts: &mirror-contexts
   # built into an image by .github/scripts/mirror-builds.sh
   # (.github/image-mirror-builds.txt) so that build downloads nothing.
   "shibboleth-idp-dist:4.3.3": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/shibboleth-idp-dist:4.3.3
+  # Not a copy either: anoncreds-rs and its node binding, installed without
+  # their install script's download (tests/anoncreds-witness/Dockerfile).
+  "anoncreds-witness:0.5.0-0.2.3": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/anoncreds-witness:0.5.0-0.2.3
 services:
   postgres:
     image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/postgres:18
