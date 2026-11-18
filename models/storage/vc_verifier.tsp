@@ -93,4 +93,9 @@ model VcVerifierKeys {
   // (#471, E2).
   @storageKey(#{ area: "local", class: "ordinary" })
   vpv_trusted_authorities: unknown;
+
+  // "openid4vp" or "haip": the profile the Verifier asks and checks under
+  // (#471, E1).
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_profile: unknown;
 }

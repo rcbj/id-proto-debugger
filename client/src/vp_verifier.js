@@ -1319,6 +1319,69 @@ function requestEncAlgFor(key, listed) {
   return out;
 }
 
+// What HAIP 1.0 makes the VERIFIER do, checked before a request is made
+// (#471, E1). `r` is { dcApi, signed, prefix, delivery, responseMode,
+// formats, encValues, redirectUri }. Answers { refused: [...], advised:
+// [...] }, each a sentence naming its section. A refused rule is the
+// Verifier's own MUST, so the page does not send the request; an advised
+// one is a RECOMMENDED it says it is not following.
+function haipRequestProblems(r) {
+  log.debug("Entering haipRequestProblems().");
+  var refused = [];
+  var advised = [];
+  var formats = r.formats || [];
+  formats.forEach(function (f) {
+    if (f !== "dc+sd-jwt" && f !== "mso_mdoc") {
+      refused.push("the query asks for " + f + "; HAIP 1.0 section 5 " +
+                   "profiles only IETF SD-JWT VC (dc+sd-jwt) and ISO mdoc " +
+                   "(mso_mdoc).");
+    }
+  });
+  if (r.dcApi) {
+    if (r.responseMode !== "dc_api.jwt") {
+      refused.push("the response mode is " + r.responseMode + "; section " +
+                   "5.2: \"The Verifier MUST use the Response Mode " +
+                   "dc_api.jwt\".");
+    }
+    if (r.signed && r.prefix !== "x509_hash") {
+      refused.push("a signed request names " + r.prefix + "; section 5: " +
+                   "for signed requests \"the Verifier MUST use ... " +
+                   "x509_hash\".");
+    }
+  } else {
+    if (r.prefix !== "x509_hash") {
+      refused.push("the Client Identifier prefix is " + r.prefix +
+                   "; section 5.1 makes every request signed, and section " +
+                   "5 makes a signed one x509_hash.");
+    }
+    if (r.delivery === "value") {
+      refused.push("the request goes by value; section 5.1: \"Signed " +
+                   "Authorization Requests MUST be used by utilizing ... " +
+                   "the request_uri parameter\".");
+    }
+    if (r.responseMode !== "direct_post.jwt") {
+      refused.push("the response mode is " + r.responseMode + "; section " +
+                   "5.1: \"Response encryption MUST be used by utilizing " +
+                   "response mode direct_post.jwt\".");
+    }
+    if (!r.redirectUri) {
+      advised.push("no redirect_uri is sent back to the wallet; section " +
+                   "5.1 RECOMMENDS the same-device flow, where the " +
+                   "Verifier MUST include one in its answer to the " +
+                   "wallet's POST.");
+    }
+  }
+  var encs = r.encValues || DEFAULT_ENC_VALUES;
+  if (encs.indexOf("A128GCM") === -1 || encs.indexOf("A256GCM") === -1) {
+    refused.push("encrypted_response_enc_values_supported is " +
+                 JSON.stringify(encs) + "; section 5: \"Verifiers MUST " +
+                 "list both A128GCM and A256GCM\".");
+  }
+  log.debug("Leaving haipRequestProblems(). " + refused.length +
+            " refused, " + advised.length + " advised.");
+  return { refused: refused, advised: advised };
+}
+
 // HONOURING wallet_metadata (OpenID4VP 1.0 section 5.10), for a Request
 // Object signed live for a wallet that POSTed to request_uri. `meta` is
 // what the wallet sent (parsed, or the text that arrived); `ctx` is
@@ -1656,11 +1719,34 @@ function parseResponse(input) {
 // signature or proof, the trust in an x5c chain, a holder or device
 // signature the query depends on. A SKIP of one is a check not performed,
 // and finish() will not call such a result a pass (#467, S4).
-function addCheck(report, id, group, label, status, detail, essential) {
+function addCheck(report, id, group, label, status, detail, essential,
+                  profile) {
   log.debug("Entering addCheck(). " + id + " " + status);
-  report.checks.push({ id: id, group: group, label: label, status: status,
-                       detail: detail || "", essential: !!essential });
+  var check = { id: id, group: group, label: label, status: status,
+                detail: detail || "", essential: !!essential };
+  if (profile) {
+    check.profile = profile;
+  }
+  report.checks.push(check);
   log.debug("Leaving addCheck().");
+}
+
+// A HAIP 1.0 conformance row (#471, E1), added only when the session is
+// in the HAIP Verifier mode (session.profile "haip"). rcbj's rule: a
+// presentation that breaks a HAIP MUST is REPORTED as violating HAIP, and
+// every other check still runs as far as the information allows. So these
+// rows are PASS or FAIL with profile "haip", and finish() keeps them out of
+// the validity verdict and counts them in `profile` instead.
+function haipRow(s, key, label, ok, detail) {
+  log.debug("Entering haipRow(). " + key);
+  if (s.report.profile !== "haip") {
+    log.debug("Leaving haipRow(). Not in HAIP mode.");
+    return;
+  }
+  addCheck(s.report, s.prefix + "haip." + key, s.group, "HAIP 1.0: " +
+           label, ok ? PASS : FAIL, (ok ? "" : "VIOLATES HAIP 1.0: ") +
+           detail, false, "haip");
+  log.debug("Leaving haipRow().");
 }
 
 function scope(report, group, prefix) {
@@ -2288,6 +2374,17 @@ function issBinding(leaf, iss) {
 // Present only when the finding is.
 function chainFindingRows(s, keyBase, trust, labelWhose) {
   log.debug("Entering chainFindingRows().");
+  haipRow(s, keyBase.replace(/[.-]$/, "") + ".not-self-signed",
+          labelWhose + " signing certificate is not self-signed",
+          !trust.selfSignedLeaf, trust.selfSignedLeaf ? "the end-entity " +
+          "certificate is self-signed; section 6.1.1: it \"MUST NOT be " +
+          "self-signed\"." : "it is issued by another certificate.");
+  haipRow(s, keyBase.replace(/[.-]$/, "") + ".no-anchor-in-chain",
+          labelWhose + " chain does not carry its trust anchor",
+          !trust.anchorIncluded, trust.anchorIncluded ? "the last " +
+          "certificate (\"" + trust.lastName + "\") is a trust anchor; " +
+          "section 6.1.1: it \"MUST NOT be included\"." :
+          "no self-signed certificate is in the chain.");
   if (trust.selfSignedLeaf) {
     s.add(keyBase + "self-signed", labelWhose + " signing certificate is " +
           "not self-signed", SKIP, "reported: the end-entity certificate " +
@@ -3720,6 +3817,50 @@ function coseAlgName(alg) {
   return a ? a.name : "COSE " + JSON.stringify(alg);
 }
 
+// HAIP 1.0 section 6.1 on a Status List Token: its key "MUST be included
+// in the x5c JOSE header", with no trust anchor in it and a signer that is
+// not self-signed.
+function haipStatusTokenRows(s, key, h) {
+  log.debug("Entering haipStatusTokenRows().");
+  if (s.report.profile !== "haip") {
+    log.debug("Leaving haipStatusTokenRows(). Not in HAIP mode.");
+    return;
+  }
+  var x5c = isArray(h.x5c) ? h.x5c : [];
+  haipRow(s, key + ".x5c", "The Status List Token's key is in x5c",
+          x5c.length > 0, x5c.length ? "x5c carries " + x5c.length +
+          " certificate(s)." : "the token has no x5c; section 6.1: its " +
+          "key \"MUST be included in the x5c JOSE header\".");
+  if (!x5c.length) {
+    log.debug("Leaving haipStatusTokenRows(). No x5c.");
+    return;
+  }
+  var certs;
+  try {
+    certs = x5c.map(function (c) {
+      return readCertificate(bytes.b64ToBytes(c));
+    });
+  } catch (e) {
+    haipRow(s, key + ".x5c-readable", "The Status List Token's x5c is " +
+            "readable", false, "it could not be read: " + e.message);
+    log.debug("Leaving haipStatusTokenRows(). Unreadable.");
+    return;
+  }
+  var leafSelf = selfSigned(certs[0]);
+  var last = certs[certs.length - 1];
+  var anchorIn = certs.length > 1 && selfSigned(last);
+  haipRow(s, key + ".not-self-signed", "The Status List Token's signer " +
+          "is not self-signed", !leafSelf, leafSelf ? "its signing " +
+          "certificate is self-signed; section 6.1: it \"MUST NOT be " +
+          "self-signed\"." : "it is issued by another certificate.");
+  haipRow(s, key + ".no-anchor-in-chain", "The Status List Token's x5c " +
+          "does not carry its trust anchor", !anchorIn, anchorIn ?
+          "the last certificate (\"" + last.name + "\") is a trust " +
+          "anchor; section 6.1: it \"MUST NOT be included\"." :
+          "no trust anchor is in it.");
+  log.debug("Leaving haipStatusTokenRows().");
+}
+
 async function checkTokenStatus(s, key, ref, issuer) {
   log.debug("Entering checkTokenStatus().");
   var ctx = issuer.ctx;
@@ -3792,6 +3933,7 @@ async function checkTokenStatus(s, key, ref, issuer) {
   }
   var h = tok.header;
   var p = tok.payload;
+  haipStatusTokenRows(s, key, h);
   var problems = tok.problems.slice();
   var notes = tok.notes.slice();
   var served = body.contentType.split(";")[0].trim().toLowerCase();
@@ -4750,6 +4892,7 @@ async function verifySdJwt(s, query, presentation, ctx) {
         verdict.status, verdict.detail);
 
   await verifyKbJwt(s, query, parsed, ctx);
+  haipSdJwtRows(s, header, payload, parsed);
 
   await checkCredentialStatus(s, "status", statusRefsOf(payload),
     { header: header, payload: payload, id: payload.iss }, ctx);
@@ -4765,6 +4908,35 @@ async function verifySdJwt(s, query, presentation, ctx) {
   var claims = built ? built.claims : {};
   log.debug("Leaving verifySdJwt().");
   return claims;
+}
+
+// HAIP 1.0 section 6.1 on an SD-JWT VC, as rows (haipRow()).
+function haipSdJwtRows(s, header, payload, parsed) {
+  log.debug("Entering haipSdJwtRows().");
+  var x5c = isArray(header.x5c) && header.x5c.length > 0;
+  haipRow(s, "issuer.x5c", "The issuer's signing certificate is in x5c",
+          x5c, x5c ? "the issuer JWT carries x5c (" + header.x5c.length +
+          " certificate(s))." : "the issuer JWT has no x5c; section 6.1.1: " +
+          "the SD-JWT VC \"MUST contain the credential issuer's signing " +
+          "certificate along with a trust chain in the x5c JOSE header\". " +
+          "Its key was resolved another way, and the signature is checked " +
+          "on its own row.");
+  var hasCnf = isPlainObject(payload.cnf);
+  haipRow(s, "kb.present", "A KB-JWT is present for a holder-bound " +
+          "credential", !hasCnf || !!parsed.kbJwt, !hasCnf ?
+          "the credential has no cnf, so it is not holder-bound." :
+          parsed.kbJwt ? "the credential has cnf and a KB-JWT is present." :
+          "the credential has cnf and no KB-JWT came with it; section " +
+          "6.1.1.1: a KB-JWT \"MUST always be present\".");
+  if (payload.status !== undefined) {
+    var sl = isPlainObject(payload.status) &&
+        isPlainObject(payload.status.status_list);
+    haipRow(s, "status.status_list", "The status claim carries " +
+            "status_list", sl, sl ? "status.status_list is present." :
+            "status is " + JSON.stringify(payload.status).slice(0, 120) +
+            "; section 6.1: it \"MUST contain status_list\".");
+  }
+  log.debug("Leaving haipSdJwtRows().");
 }
 
 async function verifyKbJwt(s, query, parsed, ctx) {
@@ -5330,6 +5502,11 @@ async function verifyMdoc(s, query, presentation, ctx) {
     return null;
   }
   var status = read.top.get("status");
+  var docCount = (read.top.get("documents") || []).length;
+  haipRow(s, "mdoc.one-document", "One mdoc per DeviceResponse",
+          docCount === 1, docCount + " document(s) in this DeviceResponse" +
+          (docCount === 1 ? "." : "; section 5.3.1: each mdoc \"MUST be " +
+          "returned in a separate DeviceResponse\"."));
   s.add("format", "The presentation is an mdoc DeviceResponse",
         status === 0 ? PASS : FAIL, "docType " + read.parsed.docType +
         ", status " + status + ", " + read.parsed.items.length +
@@ -5937,6 +6114,11 @@ async function openResponse(report, parsed, session) {
            "carrying vp_token, as dc_api returns it (Appendix A.4).") :
            jwtMode ? "one `response` field, as direct_post.jwt requires." :
            "form fields, as direct_post sends them.");
+  var hs = scope(report, g, "response.");
+  haipRow(hs, "encrypted", "The answer is encrypted", jwtMode,
+          jwtMode ? "it came as " + mode + "." : "it came as " + mode +
+          "; section 5.1 (redirects) and 5.2 (DC API): the response MUST " +
+          "be encrypted, direct_post.jwt or dc_api.jwt.");
   if (!jwtMode) {
     log.debug("Leaving openResponse(). Plain.");
     return parsed;
@@ -5951,6 +6133,12 @@ async function openResponse(report, parsed, session) {
     return null;
   }
   checkJweHeader(report, header, session);
+  haipRow(hs, "jwe", "The answer is ECDH-ES with A128GCM or A256GCM",
+          header.alg === "ECDH-ES" && (header.enc === "A128GCM" ||
+          header.enc === "A256GCM"), "alg " + header.alg + ", enc " +
+          header.enc + (header.alg === "ECDH-ES" && (header.enc ===
+          "A128GCM" || header.enc === "A256GCM") ? "." : "; section 5: " +
+          "ECDH-ES on P-256 with A128GCM or A256GCM."));
   try {
     var opened = await joseJwe.decryptCompact({ jwe: parsed.response,
       key: session.decryptionJwk });
@@ -6061,6 +6249,12 @@ async function verifyPresentations(report, vpToken, ctx) {
               FORMATS.join(", ") + ".");
         continue;
       }
+      haipRow(s, "format", "The format is dc+sd-jwt or mso_mdoc",
+              query.format === "dc+sd-jwt" || query.format === "mso_mdoc",
+              'the format is "' + query.format + '"' + (query.format ===
+              "dc+sd-jwt" || query.format === "mso_mdoc" ? "." :
+              "; section 5: HAIP profiles only IETF SD-JWT VC and ISO " +
+              "mdoc."));
       var claims = null;
       var one = Object.assign({}, ctx, { query: query,
                                          authoritiesReported: false });
@@ -6091,11 +6285,19 @@ async function verifyPresentations(report, vpToken, ctx) {
 function finish(report, presentations) {
   log.debug("Entering finish().");
   var failed = report.checks.filter(function (c) {
-    return c.status === FAIL;
+    return c.status === FAIL && !c.profile;
   }).length;
   var notPerformed = report.checks.filter(function (c) {
     return c.essential && c.status === SKIP;
   }).length;
+  var profile = null;
+  if (report.profile === "haip") {
+    var violations = report.checks.filter(function (c) {
+      return c.profile === "haip" && c.status === FAIL;
+    }).length;
+    profile = { name: "HAIP 1.0", violations: violations,
+                conformant: violations === 0 };
+  }
   var verdict = failed || !report.checks.length ? "fail" :
       notPerformed ? "incomplete" : "pass";
   log.debug("Leaving finish(). " + report.checks.length + " check(s), " +
@@ -6103,7 +6305,7 @@ function finish(report, presentations) {
             "performed: " + verdict + ".");
   return { ok: verdict === "pass", verdict: verdict, failed: failed,
            incomplete: notPerformed, checks: report.checks,
-           presentations: presentations || [] };
+           presentations: presentations || [], profile: profile };
 }
 
 // Check a Wallet's answer. opts:
@@ -6136,7 +6338,8 @@ async function verifyResponse(opts) {
   log.debug("Entering verifyResponse().");
   var o = opts || {};
   var session = o.session || {};
-  var report = { checks: [] };
+  var report = { checks: [],
+                 profile: session.profile === "haip" ? "haip" : "" };
   var g = "response";
   var dc = isDcApiMode(session.responseMode);
   var input = o.fields;
@@ -6275,6 +6478,7 @@ module.exports = {
   signRequestObject: signRequestObject,
   signingAlgsFor: signingAlgsFor,
   planForWalletMetadata: planForWalletMetadata,
+  haipRequestProblems: haipRequestProblems,
   akiValuesFromAnchors: akiValuesFromAnchors,
   encryptRequestObject: encryptRequestObject,
   dcApiRequest: dcApiRequest,
