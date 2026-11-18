@@ -54,6 +54,8 @@ var log = bunyan.createLogger({
 });
 
 var bytes = require("./crypto_bytes");
+// Digests by crypto_provider.js (#463): pure JS, on every deployment.
+var provider = require("./crypto_provider");
 var jws = require("./jws");
 var joseJwe = require("./jose_jwe");
 var jweKem = require("./jwe_kem");
@@ -257,9 +259,10 @@ function x509Hash(derInput) {
   log.debug("Entering x509Hash().");
   var der = bytes.asBytes(derInput);
   log.debug("Leaving x509Hash().");
-  return crypto.subtle.digest("SHA-256", der).then(function (d) {
-    return bytes.bytesToB64u(new Uint8Array(d));
-  });
+  return Promise.resolve(provider.digest("sha256", der))
+    .then(function (d) {
+      return bytes.bytesToB64u(d);
+    });
 }
 
 // The leaf certificate's public key as a JWK, for verifying the Request

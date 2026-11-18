@@ -256,6 +256,34 @@ function htuDropsQueryAndNormalizes() {
 }
 
 // --- ath: RFC 9449 section 4.2 ---------------------------------------------
+// With crypto.subtle removed, as on a page served over plain HTTP (#463):
+// the thumbprint and ath are crypto_provider.js digests now, so RFC 9449's
+// own jkt must still come out, and ath must still be node's SHA-256.
+async function digestsNeedNoWebCrypto() {
+  log.debug("Entering digestsNeedNoWebCrypto().");
+  log.info("=== The thumbprint and ath with no crypto.subtle ===");
+  var descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  var real = globalThis.crypto;
+  Object.defineProperty(globalThis, "crypto", { configurable: true,
+    writable: true, value: { getRandomValues: function (a) {
+      return real.getRandomValues(a);
+    } } });
+  var jkt;
+  var ath;
+  try {
+    jkt = await dpop.thumbprint(RFC9449_JWK);
+    ath = await dpop.athFor("an-access-token");
+  } finally {
+    Object.defineProperty(globalThis, "crypto", descriptor);
+  }
+  assert.strictEqual(jkt, RFC9449_JKT, "RFC 9449's jkt with no Web Crypto");
+  assert.strictEqual(ath, crypto.createHash("sha256")
+    .update("an-access-token", "ascii").digest("base64url"),
+    "ath with no Web Crypto is node's SHA-256");
+  log.info("[no web crypto] OK — the jkt and ath need no crypto.subtle.");
+  log.debug("Leaving digestsNeedNoWebCrypto().");
+}
+
 async function athIsTheHashOfTheToken() {
   log.debug("Entering athIsTheHashOfTheToken().");
   log.info("=== ath (RFC 9449 section 4.2) ===");
@@ -591,6 +619,7 @@ async function test() {
   await thumbprintIgnoresEverythingItShould();
   htuDropsQueryAndNormalizes();
   await athIsTheHashOfTheToken();
+  await digestsNeedNoWebCrypto();
   jtiIsUnpredictableAndLongEnough();
   await proofIsWellFormedAndVerifies();
   nonceHandshakeIsRecognised();
