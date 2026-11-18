@@ -48,6 +48,7 @@ const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const { mustBeReady } = require("./expectation.js");
 const { loadUrl } = require("./page_load.js");
+const { waitForPageBundle } = require("./wait_for.js");
 // The applications registry, for the one client this job declares (#311).
 const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
@@ -722,10 +723,18 @@ async function twoGrantsReachTheCaepPaneForReal(driver, helpers) {
     });
   }
   check('both driven grants delivered through the hand-off', function () {
+    // The invalid_scope explanation only when the token endpoint said so
+    // (#507): a browser-side failure (a stale element, a timeout) never
+    // reached it, and blaming the client's scopes sends the reader to the
+    // wrong place.
+    const scopeRefused = undriven.some(function (u) {
+      return /invalid_scope/.test(u);
+    });
     assert.deepStrictEqual(undriven, [],
-        'A grant could not be driven: ' + undriven.join('; ') + '. When ' +
-        'the token endpoint answered invalid_scope, the client it ran as ' +
-        'is not allowed the scope the SSF page asks for by default.');
+        'A grant could not be driven: ' + undriven.join('; ') + '.' +
+        (scopeRefused ? ' The token endpoint answered invalid_scope: the ' +
+          'client it ran as is not allowed the scope the SSF page asks for ' +
+          'by default.' : ''));
   });
 }
 
@@ -756,6 +765,18 @@ async function oneGrant(driver, helpers, grant) {
   await driver.wait(async function () {
     return /oauth2_oidc_[12]\.html/.test(await driver.getCurrentUrl());
   }, WAIT, "the hand-off did not reach the OAuth2 / OIDC workflow");
+  // **THE PAGE FINISHED LOADING, NOT MERELY ITS URL (#507).** The URL changes
+  // as soon as the navigation commits, while the document is still being
+  // built and its bundle's onload is still drawing; an element found then
+  // is replaced underneath the helper, which fails with "stale element
+  // reference" naming nothing on the page. So wait for the document to be
+  // complete and the page's bundles to be defined, as tests/CLAUDE.md says
+  // to: on the page's content, not on an element that happens to exist.
+  await driver.wait(async function () {
+    return (await driver.executeScript("return document.readyState;")) ===
+        "complete";
+  }, WAIT, "the OAuth2 / OIDC page never finished loading");
+  await waitForPageBundle(driver, "the OAuth2 / OIDC page's bundle", WAIT);
   // **EVERY PANE OPEN BEFORE THE HELPERS TOUCH ANYTHING.** The OAuth2 / OIDC
   // pages remember which of their panes were collapsed, per browser, and
   // `populateMetadata()` waits for the discovery field to be VISIBLE — so a
