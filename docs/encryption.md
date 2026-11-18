@@ -300,10 +300,12 @@ has to remember is the version that gets forgotten, and it fails by passing.
   `crypto.subtle` offers AES in GCM, CBC and CTR and nothing else — no CFB, no
   OFB, no ECB, no DES — and Chrome refuses every AES-192 operation outright. A
   page whose point is to show what a mode does cannot offer three of six and
-  refuse a key size. The JWE pane *is* Web Crypto, because JWE is, and that is
-  where `A192GCM` shows up as offered-by-the-RFC and unusable-in-this-browser:
-  `jose_jwe.js` probes for it and the pane reports the reason rather than
-  failing with an `OperationError`.
+  refuse a key size. Since #463 step 2 the JWE pane is not Web Crypto either:
+  every primitive `jose_jwe.js` uses is `common/crypto/crypto_provider.js`'s,
+  pure JS at every key size, so `A192GCM` and `ECDH-ES+A192KW` work in Chrome
+  and the whole pane works on a plain-HTTP origin, where `crypto.subtle` does
+  not exist. `tests/jose_jwe_encryption.js` runs every alg/enc pair with
+  `crypto.subtle` removed and has the `jose` library open each result.
 * **No key material is stored.** Nothing on this page touches `localStorage` or
   `sessionStorage`, which is the Digital Signature page's rule and the reason
   neither appears in the key-pair storage opt-out that governs the multi-screen
