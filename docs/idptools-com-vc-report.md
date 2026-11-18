@@ -357,15 +357,21 @@ is how the default iya-sts issues.
    (`dc+sd-jwt`), the default iya-sts configuration. Under **"When it is
    issued"**, leave **"As soon as your wallet asks for it."** Press
    **"Make an offer."**
+
+   ![The iya-sts User Portal: choose the credential and the issue time, then Make an offer](idptools-com-images/issue-1-portal.png)
 3. The portal shows **"Scan this with your wallet"** (a QR of the
    `openid-credential-offer://` link), **"Then type this Transaction Code into
    your wallet:"** with the code, and **"The offer, as a link."** Copy the link
    and note the Transaction Code.
+
+   ![The offer: its QR code, the link, and the Transaction Code beside it](idptools-com-images/issue-2-offer.png)
 4. On `https://idptools.com`, choose **VC Issuance**. On step 1, set
    **client_id** (in **Configuration Parameters**) to `idptools-wallet`, paste
    the offer link into **Receive a Credential Offer**, and press **Take this
    offer**. The **Credential Offer** pane names `IdentityCredential` and the
    pre-authorized grant with its `tx_code`.
+
+   ![VC Issuance step 1, after Take this offer: the Credential Offer pane](idptools-com-images/issue-3-offer-taken.png)
 5. Now step 1 discovers the issuer, so **nothing else is typed by hand** — and
    you can see exactly where each value comes from:
    - **Credential Issuer Metadata** — the **Credential Issuer Metadata URL**
@@ -378,15 +384,23 @@ is how the default iya-sts issues.
    - **Authorization Server Metadata** — its **Metadata Endpoint URL** is taken
      from the `authorization_servers` just retrieved. Press **Retrieve** (RFC
      8414), then **Validate Signature**.
+
+   ![Credential Issuer Metadata, retrieved and signature-validated](idptools-com-images/issue-4-issuer-metadata.png)
    The **Configuration Parameters** pane below is filled **from these two
    documents** — every endpoint, scope and credential setting the flow uses is
    shown there, sourced from the metadata rather than guessed. You can override
    any of it in that pane before continuing.
+
+   ![Configuration Parameters, filled from the retrieved metadata](idptools-com-images/issue-6-config.png)
 6. Press **Start Issuance** (a pre-authorized offer skips the sign-in). On
    step 2, type the **Transaction Code**, press **Send the Token Request**,
    then **Approve and Request Credential**.
+
+   ![Step 2: the pre-authorized Token Request with the Transaction Code](idptools-com-images/issue-7-token.png)
 7. Step 3 shows the SD-JWT VC, verified — the credential is now held in the
    wallet.
+
+   ![Step 3: the issued SD-JWT VC, verified and held in the wallet](idptools-com-images/issue-8-credential.png)
 
 **Present it (VC Presentation)** — to **iya-sts's own OpenID4VP verifier**. (The
 debugger's *own* Verifier page needs the self-hosted build, as it would store
@@ -419,11 +433,19 @@ Credentials API.)
    **neither**. Setting the **Verifier base URL** alone is enough (the JWKS URL
    just auto-fills from it); the x509 anchor stays empty because this is not an
    x509-identified Verifier.
+
+   ![VC Presentation step 0: the Verifier's identity set by hand](idptools-com-images/present-2-config.png)
 3. On step 1, paste the `openid4vp://` request. The wallet reads it (no fetch
    needed), and you pick the held credential and the claims to disclose.
+
+   ![Step 1: the pasted request read, with the claims the Verifier asks for](idptools-com-images/present-3-request.png)
 4. Press **Present**. The wallet posts the presentation to iya-sts's
    `response_uri` (allowed by the CORS origin set in step 3).
+
+   ![Step 2: the assembled answer, ready to present](idptools-com-images/present-4-present.png)
 5. The admin console shows the presentation **received and verified**.
+
+   ![Step 3: iya-sts answered HTTP 200 and accepted the presentation](idptools-com-images/present-5-verified.png)
 
 ### 7. Remove it again
 
