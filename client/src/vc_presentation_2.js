@@ -39,6 +39,8 @@ var bbs2023 = require("./bbs2023");
 // canonicalizer with data_integrity.js, which vp_protocols.js signs through.
 require("./data_integrity_rdfc");
 var vcFormats = require("./vc_formats");
+// BbsBlsSignature2020: the holder derives a BbsBlsSignatureProof2020 (#475).
+var bbsBls2020 = require("./bbs_bls_2020");
 var didLib = require("./did");
 var vpProtocols = require("./vp_protocols");
 var cbor = require("./cbor");
@@ -167,8 +169,8 @@ function loadState() {
   // SIOPv2: whether an ID Token is asked for, and whether it is ALL that is.
   state.wantsIdToken = vpProtocols.asksForIdToken(params);
   state.idTokenOnly = state.wantsIdToken && !vpProtocols.asksForVpToken(params);
-  state.rows = ((state.parsed && state.parsed.disclosures) ||
-      []).map(function (d) {
+  state.rows = ldpBbs2020() ? bbs2020Rows(previously) :
+      ((state.parsed && state.parsed.disclosures) || []).map(function (d) {
     var requested = state.requested.indexOf(d.name) !== -1;
     return {
       encoded: d.encoded,
@@ -195,6 +197,52 @@ function ldpWhole() {
     state.parsed.format === sdJwtVc.FORMAT_LDP_VC && !state.parsed.ldpSelective;
   log.debug("Leaving ldpWhole(). " + whole);
   return whole;
+}
+
+// A BbsBlsSignature2020 credential: selective, but over CLAIMS chosen by a
+// JSON-LD frame (MATTR's derivation), not over canonical statements as
+// bbs-2023 is — so it gets claim rows like an SD-JWT's (#475).
+function ldpBbs2020() {
+  log.debug("Entering ldpBbs2020().");
+  var yes = state.format === sdJwtVc.FORMAT_LDP_VC && !!state.parsed &&
+    state.parsed.ldpSuite === bbsBls2020.SIGNATURE_TYPE;
+  log.debug("Leaving ldpBbs2020(). " + yes);
+  return yes;
+}
+
+// One row per credentialSubject claim (its id names the holder and always
+// goes). `encoded` identifies the row for the stored selection.
+function bbs2020Rows(previously) {
+  log.debug("Entering bbs2020Rows().");
+  var doc = state.parsed.document || {};
+  var subject = [].concat(doc.credentialSubject || [])[0] || {};
+  var rows = Object.keys(subject).filter(function (name) {
+    return name !== "id";
+  }).map(function (name) {
+    var requested = state.requested.indexOf(name) !== -1;
+    var encoded = "credentialSubject." + name;
+    return { encoded: encoded, name: name, value: subject[name],
+      requested: requested,
+      checked: Object.prototype.toString.call(previously) ===
+        "[object Array]" ? previously.indexOf(encoded) !== -1 : requested };
+  });
+  log.debug("Leaving bbs2020Rows(). " + rows.length);
+  return rows;
+}
+
+// The JSON-LD frame that discloses the checked claims and nothing else.
+function bbs2020Frame() {
+  log.debug("Entering bbs2020Frame().");
+  var doc = state.parsed.document || {};
+  var subject = { "@explicit": true };
+  state.rows.filter(function (r) {
+    return r.checked;
+  }).forEach(function (r) {
+    subject[r.name] = {};
+  });
+  log.debug("Leaving bbs2020Frame().");
+  return { "@context": doc["@context"], type: doc.type,
+           credentialSubject: subject };
 }
 
 function selectedEncoded() {
@@ -341,7 +389,8 @@ function renderDisclosureTable() {
   // With no Disclosures the table would render as an empty box, which reads as
   // a credential that carries nothing. Show what will actually be sent instead,
   // and say why none of it can be withheld.
-  if (state.format === sdJwtVc.FORMAT_LDP_VC && !ldpWhole()) {
+  if (state.format === sdJwtVc.FORMAT_LDP_VC && !ldpWhole() &&
+      !ldpBbs2020()) {
     var leaves = state.rows || [];
     setHtml("vp_disclosures_table",
       "<thead><tr><th style='width:6%'>Send</th><th " +
@@ -529,6 +578,38 @@ function buildPresentation() {
               state.requestedFormat +
               ", holding " + state.heldFormat + ".");
     return Promise.resolve(false);
+  }
+  if (ldpBbs2020()) {
+    // MATTR's derivation: frame the credential to the checked claims and
+    // prove the issuer signed what is left. The derived proof's nonce is the
+    // request's, so it cannot be replayed to another request even without
+    // the holder's VP around it.
+    log.debug("Leaving buildPresentation(). BbsBlsSignature2020.");
+    return bbsBls2020.deriveProof(state.parsed.document, bbs2020Frame(), {
+      nonce: String(params.nonce || "") || undefined
+    }).then(function (derived) {
+      state.built = { presentation: JSON.stringify(derived.document),
+        vpElement: derived.document, format: sdJwtVc.FORMAT_LDP_VC };
+      setValue("vp_presentation", state.built.presentation);
+      setText("vp_sd_hash", "");
+      setValue("vp_kb_jwt", "");
+      setJson("vp_kb_header", { type: bbsBls2020.PROOF_TYPE,
+        disclosed: derived.disclosedStatements.length,
+        of: derived.statementCount });
+      setJson("vp_kb_payload", derived.disclosedStatements);
+      setJson("vp_presented_claims", [].concat(
+        derived.document.credentialSubject || [])[0] || {});
+      status("vp_present_status", "Derived a " + bbsBls2020.PROOF_TYPE +
+        " disclosing " + derived.disclosedStatements.length + " of " +
+        derived.statementCount + " statements.", "vc-ok");
+      return finishResponse();
+    }).catch(function (e) {
+      log.error("could not derive the BbsBlsSignatureProof2020: " +
+                e.message);
+      status("vp_present_status", "Could not derive the proof: " +
+             e.message, "vc-bad");
+      return false;
+    });
   }
   if (ldpWhole()) {
     // The whole credential, exactly as the issuer signed it: its proof covers
@@ -1525,7 +1606,8 @@ function onload() {
   // that is async. Nothing is fetched: a W3C bbs-2023 base proof carries the
   // issuer's public key, which is what a holder derives with; the VERIFIER
   // is the one who resolves the verificationMethod and ties it to the issuer.
-  if (state.format === sdJwtVc.FORMAT_LDP_VC && !ldpWhole()) {
+  if (state.format === sdJwtVc.FORMAT_LDP_VC && !ldpWhole() &&
+      !ldpBbs2020()) {
     prepareLdpPointers().then(function (prepared) {
       // NOT on a failure. prepareLdpPointers() has already said why on the
       // status line; building now would replace that reason with "Reading

@@ -50,6 +50,9 @@ var jws = require("./jws");
 var sdJwtVc = require("./sd_jwt_vc");
 var vpProtocols = require("./vp_protocols");
 var mdoc = require("./mdoc");
+// The JWS a holder key signs with (#475): not always ES256 any more, since
+// the holder key is whatever kind the issuer accepted.
+var vcFormats = require("./vc_formats");
 
 var KEYS = {
   // Which way the presentation is being started (see USE_CASES).
@@ -626,9 +629,25 @@ function sdHash(prefix, sdAlg) {
 // exactly iat, aud, nonce and sd_hash. OID4VP fixes the first two of those: the
 // nonce is the request's nonce, and the aud is the verifier's Client
 // Identifier.
+// The algorithm a holder private JWK signs with: the one it was made for
+// when it names one, otherwise its curve's (vc_formats.jwsFor()); `accepted`
+// is the Verifier's list when it gave one.
+function holderJws(privateJwk, accepted) {
+  log.debug("Entering holderJws().");
+  var k = privateJwk || {};
+  var offered = [].concat(accepted || []);
+  if (!offered.length && k.alg) {
+    offered = [k.alg];
+  }
+  var j = vcFormats.jwsFor(vcFormats.publicJwkOf(k), offered);
+  log.debug("Leaving holderJws(). " + (j ? j.headerAlg : KB_ALG));
+  return j || { algId: KB_ALG, headerAlg: KB_ALG };
+}
+
 function signKbJwt(opts) {
   log.debug("Entering signKbJwt(). aud=" + opts.aud);
-  var header = { typ: KB_TYP, alg: KB_ALG };
+  var alg = holderJws(opts.holderPrivateJwk, opts.acceptedAlgs);
+  var header = { typ: KB_TYP, alg: alg.headerAlg };
   var payload = {
     iat: Math.floor(Date.now() / 1000),
     aud: opts.aud,
@@ -640,7 +659,7 @@ function signKbJwt(opts) {
   // specification fixes the rest, so the bytes are not this module's to
   // rearrange. jws.js does the signing input and the Web Crypto call.
   return jws.signJwsAsync({
-    algId: KB_ALG,
+    algId: alg.algId,
     protectedHeader: header,
     payload: payload,
     privateKey: { jwk: opts.holderPrivateJwk },
@@ -695,7 +714,8 @@ function buildPresentation(opts) {
 // ---------------------------------------------------------------------------
 function signVpJwt(opts) {
   log.debug("Entering signVpJwt(). aud=" + opts.aud);
-  var header = { typ: "JWT", alg: KB_ALG };
+  var alg = holderJws(opts.holderPrivateJwk, opts.acceptedAlgs);
+  var header = { typ: "JWT", alg: alg.headerAlg };
   var payload = {
     iss: opts.holderId || "urn:ietf:params:oauth:jwk-thumbprint:holder",
     aud: opts.aud,
@@ -709,7 +729,7 @@ function signVpJwt(opts) {
   };
   log.debug("Leaving signVpJwt().");
   return jws.signJwsAsync({
-    algId: "ES256",
+    algId: alg.algId,
     protectedHeader: header,
     payload: payload,
     privateKey: { jwk: opts.holderPrivateJwk },
@@ -853,6 +873,7 @@ module.exports = {
   presentedPrefix: presentedPrefix,
   sdHash: sdHash,
   signKbJwt: signKbJwt,
+  holderJws: holderJws,
   buildPresentation: buildPresentation,
   buildPresentationFor: buildPresentationFor,
   buildMdocPresentation: buildMdocPresentation,

@@ -421,8 +421,9 @@ COPY client/src/mdoc.js client/src/vp_protocols.js ./
 # What those now require (#475): sd_jwt_vc.js, vci_metadata.js and
 # vp_protocols.js read the format table, and vp_protocols.js signs the
 # holder's VP through data_integrity.js; data_integrity_rdfc.js is what
-# registers RDFC-1.0 with it.
-COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js ./
+# registers RDFC-1.0 with it, and requires bbs_bls_2020.js (which needs
+# bbs_plus_2020.js) so the BbsBlsSignature2020 suites register too.
+COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js client/src/bbs_bls_2020.js client/src/bbs_plus_2020.js ./
 # The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
 # and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
 # directory is flat and the last COPY wins, so a test of that name would
@@ -443,7 +444,7 @@ COPY tests/vp_verifier_engine.js ./
 # And tests/client_module_bindings.js: every name the browser bundles use is
 # bound (client/src and the staged common/ modules, read from
 # /usr/src/source-tree).
-COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js ./
+COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js tests/holder_key_algs.js tests/ldp_vc_whole_presentation.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./

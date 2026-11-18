@@ -42,6 +42,8 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var vciWallet = require("./vci_wallet");
+// What each format and key allows: the holder key's algorithm (#475).
+var vcFormats = require("./vc_formats");
 var dpopLib = require("./dpop");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_4',
@@ -1001,8 +1003,7 @@ function holderKeyForRequest() {
     // The public half comes from storage when it is there; otherwise it is the
     // public part of the pasted private JWK, which for an EC key carries x/y.
     var pub = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_JWK) ||
-              (priv ? { kty: priv.kty, crv: priv.crv, x: priv.x,
-               y: priv.y } : null);
+              (priv ? vcFormats.publicJwkOf(priv) : null);
     if (pub && priv) {
       log.debug("Leaving holderKeyForRequest(). Reusing the stored " +
                 "holder key.");
@@ -1015,7 +1016,12 @@ function holderKeyForRequest() {
   // the private half of it is the only thing that can present the credential
   // the wallet actually has. keepRefreshed() parks the new pair;
   // replaceCredential() promotes it.
-  return vciWallet.generateHolderKeyPair();
+  // The same kind of key as the one the credential is bound to, or what the
+  // issuer accepts when there is none (vc_formats.holderKeyAlgFor()).
+  var held = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK) || {};
+  var cfg = state.config || sdJwtVc.storedRequestConfig();
+  return vciWallet.generateHolderKeyPair(held.alg ||
+    vcFormats.holderKeyAlgFor(cfg.proofAlgs, cfg.format) || undefined);
 }
 
 // Which Credential Dataset identifiers the token response granted, if the
@@ -1065,7 +1071,11 @@ function prepareReissue() {
       return vciWallet.signProofs(state.request.holderKeys, {
         clientId: sdJwtVc.get("client_id") || "",
         credentialIssuer: state.config.credentialIssuer,
-        nonce: state.request.nonce
+        nonce: state.request.nonce,
+        proofAlgs: String(state.config.proofAlgs || "").split(",")
+          .map(function (a) {
+            return a.trim();
+          }).filter(Boolean)
       });
     })
     .then(function (proofs) {
