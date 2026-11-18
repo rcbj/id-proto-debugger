@@ -134,6 +134,16 @@ model TokenRequest {
   /** Parameter name to value, each appended to the form body as typed. */
   @passthrough
   customParams?: Record<unknown> | null;
+
+  /**
+   * draft-ietf-oauth-attestation-based-client-auth: the Client Attestation
+   * JWT, sent as the OAuth-Client-Attestation header. A compact JWS; the
+   * api refuses anything else rather than write it into a header.
+   */
+  client_attestation?: string | null;
+
+  /** Its proof of possession, sent as OAuth-Client-Attestation-PoP. */
+  client_attestation_pop?: string | null;
 }
 
 /** An introspection request (RFC 7662 section 2.1). The caller's

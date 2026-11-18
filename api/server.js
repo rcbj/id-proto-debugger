@@ -1917,6 +1917,33 @@ app.post('/wstrust', model.route('wstrustProxy'), function (req, res) {
 /**
  * Wrapper around OAuth2 Token Endpoint
  */
+// The OAuth-Client-Attestation and -PoP headers a /token caller asked for:
+// { headers } or { error }. Both or neither; each a compact JWS.
+const COMPACT_JWS = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+function attestationHeaders(body) {
+  log.debug('Entering attestationHeaders().');
+  const att = body.client_attestation;
+  const pop = body.client_attestation_pop;
+  if (!att && !pop) {
+    log.debug('Leaving attestationHeaders(). None.');
+    return { headers: {} };
+  }
+  if (!att || !pop) {
+    log.debug('Leaving attestationHeaders(). One of two.');
+    return { error: 'client_attestation and client_attestation_pop go ' +
+             'together (draft-ietf-oauth-attestation-based-client-auth ' +
+             'section 5).' };
+  }
+  if (!COMPACT_JWS.test(String(att)) || !COMPACT_JWS.test(String(pop))) {
+    log.debug('Leaving attestationHeaders(). Not a JWS.');
+    return { error: 'client_attestation and client_attestation_pop are ' +
+             'each a compact JWS (three base64url parts).' };
+  }
+  log.debug('Leaving attestationHeaders().');
+  return { headers: { 'oauth-client-attestation': String(att),
+                      'oauth-client-attestation-pop': String(pop) } };
+}
+
 app.post('/token', model.route('oauthToken'), (req, res) => {
   try {
     log.info('Entering app.post for /token.');
@@ -1941,6 +1968,18 @@ app.post('/token', model.route('oauthToken'), (req, res) => {
       headers.authorization = 'Basic ' + Buffer.from(clientId + ":" +
           clientSecret).toString('base64');
     }
+    // Client Attestation (draft-ietf-oauth-attestation-based-client-auth):
+    // two headers a browser could send itself and a proxied call must
+    // carry for it. Each must be a compact JWS, so nothing else can be
+    // written into a header from here.
+    const attestation = attestationHeaders(body);
+    if (attestation.error) {
+      log.info('Leaving app.post for /token. ' + attestation.error);
+      res.status(400).json({ error: 'invalid_request',
+                             error_description: attestation.error });
+      return;
+    }
+    Object.assign(headers, attestation.headers);
     var tokenEndpoint = body.token_endpoint;
     var sslValidate = verifiesCertificates(body.sslValidate);
     // The HTTP trace this call is to be shown with, if the caller asked for

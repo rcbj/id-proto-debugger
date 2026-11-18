@@ -545,6 +545,23 @@ function fetchChallenge(url) {
     });
 }
 
+// A fresh challenge from the AS's challenge_endpoint, stored for the next
+// PoP, when the metadata names one: resolves to "challenge_endpoint" then,
+// and to "" (nothing fetched) otherwise. For callers that build the PoP
+// themselves (oauth2_oidc_2.js).
+function freshChallenge() {
+  log.debug("Entering freshChallenge().");
+  var url = challengeEndpoint();
+  if (!url) {
+    log.debug("Leaving freshChallenge(). No endpoint.");
+    return Promise.resolve("");
+  }
+  log.debug("Leaving freshChallenge().");
+  return fetchChallenge(url).then(function () {
+    return "challenge_endpoint";
+  });
+}
+
 // onStage(text), when given, is told each step, so a page's status says
 // what it is waiting on.
 function sendToken(vciWallet, params, endpoint, context, onStage) {
@@ -621,6 +638,7 @@ module.exports = {
   sendToken: sendToken,
   TOKEN_TIMEOUT_MS: TOKEN_TIMEOUT_MS,
   challengeEndpoint: challengeEndpoint,
+  freshChallenge: freshChallenge,
   KEY_MATERIAL: KEY_MATERIAL,
   SECRET_FIELD: SECRET_FIELD,
   method: method,
