@@ -5,7 +5,7 @@ behind it, `client/src/vp_verifier.js`. Issue #364.
 
 The VC presentation workflow has two roles. The **Wallet** is the debugger
 answering somebody else's Verifier: `vc-presentation-0.html` through `-3`,
-described in `docs/vc-presentation-guide.md`. The **Verifier** is this page:
+described in `docs/vc/` (user guide). The **Verifier** is this page:
 the debugger asks a wallet for claims and checks the answer. The role
 selector at the top of `vc-presentation-0.html` links the two.
 

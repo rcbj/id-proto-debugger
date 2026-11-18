@@ -284,6 +284,9 @@ const JOB_LOCKS = {
   "oid4vci_request_encryption.js": "sts-vc",
   "dpop_workflow.js": "sts-vc",
   "vci_offer_modes.js": "sts-vc",
+  // The user guide's walk through the VC pages (docs/vc/): it collects
+  // credentials through the same shared wallet entry the job above declares.
+  "vc_user_guide.js": "sts-vc",
   "metadata_schema_validation.js": "sts-vc",
   // walt.id's issuer-api2 and verifier-api2.
   "sd_jwt_vc_waltid.js": "waltid",
@@ -4478,6 +4481,25 @@ function buildJobs() {
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // THE USER GUIDE'S TUTORIALS, walked the way docs/vc/ tells a reader to
+    // walk them: step 1 from the issuer's metadata, pre-authorized offers
+    // (Transaction Code, DPoP, deferred, every format the issuer offers),
+    // DID Tools against the issuer's origin, and a presentation to the
+    // debugger's own Verifier page under OpenID4VP 1.0 and HAIP 1.0 where
+    // the target has an api. Its doc_screenshots.js calls are inert unless
+    // DOC_SCREENSHOT_DIR is set.
+    jobs.push({
+      name: "VC user guide — the tutorials of docs/vc/ (issuance by " +
+          "pre-authorized offer, DID Tools, presentation to the debugger's " +
+          "own Verifier)",
+      script: "vc_user_guide.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        API_URL: env.LDAP_AVAILABLE === "false" ? "" :
+            (env.API_URL || "https://localhost:4000"),
       },
     });
     jobs.push({

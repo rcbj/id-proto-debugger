@@ -33,6 +33,9 @@ const path = require("path");
 const browserFlags = require("./browser_flags.js");
 const { Command, Option } = require("commander");
 const { loadUrl } = require("./page_load.js");
+// The user guide's pictures (docs/vc/). Inert unless DOC_SCREENSHOT_DIR is
+// set, so an ordinary run takes none.
+const docShots = require("./doc_screenshots.js");
 const waitForContent = require("./wait_for.js");
 const { waitForStatus, waitForValue } = require("./wait_for");
 var appconfig = require(process.env.CONFIG_FILE);
@@ -90,15 +93,19 @@ async function test() {
                                "sessionStorage.clear();");
 
     // 1 and 2: the specification's examples.
+    docShots.setPrefix("vc-barcodes");
     await click(driver, "vcb_example_ead");
     await click(driver, "vcb_verify_button");
     await readStatus(driver, "the QR + MRZ example", /^VALID .*optical data/);
+    await docShots.snap(driver, "01-verify-qr-mrz", { ids: ["pane_vcb_read"] });
     log.info("PASS the specification's QR + MRZ example verifies.");
     var mrz = await driver.executeScript("return document.getElementById(" +
       "'vcb_mrz').value;");
     await setField(driver, "vcb_mrz", mrz.replace("JOHN", "JANE"));
     await click(driver, "vcb_verify_button");
     await readStatus(driver, "the same QR under a changed MRZ", /^INVALID/);
+    await docShots.snap(driver, "02-changed-mrz-invalid",
+                        { ids: ["pane_vcb_read"] });
     log.info("PASS the same barcode beside a different MRZ is INVALID.");
     await click(driver, "vcb_example_dl");
     await click(driver, "vcb_verify_button");
@@ -125,6 +132,9 @@ async function test() {
     }, "Issue should finish", stepWait);
     var issuedStatus = await driver.executeScript("return document." +
       "getElementById('vcb_issue_status').textContent;");
+    // A key Generate made for this run alone, so the private JWK in the
+    // picture protects nothing.
+    await docShots.snap(driver, "03-issue-mrz", { ids: ["pane_vcb_issue"] });
     assert.ok(/^Issued/.test(issuedStatus), issuedStatus);
     var issued = await driver.executeScript("return document." +
       "getElementById('vcb_issue_output').value;");

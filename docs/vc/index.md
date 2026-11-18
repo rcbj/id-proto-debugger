@@ -1,0 +1,205 @@
+---
+title: "Using the Verifiable Credential workflows"
+---
+
+# Using the Verifiable Credential workflows
+
+The debugger plays every role in a Verifiable Credential exchange, one step
+at a time, showing each request before it is sent and each answer after it
+arrives:
+
+* **the wallet receiving a credential** — the **VC Issuance** workflow,
+  `vc-issuance-0.html` to `vc-issuance-4.html`, over
+  [OpenID4VCI 1.0](openid4vci.md);
+* **the wallet presenting it** — the **VC Presentation** workflow,
+  `vc-presentation-0.html` to `vc-presentation-3.html`, over
+  [OpenID4VP 1.0](openid4vp.md), [HAIP 1.0](haip.md) or
+  [SIOPv2](siopv2.md);
+* **the Verifier asking for it** — `vc-verifier.html`, reached from the role
+  chooser on `vc-presentation-0.html`;
+* and four **VC Tools** linked from the foot of every VC page: DID Tools,
+  VC Barcodes, Gordian Envelope and ACDC.
+
+These pages are for somebody **using** the debugger. Why it behaves as it
+does is in the developer notes listed [at the end](#developer-notes).
+
+* TOC
+{:toc}
+
+## Before you start
+
+Start the debugger as the [README](../../README.md#getting-started)
+describes, open `https://localhost:3000`, and choose **VC Issuance** or
+**VC Presentation**. The deployed copy at [idptools.com](https://idptools.com)
+has every VC page, but it has no api, so the **Verifier page cannot host a
+request there**, and nothing that goes "through the api" is available.
+
+**The other end is yours to choose.** Nothing in these workflows is specific
+to one product: the wallet works with any OpenID4VCI Credential Issuer and
+any OpenID4VP Verifier, and the Verifier page with any OpenID4VP wallet.
+Every value you type comes from the other party's metadata, from the offer
+it made you, or from its request. The test suite runs them against iya-sts,
+walt.id's issuer and verifier, and Polaris (an independent HAIP Verifier),
+and the screenshots here use an OpenID4VCI Credential Issuer at
+`https://localhost:8081`.
+
+**CORS.** The pages fetch the other party's documents from the browser, so
+that party must send CORS headers naming the debugger's origin. Where it
+does not, upload the document from a file (issuance step 1), or send the
+call through the api (presentation step 0, and the Verifier page's
+issuer-side fetches).
+
+## Configuration reference
+
+Every pane, field and button, with its element id, the specification that
+defines it, its default and where the default comes from, and whether — and
+where — it is stored.
+
+| Page(s) | Reference |
+|---|---|
+| `vc-issuance-0.html` … `vc-issuance-4.html` | [reference-issuance.md](reference-issuance.md) |
+| `vc-presentation-0.html` … `vc-presentation-3.html` | [reference-presentation.md](reference-presentation.md) |
+| `vc-verifier.html` | [reference-verifier.md](reference-verifier.md) |
+| `did-tools.html`, `vc-barcodes.html`, `gordian-envelope.html`, `acdc.html`, the VC Tools row | [reference-tools.md](reference-tools.md) |
+
+## Protocol and format guides
+
+What each specification says, what the debugger does at each step, and what
+it checks. Drafts are labelled as drafts, with the revision the code
+implements.
+
+| Protocols | |
+|---|---|
+| [openid4vci.md](openid4vci.md) | OpenID4VCI 1.0: offers, pre-authorized and authorization code, `tx_code`, client authentication (including attestation), DPoP, key proofs, nonce, deferred and notification endpoints, refresh |
+| [openid4vp.md](openid4vp.md) | OpenID4VP 1.0: DCQL, request by value and by reference, `request_uri_method=post`, Client Identifier prefixes, `direct_post` / `direct_post.jwt`, the Digital Credentials API |
+| [haip.md](haip.md) | HAIP 1.0, the high-assurance profile, on both ends |
+| [siopv2.md](siopv2.md) | SIOPv2 self-issued ID Tokens |
+
+| Credential formats and status | |
+|---|---|
+| [format-sd-jwt-vc.md](format-sd-jwt-vc.md) | `dc+sd-jwt` — SD-JWT VC, RFC 9901, the Key Binding JWT |
+| [format-mdoc.md](format-mdoc.md) | `mso_mdoc` — ISO mdoc |
+| [format-jwt-vc-json.md](format-jwt-vc-json.md) | `jwt_vc_json` |
+| [format-ldp-vc.md](format-ldp-vc.md) | `ldp_vc` — every Data Integrity and Linked Data proof suite |
+| [format-vc-jose-cose.md](format-vc-jose-cose.md) | W3C VC-JOSE-COSE: `vc+jwt`, `vc+sd-jwt`, `vc+cose` |
+| [format-sd-cwt-jwp.md](format-sd-cwt-jwp.md) | SD-CWT and JWP / JPT (drafts) |
+| [format-anoncreds.md](format-anoncreds.md) | AnonCreds, with revocation |
+| [format-vc-barcodes.md](format-vc-barcodes.md) | W3C VC Barcodes |
+| [format-gordian-envelope.md](format-gordian-envelope.md) | Gordian Envelope |
+| [format-acdc.md](format-acdc.md) | ACDC / KERI |
+| [status-lists.md](status-lists.md) | IETF Token Status List and W3C Bitstring Status List |
+
+## Tutorials
+
+| Tutorial | What it shows | The other end | Screenshots |
+|---|---|---|---|
+| [Read a Credential Issuer's metadata](tutorial-issuer-discovery.md) | step 0, step 1's four documents, the configuration they produce | any OpenID4VCI issuer | yes |
+| [Receiving a credential](tutorials-issuance.md) | pre-authorized code with a Transaction Code, an offer from its QR code, authorization code, a claims subset, DPoP, deferred issuance, refresh and the Credential History, no keys in the browser, `private_key_jwt` and Client Attestation, other formats | an OpenID4VCI issuer **where you have an account** (pre-authorized) **or a registered client** (authorization code) | no — see below |
+| [Present selected claims to the debugger's own Verifier](tutorial-present-to-verifier.md) | both ends of OpenID4VP 1.0 in one browser, then HAIP 1.0 with an encrypted answer | the debugger's own Verifier page (needs the api); any OpenID4VP Verifier for the wallet half | yes |
+| [The Verifier page, and reading its checks](tutorial-verifier-checks.md) | DCQL, the Verifier's identity, the hand-off, every check row, `direct_post.jwt`, a wrong nonce, a request signed live for a `wallet_nonce` | any OpenID4VP wallet (needs the api) | yes |
+| [Resolve an issuer's DID and check its domain linkage](tutorial-did-linkage.md) | `did:web` resolution and the DIF Domain Linkage Credential | any site that publishes them | yes |
+| [VC Barcodes, Gordian Envelope and ACDC](tutorials-tools.md) | verify and issue a barcode; elide claims of an envelope; issue, verify and revoke an ACDC | none — the pages carry their own samples | yes |
+
+**What needs another issuer or verifier.** Everything above runs against
+the debugger itself or against any spec-compliant peer; nothing needs the
+product the screenshots were taken with. Some steps do need a peer that
+offers them:
+
+* **Receiving a credential** needs an issuer account (a pre-authorized offer
+  is made for a person the issuer knows) or a client registered at its
+  authorization server (the Authorization Code flow). The pictures in this
+  edition were taken against an issuer in product mode where the
+  documentation run had neither, which is why that tutorial has none; the
+  job that takes them is ready to (see below).
+* **SIOPv2** needs a Verifier that asks for an ID Token; the debugger's own
+  Verifier page asks only for presentations.
+* **ISO mdoc**, the **W3C VC-JOSE-COSE** formats, **JPT**, **SD-CWT** and
+  **AnonCreds** need an issuer that issues them; the suite's issuers do not,
+  and the suite's tests mint them with test issuers. Their guides say what
+  the debugger checks once you hold one.
+* The **Digital Credentials API** needs a browser and platform wallet that
+  implement it.
+* **Status lists** need a credential whose issuer publishes one.
+
+## What the debugger remembers
+
+Everything is in this browser's storage; nothing is sent anywhere to be
+kept. Three rules apply on every VC page, and each reference lists its keys:
+
+* **Secrets are never stored**: a client secret, a Transaction Code, a pasted
+  holder key, a pasted Verifier identity.
+* **Private keys are key material behind a checkbox, ticked by default**:
+  the holder key pair (**Save this holder key pair in browser localStorage**, issuance step 2 — clearing it
+  also strips the private key from every Credential History row), the client
+  keys and attestation (**Keep the client keys in this browser**), the
+  Verifier's identity (**Keep this identity in this browser**), and SIOPv2
+  pairwise keys. Clearing the box removes what was stored at once. The
+  Barcodes and Gordian Envelope pages store no key at all.
+* **Everything else** — settings, retrieved documents, the credentials and
+  the tokens the workflow obtained — is ordinary `localStorage`.
+
+## Regenerating the screenshots
+
+The pictures are taken by the Selenium jobs that drive these screens, through
+`tests/doc_screenshots.js`, which does nothing unless `DOC_SCREENSHOT_DIR` is
+set; an ordinary run of the suite takes none. A file is named
+`<prefix>-<step>.png`, the prefix naming the walk and the step its place in
+it, and the Markdown links to those names — so renaming a `snap()` breaks a
+picture here.
+
+| Job | Pictures |
+|---|---|
+| `vc_user_guide.js` | `vc-issuance-*`, `vc-metadata-*`, `did-tools-*`, `vp-openid4vp-*`, `vp-haip-*`; and, when it can take offers, `vc-pre-authorized-*`, `vc-refresh-*`, `vc-dpop-*`, `vc-deferred-*`, `vc-jwt-vc-json-*`, `vc-ldp-vc-*` |
+| `vc_verifier_page.js` | `vc-verifier-*` |
+| `vc_barcodes_browser.js` | `vc-barcodes-*` |
+| `gordian_envelope_browser.js` | `gordian-envelope-*` |
+| `acdc_browser.js` | `acdc-*` |
+
+`vc_user_guide.js` walks these tutorials against the issuer named by
+`OID4VCI_ISSUER_URL`, and the Verifier-page halves against the api named by
+`API_URL`. Against an issuer you do not run, three variables keep it to
+ordinary protocol use:
+
+| Variable | Effect |
+|---|---|
+| `VC_GUIDE_NO_PROVISION=1` | register nothing at the issuer (the suite's run declares its shared test wallet in the issuer's registry, as every wallet job there does) |
+| `VC_GUIDE_HOLDER_USERNAME`, `VC_GUIDE_HOLDER_PASSWORD` | the account to sign in with on the issuer's offer page; without them, a run with `VC_GUIDE_NO_PROVISION=1` skips the sections that take offers |
+| `VC_GUIDE_IGNORE_CORS=1` | start Chrome with `--disable-web-security`, for a build served from an origin the issuer's CORS policy does not list |
+
+The pictures here were taken like this, from a client build served on a
+scratch port, with a separate api whose `uiUrl` named that port:
+
+```bash
+cd tests
+export CONFIG_FILE=$PWD/env/local.js DOC_SCREENSHOT_DIR=$PWD/../docs/vc/images
+VC_GUIDE_NO_PROVISION=1 VC_GUIDE_IGNORE_CORS=1 \
+  OID4VCI_ISSUER_URL=https://localhost:8081 API_URL=<api> \
+  node vc_user_guide.js -u <client>
+API_URL=<api> node vc_verifier_page.js -u <client>
+node vc_barcodes_browser.js -u <client>
+node gordian_envelope_browser.js -u <client>
+node acdc_browser.js -u <client>
+```
+
+Chrome must trust the issuer's and the api's TLS certificates: set
+`STS_SPKI_PIN` and `STACK_TLS_SPKI_PIN` to their SPKI pins (see
+`tests/browser_flags.js`), as the launchers do.
+
+The presentation pictures present a test SD-JWT VC from a test issuer named
+by `did:jwk`, held in the wallet by the job, so they do not depend on what
+the issuer will issue.
+
+## Developer notes
+
+[../sd-jwt-vc-issuance.md](../sd-jwt-vc-issuance.md),
+[../sd-jwt-vc-presentation.md](../sd-jwt-vc-presentation.md),
+[../vc-verifier.md](../vc-verifier.md),
+[../vc-verifier-api.md](../vc-verifier-api.md),
+[../vc-client-auth.md](../vc-client-auth.md),
+[../dpop.md](../dpop.md), [../dids.md](../dids.md),
+[../data-integrity.md](../data-integrity.md),
+[../vc-jose-cose.md](../vc-jose-cose.md),
+[../jwp-sd-cwt.md](../jwp-sd-cwt.md), [../anoncreds.md](../anoncreds.md),
+[../vc-barcodes.md](../vc-barcodes.md),
+[../gordian-envelope.md](../gordian-envelope.md), [../acdc.md](../acdc.md),
+[../jwe-pq-kem.md](../jwe-pq-kem.md).

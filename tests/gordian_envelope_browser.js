@@ -28,6 +28,9 @@ const path = require("path");
 const browserFlags = require("./browser_flags.js");
 const { Command, Option } = require("commander");
 const { loadUrl } = require("./page_load.js");
+// The user guide's pictures (docs/vc/). Inert unless DOC_SCREENSHOT_DIR is
+// set, so an ordinary run takes none.
+const docShots = require("./doc_screenshots.js");
 const waitForContent = require("./wait_for.js");
 const { waitForStatus } = require("./wait_for");
 const paths = require("./module_paths.js");
@@ -86,6 +89,7 @@ async function test() {
                                "sessionStorage.clear();");
 
     // 1. Issue the example and read it back.
+    docShots.setPrefix("gordian-envelope");
     await click(driver, "ge_example_link");
     await click(driver, "ge_issue_button");
     await waitForStatus(driver, "ge_issue_status", function (s) {
@@ -94,8 +98,11 @@ async function test() {
     var credential = await text(driver, "ge_issue_output");
     assert.ok(/^ur:envelope\//.test(credential), credential.slice(0, 40));
     var aliceKey = await text(driver, "ge_issuer_public_key");
+    await docShots.snap(driver, "01-issue", { ids: ["pane_ge_issue"] });
     await click(driver, "ge_read_issued_button");
     await verified(driver, "the issued example", /^VALID/);
+    await docShots.snap(driver, "02-read-and-verify",
+                        { ids: ["pane_ge_read"] });
     var notation = await text(driver, "ge_notation");
     assert.ok(/"firstName": "James"/.test(notation) &&
               /'isA': "Certificate of Completion"/.test(notation),
@@ -119,6 +126,7 @@ async function test() {
     assert.ok(/unchanged/.test(said) && /4 claim/.test(said), said);
     var presentation = await text(driver, "ge_presentation");
     var shown = await text(driver, "ge_presentation_notation");
+    await docShots.snap(driver, "03-present", { ids: ["pane_ge_read"] });
     assert.ok(/ELIDED \(8\)/.test(shown) && !/"photo"/.test(shown),
               "eight claims elided, the photo among them: " + shown);
     await click(driver, "ge_read_presentation_button");

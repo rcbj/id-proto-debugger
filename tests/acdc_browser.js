@@ -27,6 +27,9 @@ const path = require("path");
 const browserFlags = require("./browser_flags.js");
 const { Command, Option } = require("commander");
 const { loadUrl } = require("./page_load.js");
+// The user guide's pictures (docs/vc/). Inert unless DOC_SCREENSHOT_DIR is
+// set, so an ordinary run takes none.
+const docShots = require("./doc_screenshots.js");
 const waitForContent = require("./wait_for.js");
 const { waitForStatus } = require("./wait_for");
 const paths = require("./module_paths.js");
@@ -161,14 +164,17 @@ async function test() {
              "verifies in the page.");
 
     // 2. Issue in the page; verify there and in node.
+    docShots.setPrefix("acdc");
     await click(driver, "acdc_issue_button");
     await waitForStatus(driver, "acdc_issue_status", function (st) {
       return /^Issued/.test(st);
     }, "Issue should finish", stepWait);
+    await docShots.snap(driver, "01-issue", { ids: ["pane_acdc_issue"] });
     var stream = await driver.executeScript("return document." +
       "getElementById('acdc_issue_output').value;");
     await click(driver, "acdc_verify_issued_button");
     await verdict(driver, "the page's own issuance", /^VALID/);
+    await docShots.snap(driver, "02-verify", { ids: ["pane_acdc_verify"] });
     acdc.parseStream(stream).forEach(function (m, i) {
       var serder = new s.Serder(m.sad);
       assert.strictEqual(serder.raw, text(m.raw), "message " + i + ": " +
@@ -185,6 +191,7 @@ async function test() {
     await click(driver, "acdc_revoke_button");
     await click(driver, "acdc_verify_issued_button");
     await verdict(driver, "the revoked credential", /^REVOKED/);
+    await docShots.snap(driver, "03-revoked", { ids: ["pane_acdc_verify"] });
     log.info("PASS the page revoked it; REVOKED.");
 
     // 4. Tamper.
