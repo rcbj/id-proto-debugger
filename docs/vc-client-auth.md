@@ -72,8 +72,13 @@ HTTP tab:
   styles, which the VC flow sets.
 - The JWT methods go in the body: through the api they ride as custom
   parameters, which the api forwards.
-- **The Client Attestation needs Front End** (*Initiate call from*),
-  because it travels in request headers, which the api does not forward.
+- **The Client Attestation travels in two request headers.** Through the api
+  they ride in `POST /token`'s body as `client_attestation` and
+  `client_attestation_pop`, and the api writes them back as
+  `OAuth-Client-Attestation` and `OAuth-Client-Attestation-PoP`. Each must be
+  a compact JWS, so nothing else reaches a header. The challenge comes from
+  the AS's `challenge_endpoint` (draft -12 section 6.1) before the first
+  request whenever the metadata names one.
   The page says so rather than sending without it.
 
 ## Tests
@@ -81,4 +86,4 @@ HTTP tab:
 | Test | What it checks |
 |---|---|
 | `tests/client_auth_engine.js` | Each method's wire form from the text that defines it: RFC 6749 §2.3.1's own Basic example and Appendix B encoding; 7523bis claims, `typ` and `aud`, with HS256, ES256, EdDSA and PS256 verified by node; the attestation's and the PoP's `typ` and claims, signed by the `cnf` key. Plus the refusals, and that no shown request ever carries the secret. |
-| `tests/vc_issuance_client_auth.js` | In Chrome, against a **confidential** client the job provisions on iya-sts through `/admin-api` (never assumed to exist): `client_secret_basic` (and a wrong secret refused), `client_secret_post`, `private_key_jwt` (its JWKS registered on the client), and a Client Attestation signed by node's crypto with an attester iya-sts is told to trust for the job. It asserts that no storage holds the secret, and holds the `sts-vc` lock. |
+| `tests/vc_issuance_client_auth.js` | In Chrome, against a **confidential** client the job provisions on iya-sts through `/admin-api` (never assumed to exist): `client_secret_basic` (and a wrong secret refused), `client_secret_post`, `private_key_jwt` (its JWKS registered on the client), and a Client Attestation signed by node's crypto with an attester the job's own trust realm trusts, its challenge taken from that realm's `challenge_endpoint`. It asserts that no storage holds the secret. `tests/api_model_wire.js` replays the api's attestation refusals. |

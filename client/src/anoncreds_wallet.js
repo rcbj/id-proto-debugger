@@ -35,6 +35,7 @@ var provider = require("./crypto_provider");
 var bytes = require("./crypto_bytes");
 var anoncreds = require("./anoncreds");
 var rev = require("./anoncreds_revocation");
+var w3c = require("./anoncreds_w3c");
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({
@@ -61,7 +62,8 @@ function looksLikeBundle(text) {
   try {
     var o = JSON.parse(raw);
     var ok = o.format === FORMAT && !!o.credential &&
-      !!((o.credential.signature || {}).p_credential);
+      (!!((o.credential.signature || {}).p_credential) ||
+       w3c.isW3cCredential(o.credential));
     log.debug("Leaving looksLikeBundle(). " + ok);
     return ok;
   } catch (e) {
@@ -79,8 +81,15 @@ function parseBundle(text) {
     throw new Error("an AnonCreds credential is held with its schema and " +
                     "credential definition; this one lacks one of them.");
   }
+  // A credential in the W3C form (anoncreds-2023) is held as it came and
+  // used as the legacy credential it re-encodes; its presentations go out
+  // in the W3C form too.
+  var isW3c = w3c.isW3cCredential(cred);
+  var w3cCredential = isW3c ? cred : null;
+  if (isW3c) cred = w3c.fromW3cCredential(cred);
   log.debug("Leaving parseBundle().");
-  return { credential: cred, schema: o.schema,
+  return { credential: cred, w3c: isW3c, w3cCredential: w3cCredential,
+           schema: o.schema,
            schemaId: o.schema_id || cred.schema_id,
            credentialDefinition: o.credential_definition,
            credDefId: o.cred_def_id || cred.cred_def_id,
@@ -200,14 +209,42 @@ function present(held, names, linkSecretJwkValue, oid4vpNonce) {
       }),
     selfAttest: {}, linkSecret: linkSecretOf(linkSecretJwkValue),
     schemas: schemas, credentialDefinitions: cds });
+  if (b.w3c) {
+    var issuerIds = {};
+    issuerIds[b.credDefId] = b.w3cCredential.issuer;
+    log.debug("Leaving present(). W3C form.");
+    return { presentation: w3c.toW3cPresentation(presentation, request,
+      { issuerIds: issuerIds }), legacy: presentation, request: request };
+  }
   log.debug("Leaving present().");
   return { presentation: presentation, request: request };
+}
+
+// The legacy presentation anoncreds.js verifies, from either form.
+function legacyPresentation(presentation, request) {
+  log.debug("Entering legacyPresentation().");
+  var p = typeof presentation === "string" ? JSON.parse(presentation) :
+      presentation;
+  log.debug("Leaving legacyPresentation().");
+  return w3c.isW3cPresentation(p) ? w3c.fromW3cPresentation(p, request) : p;
 }
 
 // The claims a presentation reveals: requested attribute name -> raw.
 function revealedClaims(presentation, request) {
   log.debug("Entering revealedClaims().");
   var out = {};
+  if (w3c.isW3cPresentation(presentation)) {
+    // credentialSubject: a revealed attribute's raw value; a predicate's
+    // attribute is `true`, which reveals nothing and is not a claim.
+    [].concat(presentation.verifiableCredential || []).forEach(function (vc) {
+      var s = vc.credentialSubject || {};
+      Object.keys(s).forEach(function (n) {
+        if (s[n] !== true) out[n] = String(s[n]);
+      });
+    });
+    log.debug("Leaving revealedClaims(). W3C form.");
+    return out;
+  }
   var rp = (presentation || {}).requested_proof || {};
   Object.keys(rp.revealed_attrs || {}).forEach(function (ref) {
     var name = (((request || {}).requested_attributes || {})[ref] || {}).name ||
@@ -228,8 +265,8 @@ function looksLikePresentation(text) {
   log.debug("Entering looksLikePresentation().");
   try {
     var o = typeof text === "string" ? JSON.parse(text) : text;
-    var ok = !!(o && o.proof && o.proof.aggregated_proof &&
-                o.requested_proof);
+    var ok = !!(o && ((o.proof && o.proof.aggregated_proof &&
+                o.requested_proof) || w3c.isW3cPresentation(o)));
     log.debug("Leaving looksLikePresentation(). " + ok);
     return ok;
   } catch (e) {
@@ -250,6 +287,7 @@ module.exports = {
   nonceFor: nonceFor,
   presentationRequestFor: presentationRequestFor,
   present: present,
+  legacyPresentation: legacyPresentation,
   revealedClaims: revealedClaims,
   revocationOf: revocationOf,
   looksLikePresentation: looksLikePresentation

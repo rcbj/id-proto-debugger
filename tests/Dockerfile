@@ -80,6 +80,10 @@
 # /usr/src/anoncreds-witness (tests/anoncreds_witness.js).
 # ---------------------------------------------------------------------------
 FROM anoncreds-witness:0.5.0-0.2.3 AS anoncreds-witness
+# THE GORDIAN ENVELOPE WITNESS (#480): Blockchain Commons' bc-envelope-cli
+# 0.35.0, built into the private mirror (tests/gordian-witness/Dockerfile).
+# tests/gordian_witness.js finds it at /usr/local/bin/bc-envelope.
+FROM gordian-witness:0.35.0 AS gordian-witness
 
 FROM rust:1.97-bookworm AS oid4vc-wallet
 ENV OID4VC_WALLET_COMMIT=7cf061a63e2c1f9814b404b0415e65765f1b979a
@@ -434,7 +438,7 @@ COPY client/src/mdoc.js client/src/vp_protocols.js ./
 # holder's VP through data_integrity.js; data_integrity_rdfc.js is what
 # registers RDFC-1.0 with it, and requires bbs_bls_2020.js (which needs
 # bbs_plus_2020.js) so the BbsBlsSignature2020 suites register too.
-COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js client/src/bbs_bls_2020.js client/src/bbs_plus_2020.js client/src/ecdsa_sd_2023.js client/src/vc_jose_cose.js client/src/jwp.js client/src/sd_cwt.js client/src/anoncreds.js client/src/anoncreds_wallet.js client/src/anoncreds_revocation.js client/src/amcl_bn254.js client/src/client_auth.js client/src/vc_client_auth_pane.js client/src/cborld.js client/src/vc_barcodes.js client/src/gordian_envelope.js client/src/acdc.js ./
+COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js client/src/bbs_bls_2020.js client/src/bbs_plus_2020.js client/src/ecdsa_sd_2023.js client/src/vc_jose_cose.js client/src/jwp.js client/src/sd_cwt.js client/src/anoncreds.js client/src/anoncreds_wallet.js client/src/anoncreds_revocation.js client/src/anoncreds_w3c.js client/src/msgpack.js client/src/amcl_bn254.js client/src/client_auth.js client/src/vc_client_auth_pane.js client/src/cborld.js client/src/vc_barcodes.js client/src/gordian_envelope.js client/src/acdc.js ./
 # The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
 # and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
 # directory is flat and the last COPY wins, so a test of that name would
@@ -455,7 +459,7 @@ COPY tests/vp_verifier_engine.js ./
 # And tests/client_module_bindings.js: every name the browser bundles use is
 # bound (client/src and the staged common/ modules, read from
 # /usr/src/source-tree).
-COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js tests/holder_key_algs.js tests/ldp_vc_whole_presentation.js tests/ecdsa_sd_2023_engine.js tests/vc_jose_cose_engine.js tests/vc_jose_cose_presentation.js tests/jwp_engine.js tests/sd_cwt_engine.js tests/jwp_sd_cwt_presentation.js tests/anoncreds_engine.js tests/anoncreds_witness.js tests/anoncreds_presentation.js tests/client_auth_engine.js tests/vc_issuance_client_auth.js tests/vc_barcodes_engine.js tests/vc_barcodes_browser.js tests/gordian_envelope_engine.js tests/gordian_envelope_browser.js tests/acdc_engine.js tests/acdc_browser.js ./
+COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js tests/holder_key_algs.js tests/ldp_vc_whole_presentation.js tests/ecdsa_sd_2023_engine.js tests/vc_jose_cose_engine.js tests/vc_jose_cose_presentation.js tests/jwp_engine.js tests/sd_cwt_engine.js tests/jwp_sd_cwt_presentation.js tests/anoncreds_engine.js tests/anoncreds_witness.js tests/anoncreds_presentation.js tests/client_auth_engine.js tests/vc_issuance_client_auth.js tests/vc_barcodes_engine.js tests/vc_barcodes_browser.js tests/gordian_envelope_engine.js tests/gordian_witness.js tests/gordian_envelope_browser.js tests/acdc_engine.js tests/acdc_browser.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./
@@ -843,6 +847,7 @@ COPY .github/image-mirror-builds.txt .github/workflows/terraform.yml \
      deploy/deploy-local.sh infra/terraform-local.sh ./
 COPY shibboleth-idp/dist/Dockerfile ./shibboleth-idp-dist_Dockerfile
 COPY tests/anoncreds-witness/Dockerfile ./tests-anoncreds-witness_Dockerfile
+COPY tests/gordian-witness/Dockerfile ./tests-gordian-witness_Dockerfile
 COPY infra/Dockerfile ./infra_Dockerfile
 COPY deploy/Dockerfile ./deploy_Dockerfile
 COPY embedded/Dockerfile ./embedded_Dockerfile
@@ -1306,6 +1311,7 @@ RUN apt-get update \
 # passes.
 COPY --from=oid4vc-wallet /out/ /opt/oid4vc-wallet/
 COPY --from=anoncreds-witness /anoncreds/ /usr/src/anoncreds-witness/
+COPY --from=gordian-witness /envelope/envelope /usr/local/bin/bc-envelope
 ENV OID4VC_WALLET_BIN=/opt/oid4vc-wallet/oid4vc-wallet
  
 # Create app directory

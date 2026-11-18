@@ -637,7 +637,9 @@ function recheckAnoncreds() {
     schemas[b.schemaId] = b.schema;
     var cds = {};
     cds[b.credDefId] = b.credentialDefinition;
-    var r = anoncreds.verifyPresentation(pres, { presentationRequest: request,
+    var r = anoncreds.verifyPresentation(
+      anoncredsWallet.legacyPresentation(pres, request), {
+      presentationRequest: request,
       schemas: schemas, credentialDefinitions: cds,
       revocationRegistryDefinitions: revocation ? revocation.definitions : {},
       revocationStatusLists: revocation ? [revocation.list] : [] });

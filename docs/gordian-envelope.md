@@ -38,8 +38,13 @@ values, byte for byte:
 - the "Certificate of Completion" credential: all 49 digests of its tree, the
   holder's six-claim redaction, and the employer's countersignature.
 
-The Rust command-line tool `bc-envelope-cli` is not yet a live witness.
-Building it is the open question in #480.
+Blockchain Commons' released command-line tool, **bc-envelope-cli 0.35.0**,
+is a live witness too (`tests/gordian_witness.js`, from the private mirror's
+`gordian-witness:0.35.0`, built by `tests/gordian-witness/Dockerfile`). It
+computes our credentials' digests and verifies our Schnorr, ECDSA and
+Ed25519 signatures; we verify what it signs, and what it elides, at the
+same root digest. `GORDIAN_ENVELOPE_CLI` points the job at a binary built by
+hand (`cargo install --locked bc-envelope-cli@0.35.0`).
 
 ## What costs a day if missed
 

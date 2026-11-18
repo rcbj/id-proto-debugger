@@ -46,6 +46,9 @@ x-mirror-contexts: &mirror-contexts
   # Not a copy either: anoncreds-rs and its node binding, installed without
   # their install script's download (tests/anoncreds-witness/Dockerfile).
   "anoncreds-witness:0.5.0-0.2.3": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/anoncreds-witness:0.5.0-0.2.3
+  # Blockchain Commons' bc-envelope-cli, built from crates.io into the
+  # mirror (tests/gordian-witness/Dockerfile).
+  "gordian-witness:0.35.0": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/gordian-witness:0.35.0
 services:
   postgres:
     image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/postgres:18

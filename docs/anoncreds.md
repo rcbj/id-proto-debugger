@@ -159,10 +159,41 @@ timestamp:
                 "tails": "<base64url>" }
 ```
 
+## The W3C form
+
+`client/src/anoncreds_w3c.js` reads and writes AnonCreds credentials and
+presentations as W3C VC Data Model documents with a Data Integrity proof whose
+cryptosuite is `anoncreds-2023`, in the form anoncreds-rs 0.2.3 writes. It is
+a **re-encoding**, not another signature scheme: the CL signature and proofs
+are the legacy objects `anoncreds.js` already makes and checks.
+
+- **The attribute values** go into `credentialSubject`, raw, with an integer
+  as a JSON number. A predicate's attribute appears there as `true`.
+- **Everything else** goes into the `proofValue`: `u` plus base64url of
+  MessagePack (`client/src/msgpack.js`) of `[kind, object]`. Kind `1` is a
+  credential's signature, `2` a credential's sub-proof inside a presentation,
+  and `3` the presentation's aggregated proof.
+- **Every big number** is converted from a decimal string to its big-endian
+  bytes. The ids, and `c_list` (already bytes), are left as they are.
+
+`tests/anoncreds_engine.js` checks both directions against anoncreds-rs:
+
+- its W3C credential is processed here;
+- our W3C credential reads back in anoncreds-rs to the same signature;
+- our W3C presentation is verified by it, and its W3C presentation by us.
+
+**In the wallet,** a held bundle whose `credential` is in the W3C form is used
+like any other, and its presentation goes out in the W3C form too
+(`tests/anoncreds_presentation.js`, the `w3c` case).
+
 ## Not yet
 
-- **The W3C form** (`anoncredsvc-2023` / `anoncredspresvc-2023`).
-- **Predicates from DCQL,** which has no way to express them.
+- **Predicates from DCQL.** OpenID4VP 1.0's DCQL can ask only for a claim's
+  presence or exact `values`; it has no way to say "age ≥ 18". The engine
+  proves predicates (`tests/anoncreds_engine.js`), but no OpenID4VP request
+  can ask for one, and inventing a request syntax would be this debugger's
+  own extension rather than the specification.
+- **The W3C form with revocation.** It is untested against anoncreds-rs.
 
 ## Tests
 

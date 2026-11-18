@@ -25,10 +25,15 @@
 //   5. UR: BCR-2020-012's CRC and bytewords vector, ur:envelope/axgrbdrnem.
 //   6. What must fail: tampering, a wrong key, an elided signature, a
 //      reordered node.
+//   7. Blockchain Commons' released bc-envelope-cli 0.35.0 itself
+//      (tests/gordian_witness.js): it computes our credentials' digests and
+//      verifies our Schnorr, ECDSA and Ed25519 signatures; we verify what it
+//      signs, and what it elides, at the same digest.
 //
-// No browser and no services, so this never skips. There is no released
-// JavaScript implementation to compare with (the TypeScript port is a
-// prerelease); the Rust crates' own expected values are the reference.
+// No browser and no services. The witness is native (tests may use native
+// code) and comes from the private mirror; when it cannot be had the job
+// FAILS naming the image. The TypeScript port is a prerelease, so it is not
+// used.
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -363,12 +368,54 @@ function urAndRefusals(c) {
   log.debug("Leaving urAndRefusals().");
 }
 
+function againstTheCli() {
+  log.debug("Entering againstTheCli().");
+  var run = require("./gordian_witness.js").runner();
+  var seed = H(ALICE);
+  var cred = ge.leaf(new T(ge.TAG.ARID, new Uint8Array(32).fill(7)));
+  cred = ge.addAssertion(cred, ge.knownValue("isA"), "Certificate");
+  cred = ge.addAssertion(cred, "firstName", "James");
+  cred = ge.addAssertion(cred, ge.saltedAssertion("lastName", "Maxwell",
+                                                  new Uint8Array(8).fill(1)));
+  ["schnorr", "ecdsa", "ed25519"].forEach(function (scheme) {
+    var k = { scheme: scheme, privateKey: ge.signingKeyFromSeed(seed) };
+    var signed = ge.sign(cred, k);
+    var ur = ge.toUr(signed);
+    assert.strictEqual(run("digest", "--hex", ur), hex(signed.digest),
+                       scheme + ": the CLI computes our digest");
+    run("verify", "--verifier", ge.publicKeyUr(ge.publicKeyOf(k)), ur);
+  });
+  var prv = run("generate", "prvkeys");
+  var pub = ge.readPublicKey(run("generate", "pubkeys", prv));
+  var theirs = run("subject", "type", "string", "Alice");
+  theirs = run("assertion", "add", "pred-obj", "string", "knows", "string",
+               "Bob", theirs);
+  theirs = run("sign", "--signer", prv, run("subject", "type", "wrapped",
+                                            theirs));
+  var env = ge.read(theirs);
+  assert.strictEqual(hex(env.digest), run("digest", "--hex", theirs),
+                     "our digest of the CLI's envelope is the CLI's");
+  assert.ok(ge.verifySignatures(env, pub).valid, "we verify the CLI's " +
+            "signature");
+  var elided = ge.read(run("elide", "removing", run("digest",
+    ge.toUr(ge.assertion("knows", "Bob"))), theirs));
+  assert.strictEqual(hex(elided.digest), hex(env.digest), "the CLI's " +
+                     "elision keeps the root digest, read here");
+  assert.ok(ge.verifySignatures(elided, pub).valid, "and its signature " +
+            "still verifies here");
+  log.info("PASS bc-envelope-cli 0.35.0: it computes our digests and " +
+           "verifies our Schnorr, ECDSA and Ed25519 signatures; we verify " +
+           "what it signs and what it elides.");
+  log.debug("Leaving againstTheCli().");
+}
+
 function main() {
   log.debug("Entering main().");
   dcbor();
   digestTree();
   keysAndSignatures();
   urAndRefusals(certificate());
+  againstTheCli();
   log.info("gordian_envelope_engine: all checks passed.");
   log.debug("Leaving main().");
 }

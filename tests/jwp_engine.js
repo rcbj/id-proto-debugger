@@ -67,6 +67,8 @@ function repoRoot() {
 
 const SRC = path.join(repoRoot(), "client", "src");
 const paths = require("./module_paths.js");
+const cborLib = paths.requireSharedModule([path.join(SRC, "cbor.js")],
+                                          "client/src/cbor.js");
 const jwp = paths.requireSharedModule([path.join(SRC, "jwp.js")],
                                       "client/src/jwp.js");
 const FX = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures",
@@ -360,6 +362,57 @@ async function bbsAgainstDigitalBazaar() {
   log.debug("Leaving bbsAgainstDigitalBazaar().");
 }
 
+// CPT issuance (the CBOR serialization), in the Appendix A.2 reading the
+// parser uses: claims at 6, iek/hpk as COSE_Keys, hpa a COSE algorithm.
+function cptRoundTrips() {
+  log.debug("Entering cptRoundTrips().");
+  var cases = [["SU-ES256", "P-256", "P-256", -9],
+               ["SU-ES384", "P-384", "P-384", -51],
+               ["MAC-H256", "P-256", "Ed25519", -19]];
+  cases.forEach(function (t) {
+    var issuer = keyPair(t[1]);
+    var holder = keyPair(t[2]);
+    var values = NAMES.map(function (n) {
+      return CLAIMS[n];
+    });
+    var issued = jwp.issue({ alg: t[0], serialization: "cbor",
+      header: { claims: NAMES, typ: 20 }, values: values, issuerKey: issuer,
+      holderKey: holder });
+    assert.ok(issued instanceof Uint8Array, t[0] + ": a CPT is bytes");
+    var top = cborLib.decode(issued);
+    var ih = cborLib.decode(top[0]);
+    assert.deepStrictEqual(Array.from(ih.keys()).sort(function (a, b) {
+      return a - b;
+    }), t[0].indexOf("SU") === 0 ? [1, 3, 6, 8, 9, 10] : [1, 3, 6, 9, 10],
+      t[0] + ": the header's labels are Appendix A.2's");
+    assert.strictEqual(ih.get(10), t[3], t[0] + ": hpa is the COSE " +
+                       "algorithm of the holder's key");
+    assert.deepStrictEqual(top[1], values, t[0] + ": payloads are inline " +
+                           "CBOR values");
+    if (t[0].indexOf("SU") === 0) {
+      assert.ok(nodeVerify(issuer, top[0], top[2][0]), t[0] + ": node's " +
+                "crypto verifies the issuer's signature over the CBOR " +
+                "Issuer Header");
+    }
+    var c = jwp.confirm(issued, { issuerKey: pubOf(issuer) });
+    assert.ok(c.valid, t[0] + " CPT: confirms: " + c.errors.join("; "));
+    var shown = jwp.present(issued, { disclose: [0, 1, 3], header: PH,
+                                      holderKey: holder });
+    var v = jwp.verify(shown, { issuerKey: pubOf(issuer), nonce: PH.nonce,
+                                aud: PH.aud });
+    assert.ok(v.valid, t[0] + " CPT: verifies: " + v.errors.join("; "));
+  });
+  assert.throws(function () {
+    jwp.issue({ alg: "SU-ES256", serialization: "cbor", payloads: ["x"],
+                issuerKey: keyPair("P-256"), holderKey: keyPair("P-256") });
+  }, /not a CBOR value/, "a CPT payload that is not CBOR is refused");
+  log.info("PASS CPT issuance (SU-ES256, SU-ES384, MAC-H256): the header " +
+           "in Appendix A.2's labels, hpa a COSE algorithm, inline CBOR " +
+           "payloads, the issuer's signature checked by node; confirmed, " +
+           "presented, verified.");
+  log.debug("Leaving cptRoundTrips().");
+}
+
 function refusals() {
   log.debug("Entering refusals().");
   ["MAC-K25519", "MAC-K448"].forEach(function (alg) {
@@ -382,6 +435,7 @@ async function main() {
   specificationVectors();
   roundTrips();
   await bbsAgainstDigitalBazaar();
+  cptRoundTrips();
   refusals();
   log.info("jwp_engine: all checks passed.");
   log.debug("Leaving main().");
