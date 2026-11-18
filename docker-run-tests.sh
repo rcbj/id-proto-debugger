@@ -41,6 +41,7 @@ set -x
 MODE=suite
 MODE_WHAT=""
 KEEP_STACK=0
+KEEP_STACK_ASKED=0
 # auto: publish no host ports when one the stack wants is already held;
 # 1: never publish (--no-host-ports).
 NO_HOST_PORTS=auto
@@ -123,7 +124,9 @@ Usage: $(basename "$0") [one mode] [--sts-url=<base>] [--keep-stack] [-h|--help]
   --repeat=<N> With --select, run the selection N times against the same
                stack, every one of them even after a failure, and fail when
                any did, saying how many. For a job that flakes: each run's
-               report is under tests/report/ as usual.
+               report is under tests/report/ as usual. Unlike a single
+               --select, the stack is torn down at the end unless
+               --keep-stack is given too.
 
   --krb5-real-dc[=test|capture|both]
                Create a Windows Server 2025 domain controller on AWS, run
@@ -181,7 +184,7 @@ do
     --krb5-real-dc) setMode "$1" krb5-real-dc test ;;
     --krb5-real-dc=*) setMode "$1" krb5-real-dc "${1#*=}" ;;
     --sts-url=*) STS_EXTERNAL_URL="${1#*=}" ;;
-    --keep-stack) KEEP_STACK=1 ;;
+    --keep-stack) KEEP_STACK=1; KEEP_STACK_ASKED=1 ;;
     --no-host-ports) NO_HOST_PORTS=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
@@ -309,6 +312,13 @@ if [ "${REPEAT}" != "1" ] && [ "${MODE}" != "select" ];
 then
   echo "--repeat runs a --select selection again; it needs --select." >&2
   exit 1
+fi
+# A REPEATED selection is a measurement, not a stack to look at afterwards,
+# and leaving it up collides with the next run's fixed container names. So
+# --repeat tears down at the end unless --keep-stack was given as well.
+if [ "${REPEAT}" != "1" ] && [ "${KEEP_STACK_ASKED}" != "1" ];
+then
+  KEEP_STACK=0
 fi
 
 # CONFIG_FILE selects the api/client build-time config baked into their images.
