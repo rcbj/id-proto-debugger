@@ -41,12 +41,18 @@ set -x
 MODE=suite
 MODE_WHAT=""
 KEEP_STACK=0
+KEEP_STACK_ASKED=0
 # auto: publish no host ports when one the stack wants is already held;
 # 1: never publish (--no-host-ports).
 NO_HOST_PORTS=auto
 SAML_SIG_VALIDATION=true
 KRB5_REAL_DC_WHAT=test
 STS_EXTERNAL_URL="${STS_EXTERNAL_URL:-}"
+# --select with no value reads TEST_SELECT from the environment, so it is
+# kept here: the mode handling below resets TEST_SELECT for every mode.
+ENV_TEST_SELECT="${TEST_SELECT:-}"
+# --repeat=<N>: run the selection N times against one stack.
+REPEAT=1
 
 usage()
 {
@@ -106,6 +112,22 @@ Usage: $(basename "$0") [one mode] [--sts-url=<base>] [--keep-stack] [-h|--help]
                of password, webauthn. The realms are left configured on the
                running stack, at https://localhost:8081/realm/<id>/admin/.
 
+  --select[=<selectors>]
+               Bring up the WHOLE stack, as the default run does, and run only
+               the jobs <selectors> names: tests/run-report.js's TEST_SELECT
+               syntax, space-separated, each a script with optional
+               ?NAME=value&... to pick one of its jobs (for example
+               caep_page.js, or saml_sso.js?SAML_IDP=sts). With no value it
+               takes TEST_SELECT from the environment. A selector that
+               matches no job fails the run, naming it. The stack is left up.
+
+  --repeat=<N> With --select, run the selection N times against the same
+               stack, every one of them even after a failure, and fail when
+               any did, saying how many. For a job that flakes: each run's
+               report is under tests/report/ as usual. Unlike a single
+               --select, the stack is torn down at the end unless
+               --keep-stack is given too.
+
   --krb5-real-dc[=test|capture|both]
                Create a Windows Server 2025 domain controller on AWS, run
                tests/krb5_real_dc.js (test, the default), refresh
@@ -156,10 +178,13 @@ do
     --delegation-only=*) setMode "$1" delegation-only "${1#*=}" ;;
     --federation-only) setMode "$1" federation-only both ;;
     --federation-only=*) setMode "$1" federation-only "${1#*=}" ;;
+    --select) setMode "$1" select "${ENV_TEST_SELECT}" ;;
+    --select=*) setMode "$1" select "${1#*=}" ;;
+    --repeat=*) REPEAT="${1#*=}" ;;
     --krb5-real-dc) setMode "$1" krb5-real-dc test ;;
     --krb5-real-dc=*) setMode "$1" krb5-real-dc "${1#*=}" ;;
     --sts-url=*) STS_EXTERNAL_URL="${1#*=}" ;;
-    --keep-stack) KEEP_STACK=1 ;;
+    --keep-stack) KEEP_STACK=1; KEEP_STACK_ASKED=1 ;;
     --no-host-ports) NO_HOST_PORTS=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
@@ -257,6 +282,15 @@ case "${MODE}" in
       exit 1
     fi
     ;;
+  select)
+    if [ -z "${MODE_WHAT}" ];
+    then
+      echo "--select needs selectors: --select=<script>[?NAME=value] ..., or" \
+           "TEST_SELECT in the environment." >&2
+      usage; exit 1
+    fi
+    TEST_SELECT="${MODE_WHAT}"
+    ;;
   saml-dev)
     SAML_SIG_VALIDATION=false
     NEED_KEYCLOAK=1
@@ -265,10 +299,27 @@ case "${MODE}" in
 esac
 TEST_SELECT="${TEST_SELECT# }"
 case "${MODE}" in
-  saml-only|wsfed-only|delegation-only|federation-only|saml-dev)
+  saml-only|wsfed-only|delegation-only|federation-only|saml-dev|select)
     KEEP_STACK=1
     ;;
 esac
+case "${REPEAT}" in
+  ''|*[!0-9]*|0)
+    echo "--repeat takes a whole number of runs, at least 1: ${REPEAT}" >&2
+    exit 1 ;;
+esac
+if [ "${REPEAT}" != "1" ] && [ "${MODE}" != "select" ];
+then
+  echo "--repeat runs a --select selection again; it needs --select." >&2
+  exit 1
+fi
+# A REPEATED selection is a measurement, not a stack to look at afterwards,
+# and leaving it up collides with the next run's fixed container names. So
+# --repeat tears down at the end unless --keep-stack was given as well.
+if [ "${REPEAT}" != "1" ] && [ "${KEEP_STACK_ASKED}" != "1" ];
+then
+  KEEP_STACK=0
+fi
 
 # CONFIG_FILE selects the api/client build-time config baked into their images.
 # The whole stack runs on a private compose network, so the browser (running
@@ -818,7 +869,11 @@ runPartialStack()
   # certificate at startup and the RFC 9700 realm the tests container creates
   # is on it; it starts in seconds.
   local services
-  if [ "${MODE}" = "suite" ] || [ "${MODE}" = "saml-dev" ];
+  # --select runs whatever it names, so it gets the whole stack too: which
+  # services a job needs is the job's business, and a guess here would read
+  # as that job failing.
+  if [ "${MODE}" = "suite" ] || [ "${MODE}" = "saml-dev" ] ||
+     [ "${MODE}" = "select" ];
   then
     services="$(docker_compose "${COMPOSE_ARGS[@]}" config --services \
                   2>/dev/null | grep -xE '[a-z0-9_-]+' | grep -vx tests |
@@ -901,9 +956,24 @@ runPartialStack()
     run_env+=(-e TEST_PROVISION_ONLY=1)
     run_env+=(-e "SAML_SIG_VALIDATION=${SAML_SIG_VALIDATION}")
   fi
-  docker_compose "${COMPOSE_ARGS[@]}" run --rm -T --no-deps --use-aliases \
-    "${run_env[@]}" tests
-  local rc=$?
+  # --repeat: every run, even after a failure, so a flake's rate is counted
+  # rather than its first occurrence.
+  local rc=0 n failed=0
+  for n in $(seq 1 "${REPEAT}");
+  do
+    [ "${REPEAT}" != "1" ] && echo "=== --repeat: run ${n} of ${REPEAT} ==="
+    docker_compose "${COMPOSE_ARGS[@]}" run --rm -T --no-deps --use-aliases \
+      "${run_env[@]}" tests
+    if [ $? -ne 0 ];
+    then
+      failed=$((failed + 1))
+      rc=1
+    fi
+  done
+  if [ "${REPEAT}" != "1" ];
+  then
+    echo "=== --repeat: ${failed} of ${REPEAT} run(s) failed ==="
+  fi
   echo "Leaving runPartialStack(). rc=${rc}"
   return ${rc}
 }
