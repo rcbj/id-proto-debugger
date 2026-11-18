@@ -877,6 +877,7 @@ function presentSdJwt(jwt, discs, kb) {
                       Math.floor(Date.now() / 1000),
                     aud: kb.aud, nonce: kb.nonce,
                     sd_hash: kb.sdHash || sha256b64u(prefix) };
+  Object.assign(payload, kb.extra || {});
   log.debug("Leaving presentSdJwt().");
   return prefix + nodeJws({ alg: "ES256", typ: kb.typ || "kb+jwt" },
                           payload, kb.key);
@@ -1078,6 +1079,78 @@ async function sdJwtRoundTrip(env) {
   eq(r.checks.length, 1, "an error answer is one check");
   log.info("PASS dc+sd-jwt: a full round trip in both response modes, and " +
            "every defect failing exactly its own check.");
+  // #471 E3b: transaction_data (section 8.4, Appendix B.3.3.1). The hash
+  // is node's, over the base64url STRING as sent.
+  const tdObjects = [{ type: "example_type", credential_ids: ["pid"] },
+                     { type: "payment", credential_ids: ["pid"],
+                       transaction_data_hashes_alg: ["sha-384"] }];
+  const tdStrings = verifier.encodeTransactionData(tdObjects, dcql);
+  eq(JSON.parse(Buffer.from(tdStrings[0], "base64url")), tdObjects[0],
+     "E3b: base64url JSON objects");
+  const tdHash = function tdHash(alg, str) {
+    log.debug("Entering tdHash().");
+    log.debug("Leaving tdHash().");
+    return nodeCrypto.createHash(alg).update(str, "utf8").digest("base64url");
+  };
+  const tdSession = Object.assign({}, session, { transactionData: tdStrings });
+  const tdRun = async function tdRun(extra) {
+    log.debug("Entering tdRun().");
+    const res = await run({ fields: vp.formEncode({ vp_token: { pid: [
+      P({ extra: extra })] }, state: session.state }), session: tdSession,
+      fetchJson: fetchJson });
+    log.debug("Leaving tdRun().");
+    return res;
+  };
+  // The second asks for sha-384, so the KB-JWT must name it and hash both
+  // with it; the first then fails, being sha-256 by default.
+  let tr = await tdRun({ transaction_data_hashes: [
+    tdHash("sha256", tdStrings[0])] });
+  eq([checkById(tr, "pid[0].kb.transaction_data[0]").status,
+      checkById(tr, "response.transaction_data[0]").status],
+     ["pass", "pass"], "E3b: sha-256 by default binds transaction 0");
+  ok(/MUST name the one it used/.test(
+     checkById(tr, "pid[0].kb.transaction_data[1]").detail),
+     "E3b: a listed alg the KB-JWT does not name fails");
+  tr = await tdRun({ transaction_data_hashes_alg: "sha-384",
+    transaction_data_hashes: [tdHash("sha384", tdStrings[1])] });
+  eq([checkById(tr, "pid[0].kb.transaction_data[0]").status,
+      checkById(tr, "pid[0].kb.transaction_data[1]").status],
+     ["fail", "pass"], "E3b: sha-384 for the one that lists it");
+  tr = await tdRun({ transaction_data_hashes: [tdHash("sha256",
+    Buffer.from(tdStrings[0], "base64url").toString())] });
+  ok(/not decoded first/.test(checkById(tr,
+     "pid[0].kb.transaction_data[0]").detail),
+     "E3b: a hash of the DECODED object is not the binding");
+  tr = await tdRun({});
+  eq([checkById(tr, "pid[0].kb.transaction_data[0]").status,
+      checkById(tr, "response.transaction_data[0]").status, tr.verdict],
+     ["skip", "skip", "pass"], "E3b: no hashes is reported (another " +
+     "representation may be the type's), not failed");
+  for (const bad of [[], [{ credential_ids: ["pid"] }],
+                     [{ type: "t", credential_ids: ["nope"] }],
+                     [{ type: "t", credential_ids: ["pid"],
+                        transaction_data_hashes_alg: [] }]]) {
+    let why = "";
+    try {
+      verifier.encodeTransactionData(bad, dcql);
+    } catch (e) {
+      why = e.message;
+    }
+    ok(/transaction_data/.test(why), "E3b: refused " + JSON.stringify(bad));
+  }
+  let tdUnbound = "";
+  try {
+    verifier.encodeTransactionData([{ type: "t", credential_ids: ["p"] }],
+      verifier.buildDcql({ queries: [{ id: "p", format: "dc+sd-jwt",
+        vct: VCT, requireBinding: false }] }));
+  } catch (e) {
+    tdUnbound = e.message;
+  }
+  ok(/B\.3\.3/.test(tdUnbound), "E3b: a transaction on an tdUnbound query");
+  const tdClaims = verifier.requestObjectClaims({ clientId: clientId,
+    responseUri: session.responseUri, responseMode: "direct_post",
+    nonce: "n", state: "s", dcql: dcql, transactionData: tdStrings });
+  eq(tdClaims.transaction_data, tdStrings, "E3b: carried in the request");
   log.debug("Leaving sdJwtRoundTrip().");
 }
 

@@ -54,7 +54,7 @@ var VERIFIER_KEYS = [
   "vpv_trust_anchors", "vpv_fetch_via_api", "vpv_save_identity",
   "vpv_public_base_url", "vpv_issuer_bindings", "vpv_trusted_authorities",
   "vpv_profile", "vpv_claim_sets", "vpv_intent_to_retain", "vpv_request_key",
-  "vpv_scope", "vpv_verifier_info"
+  "vpv_scope", "vpv_verifier_info", "vpv_transaction_data"
 ];
 
 // Whether issuer metadata, DID documents and status lists are fetched
@@ -486,6 +486,26 @@ function loadState() {
 
 // "address.country" -> ["address", "country"]; a number is an array index and
 // `*` every element, as DCQL claims paths have them (section 7).
+// transaction_data as typed into pane 2, encoded for `dcql`: undefined
+// when empty.
+function transactionDataFromPage(dcql) {
+  log.debug("Entering transactionDataFromPage().");
+  var text = val("vpv_transaction_data").trim();
+  if (!text) {
+    log.debug("Leaving transactionDataFromPage(). None.");
+    return undefined;
+  }
+  var parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    log.debug("Leaving transactionDataFromPage(). Not JSON.");
+    throw new Error("transaction_data is not JSON: " + e.message);
+  }
+  log.debug("Leaving transactionDataFromPage().");
+  return verifier.encodeTransactionData(parsed, dcql);
+}
+
 // verifier_info as typed into pane 2: undefined when empty, else the parsed
 // JSON (requestObjectClaims() says what is wrong with it).
 function verifierInfoFromPage() {
@@ -1015,7 +1035,8 @@ async function createRequest() {
       responseMode: mode, nonce: nonce, state: state, dcql: dcql,
       encryptionJwk: encryption ? encryption.publicJwk : undefined,
       scope: val("vpv_scope").trim() || undefined,
-      verifierInfo: verifierInfoFromPage()
+      verifierInfo: verifierInfoFromPage(),
+      transactionData: transactionDataFromPage(dcql)
     };
     var claims = verifier.requestObjectClaims(claimsInput);
     var requestObject = "";
@@ -1062,6 +1083,7 @@ async function createRequest() {
       live: live,
       session: {
         profile: isHaip() ? "haip" : "",
+        transactionData: claimsInput.transactionData,
         clientId: clientId, nonce: nonce, state: state,
         responseUri: hosted.responseUri, responseMode: mode, dcql: dcql,
         decryptionJwk: encryption ? encryption.privateJwk : undefined
@@ -1125,9 +1147,10 @@ async function askThroughDcApi() {
     } else {
       clientId = verifier.clientIdFor("origin", null, { origin: origin });
     }
+    var transactionData = transactionDataFromPage(dcql);
     var claims = verifier.requestObjectClaims({
       clientId: signed ? clientId : undefined, responseMode: mode,
-      nonce: nonce, dcql: dcql,
+      nonce: nonce, dcql: dcql, transactionData: transactionData,
       encryptionJwk: encryption ? encryption.publicJwk : undefined,
       expectedOrigins: signed ? [origin] : undefined });
     var request = await verifier.dcApiRequest({
@@ -1138,6 +1161,7 @@ async function askThroughDcApi() {
       hosted: null, identity: signer ? signer.identity : {}, signer: signer,
       live: false,
       session: { profile: isHaip() ? "haip" : "",
+                 transactionData: transactionData,
                  clientId: clientId, nonce: nonce, responseMode: mode,
                  dcql: dcql, origin: origin,
                  decryptionJwk: encryption ? encryption.privateJwk

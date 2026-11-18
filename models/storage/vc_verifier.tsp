@@ -118,4 +118,8 @@ model VcVerifierKeys {
   // verifier_info, a JSON array of attestations (section 5.1).
   @storageKey(#{ area: "local", class: "ordinary" })
   vpv_verifier_info: unknown;
+
+  // transaction_data objects, a JSON array (section 8.4; #471, E3).
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_transaction_data: unknown;
 }
