@@ -505,7 +505,8 @@ function cryptoModuleStaged() {
     "deliberate, this check and the staging below go with it.");
   const sh = fs.readFileSync(EMBEDDED_BUILD_SH, "utf8");
   const staged = 'cp "${WORK}/tree/common/crypto/"*.js "${WORK}/tree/api/"';
-  assert.ok(sh.indexOf(staged) !== -1, "embedded/build.sh must copy common/crypto/*.js into the " +
+  assert.ok(sh.indexOf(staged) !== -1,
+    "embedded/build.sh must copy common/crypto/*.js into the " +
     "tree's api/, beside xmldsig.js: the embedded api requires " +
     "./crypto_provider (embedded/CLAUDE.md: the tree is iya-sts's contract).");
   const dockerfile = fs.readFileSync(API_DOCKERFILE, "utf8");
