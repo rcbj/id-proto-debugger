@@ -15,6 +15,10 @@ const sessionHandoff = require("./session_handoff");
 // DPoP for THIS workflow (RFC 9449), kept apart from the VC workflow's copy —
 // see oauth_dpop.js for why the two are separate state.
 const oauthDpop = require("./oauth_dpop");
+// The VC issuance workflow's client authentication, applied to the code
+// exchange while that workflow drives this page (#vc-client-auth).
+const clientAuth = require("./client_auth");
+const vcClientAuthPane = require("./vc_client_auth_pane");
 const vciWallet = require("./vci_wallet");
 const bunyan = require("bunyan");
 const DOMPurify = require("dompurify");
@@ -150,6 +154,50 @@ function logoutButtonClick()  {
   return false;
 };
 
+// The VC issuance workflow's client authentication (#vc-client-auth), applied
+// to this page's authorization code exchange while that workflow is driving
+// it. client_secret_basic and client_secret_post are this page's own auth
+// styles, so they set it; the JWT methods and the Client Attestation are
+// added by client_auth.js. Resolves to { params, headers, problem } — what
+// to ADD to the request. Outside the VC flow it adds nothing.
+function vcFlowClientAuth(formData, viaApi) {
+  log.debug("Entering vcFlowClientAuth().");
+  var none = { params: {}, headers: {}, problem: "" };
+  if (!sdJwtVc.isFlowActive()) {
+    log.debug("Leaving vcFlowClientAuth(). Not the VC flow.");
+    return Promise.resolve(none);
+  }
+  var s;
+  try {
+    s = vcClientAuthPane.settings();
+  } catch (e) {
+    log.debug("Leaving vcFlowClientAuth(). " + e.message);
+    return Promise.resolve({ params: {}, headers: {}, problem: e.message });
+  }
+  s.secret = $("#token_client_secret").val() || "";
+  s.clientId = formData.client_id || s.clientId;
+  if (s.method === "client_secret_basic" ||
+      s.method === "client_secret_post" || s.method === "none") {
+    formData.auth_style = s.method === "client_secret_post";
+    log.debug("Leaving vcFlowClientAuth(). The page's own auth style.");
+    return Promise.resolve(none);
+  }
+  if (s.method === "attest_jwt_client_auth" && viaApi) {
+    log.debug("Leaving vcFlowClientAuth(). Attestation via the api.");
+    return Promise.resolve({ params: {}, headers: {}, problem:
+      "attest_jwt_client_auth sends two HTTP headers, which the api does " +
+      "not forward: choose Front End for Initiate call from." });
+  }
+  log.debug("Leaving vcFlowClientAuth(). " + s.method);
+  return clientAuth.apply(s).then(function (applied) {
+    var params = Object.assign({}, applied.params);
+    delete params.client_id;
+    return { params: params, headers: applied.headers, problem: "" };
+  }, function (e) {
+    return { params: {}, headers: {}, problem: e.message };
+  });
+}
+
 function tokenButtonClick() {
   log.debug("Entering tokenButtonClick().");
   log.debug("Entering token Submit button clicked function.");
@@ -201,13 +249,30 @@ function tokenButtonClick() {
     // asynchronous (Web Crypto), so the call is made from the promise rather
     // than inline — and when DPoP is off, dpopTokenRequestHeaders() resolves to
     // an empty object and this is the request it always was.
-    dpopTokenRequestHeaders(localStorage.getItem("token_endpoint"))
+    var vcAuth = null;
+    vcFlowClientAuth(formData, false)
+      .then(function (auth) {
+        vcAuth = auth;
+        return dpopTokenRequestHeaders(localStorage.getItem("token_endpoint"));
+      })
       .then(function (headers) {
+        if (vcAuth.problem) {
+          $("#sdjwtvc_banner").append("<p class='vc-bad'>" +
+            DOMPurify.sanitize("Client authentication: " + vcAuth.problem) +
+            "</p>");
+          return;
+        }
         var url = localStorage.getItem("token_endpoint");
         var sentBody = convertToOAuth2Format(formData);
+        // The VC workflow's client assertion, when its method is one.
+        Object.keys(vcAuth.params).forEach(function (k) {
+          sentBody += "&" + encodeURIComponent(k) + "=" +
+            encodeURIComponent(vcAuth.params[k]);
+        });
         // convertToOAuth2Format() leaves the client credentials out of the
         // body for the Header auth style; this is where they go instead.
-        headers = $.extend({}, headers, clientBasicAuthHeader(formData));
+        headers = $.extend({}, headers, clientBasicAuthHeader(formData),
+                           vcAuth.headers);
         // Recorded for the HTTP tab before the request goes, so that a call
         // which never comes back still shows what left. The headers are the
         // ones this page CHOSE: the browser adds Origin, Referer and
@@ -275,6 +340,19 @@ function tokenButtonClick() {
     // It is a flag for the api and goes no further: convertToOAuth2Format()
     // builds the outbound form body from named parameters, so nothing here
     // reaches the identity provider.
+    vcFlowClientAuth(formData, true).then(function (vcAuth) {
+    if (vcAuth.problem) {
+      $("#sdjwtvc_banner").append("<p class='vc-bad'>" +
+        DOMPurify.sanitize("Client authentication: " + vcAuth.problem) +
+        "</p>");
+      return;
+    }
+    // The VC workflow's client assertion rides as custom parameters, which
+    // the api forwards into the body it sends (common/data.js).
+    if (Object.keys(vcAuth.params).length) {
+      formData.customParams = $.extend({}, formData.customParams || {},
+                                       vcAuth.params);
+    }
     var proxiedBody = JSON.stringify($.extend({}, formData, {
       http_trace: true }));
     noteHttpRequestSent("token", {
@@ -294,6 +372,7 @@ function tokenButtonClick() {
       contentType: "application/json; charset=utf-8",
       success: successfulInternalTokenAPICall,
       error: errorInternalTokenAPICall
+    });
     });
   }
   log.debug("Leaving tokenButtonClick().");
