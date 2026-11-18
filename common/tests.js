@@ -49,6 +49,93 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     return element;
   }
 
+  // Whether `e` is WebDriver saying the element it held is gone: replaced by
+  // a re-render, or left behind by a navigation. Read by name, because this
+  // module requires nothing (see the header) and so has no error classes.
+  function isGoneError(e) {
+    log.debug("Entering isGoneError().");
+    const yes = !!e && (e.name === "StaleElementReferenceError" ||
+                        e.name === "NoSuchElementError");
+    log.debug("Leaving isGoneError(). " + yes);
+    return yes;
+  }
+
+  // **SELECT A GRANT THAT LEAVES THE PAGE (#507).** On oauth2_oidc_1.html
+  // the Client Credential and Resource Owner Password grants are
+  // token-endpoint-only, and the select's change handler sends the browser
+  // to oauth2_oidc_2.html at once. Selenium's Select is still holding the
+  // option it clicked, so about one time in four it read that option after
+  // the page had gone and failed with "stale element reference: stale
+  // element not found in the current frame", naming nothing. A stale
+  // option here is the navigation the click asked for, so it is accepted;
+  // what decides success is the next page arriving, loaded, with its token
+  // form visible.
+  async function selectGrantLeavingForTokenPage(driver, visibleText) {
+    log.debug("Entering selectGrantLeavingForTokenPage(). " + visibleText);
+    const grant = By.id("authorization_grant_type");
+    await driver.wait(until.elementLocated(grant), waitTime);
+    try {
+      await new Select(await driver.findElement(grant))
+                       .selectByVisibleText(visibleText);
+    } catch (e) {
+      if (!isGoneError(e)) {
+        log.debug("Leaving selectGrantLeavingForTokenPage(). Refused.");
+        throw e;
+      }
+      log.debug("selectGrantLeavingForTokenPage(): the select went with " +
+                "the page it was on, as the grant navigates. " + e.message);
+    }
+    await driver.wait(async function () {
+      return /oauth2_oidc_2\.html/.test(await driver.getCurrentUrl());
+    }, waitTime * 3, "selecting \"" + visibleText + "\" did not reach " +
+       "oauth2_oidc_2.html");
+    await driver.wait(async function () {
+      return (await driver.executeScript("return document.readyState;")) ===
+          "complete";
+    }, waitTime * 3, "oauth2_oidc_2.html never finished loading");
+    await waitUntilShown(driver, By.id("token_client_id"));
+    log.debug("Leaving selectGrantLeavingForTokenPage().");
+  }
+
+  // An element located AFRESH on every attempt and visible, so a copy a
+  // re-render replaced is never the one waited on.
+  async function waitUntilShown(driver, locator) {
+    log.debug("Entering waitUntilShown(). " + locator);
+    await driver.wait(async function () {
+      try {
+        return await (await driver.findElement(locator)).isDisplayed();
+      } catch (e) {
+        if (isGoneError(e)) return false;
+        throw e;
+      }
+    }, waitTime * 3, "never shown: " + locator);
+    log.debug("Leaving waitUntilShown().");
+  }
+
+  // Type `text` into the field at `locator`, re-locating it by id on every
+  // attempt and done only when the field READS what was typed: a field the
+  // page re-rendered or re-populated after the keystrokes is typed again
+  // rather than left holding something else (#507).
+  async function typeSteadily(driver, locator, text) {
+    log.debug("Entering typeSteadily(). " + locator);
+    await driver.wait(async function () {
+      try {
+        const field = await driver.findElement(locator);
+        if (!(await field.isDisplayed())) return false;
+        if ((await field.getAttribute("value")) !== text) {
+          await field.clear();
+          await field.sendKeys(text);
+        }
+        return (await driver.findElement(locator)
+                                .getAttribute("value")) === text;
+      } catch (e) {
+        if (isGoneError(e)) return false;
+        throw e;
+      }
+    }, waitTime * 3, "could not make " + locator + " read what was typed");
+    log.debug("Leaving typeSteadily().");
+  }
+
   const pause = (milliseconds) => {
     log.debug("Entering pause().");
     log.debug("Leaving pause().");
@@ -416,15 +503,11 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
       client_secret, scope) {
     log.debug("Entering getAccessTokenClientCredentials().");
     log.info("Entering getAccessTokenClientCredentials().");
-    const authorization_grant_type = By.id("authorization_grant_type");
     const token_client_id = By.id("token_client_id");
 
-    // Select the Client Credential grant and wait for the token form to render.
-    await new Select(await driver.findElement(authorization_grant_type))
-                     .selectByVisibleText('OAuth2 Client Credential');
-    await driver.wait(until.elementLocated(token_client_id), waitTime);
-    await driver.wait(until.elementIsVisible(driver.findElement(
-                      token_client_id)), waitTime);
+    // Select the Client Credential grant: the page leaves for
+    // oauth2_oidc_2.html, and this returns once its token form is shown.
+    await selectGrantLeavingForTokenPage(driver, 'OAuth2 Client Credential');
 
     const token_client_secret = By.id("token_client_secret");
     const token_scope = By.id("token_scope");
@@ -433,13 +516,13 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     const display_token_error_form_textarea1 =
         By.id("display_token_error_form_textarea1");
 
-    // Submit credentials
-    await driver.findElement(token_client_id).clear();
-    await driver.findElement(token_client_id).sendKeys(client_id);
-    await driver.findElement(token_client_secret).clear();
-    await driver.findElement(token_client_secret).sendKeys(client_secret);
-    await driver.findElement(token_scope).clear();
-    await driver.findElement(token_scope).sendKeys(scope);
+    // Submit credentials. Each field is re-located as it is typed into, and
+    // all three are read back right before the click, so a re-render of
+    // the token form between them cannot send stale or wrong values.
+    await typeSteadily(driver, token_client_id, client_id);
+    await typeSteadily(driver, token_client_secret, client_secret);
+    await typeSteadily(driver, token_scope, scope);
+    await typeSteadily(driver, token_client_id, client_id);
     await snap(driver, "02-token-request",
                { ids: ["token_expand_button", "token_fieldset"] });
     await driver.findElement(token_btn).click();
@@ -561,17 +644,11 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
 
     // Select Resource Owner Password Credential grant type on
     // oauth2_oidc_1.html
-    const authorization_grant_type = By.id("authorization_grant_type");
-    await driver.wait(until.elementLocated(authorization_grant_type), waitTime);
-    await new Select(await driver.findElement(authorization_grant_type))
-                     .selectByVisibleText('OAuth2 Resource Owner Password ' +
-                     'Credential Grant');
-
-    // Wait for oauth2_oidc_2.html to load
+    // The page leaves for oauth2_oidc_2.html (#507); this returns once
+    // that page is loaded and its token form is shown.
+    await selectGrantLeavingForTokenPage(driver, 'OAuth2 Resource Owner ' +
+                                         'Password Credential Grant');
     const token_client_id = By.id("token_client_id");
-    await driver.wait(until.elementLocated(token_client_id), waitTime);
-    await driver.wait(until.elementIsVisible(driver.findElement(
-                      token_client_id)), waitTime);
 
     // Select OIDC No
     const noCheckOIDCArtifacts = By.id("noCheckOIDCArtifacts");
@@ -619,17 +696,13 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
         await driver.findElement(token_initiateFromBackEnd));
     await driver.findElement(token_initiateFromBackEnd).click();
 
-    // Fill in credentials
-    await driver.findElement(token_client_id).clear();
-    await driver.findElement(token_client_id).sendKeys(client_id);
-
+    // Fill in credentials, each field re-located as it is typed into
+    // (#507).
+    await typeSteadily(driver, token_client_id, client_id);
     const token_client_secret = By.id("token_client_secret");
-    await driver.findElement(token_client_secret).clear();
-    await driver.findElement(token_client_secret).sendKeys(client_secret);
-
+    await typeSteadily(driver, token_client_secret, client_secret);
     const token_scope = By.id("token_scope");
-    await driver.findElement(token_scope).clear();
-    await driver.findElement(token_scope).sendKeys(scope);
+    await typeSteadily(driver, token_scope, scope);
 
     const token_username = By.id("token_username");
     await driver.wait(until.elementLocated(token_username), waitTime);
