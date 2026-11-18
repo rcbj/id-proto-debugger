@@ -4298,14 +4298,17 @@ async function proofContexts(env) {
   const notPrefix = await diSign(body([A, B]), "eddsa-jcs-2022", key,
                                  "assertionMethod", { "@context": [B] });
   v = await verifier.verifyDataIntegrity(notPrefix);
-  ok(!v.valid && /start with/.test(v.reason), "C14: a JCS proof @context " +
+  // The reasons are data_integrity.js's wording since the Verifier moved
+  // onto it (#475): the same rules, read once in this tree.
+  ok(!v.valid && /does not begin with the proof's @context/.test(v.reason),
+     "C14: a JCS proof @context " +
      "that is not a prefix: " + v.reason);
   const omitted = await diSign(body([A]), "eddsa-jcs-2022", key,
                                "assertionMethod", { omitContext: true });
   ok(!("@context" in omitted.proof), "the omitted shape has no @context");
   v = await verifier.verifyDataIntegrity(omitted);
-  ok(!v.valid && new RegExp("non-conformant: the proof was signed over " +
-     "an @context it does not carry").test(v.reason),
+  ok(!v.valid && /WOULD verify had the document's @context been added/
+       .test(v.reason) && !!v.diagnosis,
      "C14: the old shape FAILS, and says why: " + v.reason);
   const dcql = { credentials: [{ id: "c", format: "ldp_vc",
     require_cryptographic_holder_binding: false }] };
@@ -4323,8 +4326,23 @@ async function proofContexts(env) {
                                   "assertionMethod", { "@context": [A] });
   rdfcPrefix["@context"] = [A, B];
   v = await verifier.verifyDataIntegrity(rdfcPrefix);
-  ok(!v.valid && /is not the document's/.test(v.reason), "C14: an RDFC " +
+  ok(!v.valid && /not the document's/.test(v.reason), "C14: an RDFC " +
      "proof @context that is only a prefix: " + v.reason);
+  // Moved onto data_integrity.js (#475), the Verifier also verifies the
+  // Linked Data proof types that preceded Data Integrity. Signed here by
+  // that module, and a tampered copy fails.
+  const di = load("data_integrity_rdfc.js");
+  const legacy = await di.createProof(body([A]), { suite:
+    "Ed25519Signature2020", privateJwk: Object.assign({},
+      key.privateKey.export({ format: "jwk" })),
+    verificationMethod: key.vm, proofPurpose: "assertionMethod" });
+  v = await verifier.verifyDataIntegrity(legacy, {
+    purpose: "assertionMethod" });
+  ok(v.valid, "an Ed25519Signature2020 proof verifies: " + v.reason);
+  const legacyBad = JSON.parse(JSON.stringify(legacy));
+  legacyBad.credentialSubject = { id: "did:example:someone-else" };
+  v = await verifier.verifyDataIntegrity(legacyBad);
+  ok(!v.valid, "and a tampered one does not: " + v.reason);
   log.info("PASS #469 C14: JCS proof options hashed as received under the " +
            "prefix rule, RDFC under equality, the old shape a FAIL.");
   log.debug("Leaving proofContexts().");

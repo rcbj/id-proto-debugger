@@ -73,6 +73,8 @@ var x509 = require("./x509");
 var keyMaterial = require("./key_material");
 var vpProtocols = require("./vp_protocols");
 var joseJwe = require("./jose_jwe");
+// Registers RDFC-1.0 with data_integrity.js and answers it (#475).
+var dataIntegrity = require("./data_integrity_rdfc");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 var mdoc = require("./mdoc");
@@ -180,13 +182,6 @@ var BITSTRING_MIN_ENTRIES = 131072;
 // i.e. 134 million one-bit entries. A small compressed body that inflates
 // past this is a decompression bomb, not a status list.
 var MAX_INFLATED_BYTES = 16 * 1024 * 1024;
-// The Data Integrity cryptosuites verified here, and how each one hashes.
-var DI_SUITES = {
-  "eddsa-rdfc-2022": { canon: "rdfc", family: "eddsa" },
-  "eddsa-jcs-2022": { canon: "jcs", family: "eddsa" },
-  "ecdsa-rdfc-2019": { canon: "rdfc", family: "ecdsa" },
-  "ecdsa-jcs-2019": { canon: "jcs", family: "ecdsa" }
-};
 var DI_SUITES_NOT_VERIFIED = {
   "ecdsa-sd-2023": "ecdsa-sd-2023 is not verified by this debugger: a " +
     "derived proof needs the selective-disclosure machinery of that suite " +
@@ -2910,27 +2905,10 @@ async function checkIssuerSignature(s, key, compact, header, payload,
 }
 
 // ---------------------------------------------------------------------------
-// W3C VC Data Integrity proofs (eddsa-rdfc-2022, eddsa-jcs-2022,
-// ecdsa-rdfc-2019, ecdsa-jcs-2019).
-//
-// Every one of the four is the same three steps: canonicalize the proof
-// configuration (the proof without proofValue, given the document's
-// @context) and the document without its proof — RDFC-1.0 or JCS — hash
-// each, and verify the signature over hash(config) || hash(document). EdDSA
-// hashes with SHA-256; ECDSA with SHA-256 on P-256 and SHA-384 on P-384.
-// RDFC uses jsonld with bbs2023.js's document loader, which serves the
-// contexts this deployment ships and never fetches one.
+// W3C VC Data Integrity and Linked Data proofs. data_integrity.js verifies
+// them (see verifyDataIntegrity()); RDFC uses bbs2023.js's document loader,
+// which serves the contexts this deployment ships and never fetches one.
 // ---------------------------------------------------------------------------
-function rdfc(doc) {
-  log.debug("Entering rdfc().");
-  log.debug("Leaving rdfc().");
-  return jsonld.canonize(doc, {
-    algorithm: "URDNA2015",
-    format: "application/n-quads",
-    documentLoader: bbs2023.documentLoader,
-    safe: true
-  });
-}
 
 // The public key a proof's verificationMethod names: a did:key or did:jwk
 // read in place, another DID resolved through did.js, an https URL fetched
@@ -2961,44 +2939,21 @@ async function proofKey(vm, fetchJson) {
     didLib.didKeyToJwk("did:key:" + m.publicKeyMultibase) : null);
 }
 
-// How a suite signs with a key: the jws.js row and the digest.
-function diAlgorithm(family, jwk) {
-  log.debug("Entering diAlgorithm(). " + family);
-  var crv = String((jwk && jwk.crv) || "");
-  if (family === "eddsa" && crv === "Ed25519") {
-    log.debug("Leaving diAlgorithm(). Ed25519.");
-    return { spec: jws.algSpec("EdDSA-Ed25519"), hash: nobleSha256 };
-  }
-  if (family === "ecdsa" && crv === "P-256") {
-    log.debug("Leaving diAlgorithm(). P-256.");
-    return { spec: jws.algSpec("ES256"), hash: nobleSha256 };
-  }
-  if (family === "ecdsa" && crv === "P-384") {
-    log.debug("Leaving diAlgorithm(). P-384.");
-    return { spec: jws.algSpec("ES384"), hash: nobleSha512.sha384 };
-  }
-  log.debug("Leaving diAlgorithm(). Mismatch.");
-  return null;
-}
-
-// The signature over hash(proof options) || hash(document), pure JS.
-function diSignatureValid(alg, jwk, hashData, signature) {
-  log.debug("Entering diSignatureValid().");
-  var ok = false;
-  try {
-    ok = !!jws.verifyOctets(alg.spec, jws.jwkToKey(alg.spec, jwk, false),
-                            hashData, signature);
-  } catch (e) {
-    log.debug("diSignatureValid(): verify threw: " + e.message);
-    ok = false;
-  }
-  log.debug("Leaving diSignatureValid(). " + ok);
-  return ok;
-}
-
 // One Data Integrity proof verified. Answers { valid, unsupported, reason,
-// jwk, suite, verificationMethod }. `opts.purpose` is the proofPurpose the
-// caller expects (authentication for a VP, assertionMethod for a VC).
+// jwk, suite, verificationMethod, diagnosis }. `opts.purpose` is the
+// proofPurpose the caller expects (authentication for a VP,
+// assertionMethod for a VC).
+//
+// THE CRYPTOGRAPHY AND THE CANONICALIZATION ARE data_integrity.js's (#475),
+// the one reading of VC Data Integrity in this tree that the wallet, the
+// issuance pages and this Verifier share. Until then this function had its
+// own copy of the four eddsa/ecdsa suites. What stays here is what that
+// module leaves to its caller: whose key a verificationMethod names
+// (proofKey(), through this Verifier's fetchJson), the proofPurpose the
+// caller asked for, and whether the proof has expired. Every Linked Data
+// proof type data_integrity.js verifies (Ed25519Signature2018/2020,
+// JsonWebSignature2020, EcdsaSecp256k1Signature2019) is verified here as
+// well; a selective-disclosure suite is named as verified elsewhere.
 async function verifyDataIntegrity(doc, opts) {
   log.debug("Entering verifyDataIntegrity().");
   var o = opts || {};
@@ -3008,125 +2963,26 @@ async function verifyDataIntegrity(doc, opts) {
     return { valid: false, reason: "there is no proof." };
   }
   var proof = proofs[0] || {};
-  var suite = String(proof.cryptosuite || "");
-  var vm = String(proof.verificationMethod || "");
-  var out = { valid: false, suite: suite, verificationMethod: vm };
-  if (proof.type !== "DataIntegrityProof") {
-    log.debug("Leaving verifyDataIntegrity(). Not DataIntegrityProof.");
-    return Object.assign(out, { unsupported: true, reason: "proof type " +
-      JSON.stringify(proof.type) + " is not DataIntegrityProof." });
-  }
-  var suiteSpec = DI_SUITES[suite];
-  if (!suiteSpec) {
-    log.debug("Leaving verifyDataIntegrity(). Unsupported suite.");
+  var r = await dataIntegrity.verifyOneProof(doc, proof, {
+    resolveKey: function resolveKey(vm) {
+      log.debug("Entering resolveKey().");
+      log.debug("Leaving resolveKey().");
+      return proofKey(vm, o.fetchJson);
+    },
+    documentLoader: bbs2023.documentLoader
+  });
+  var suite = r.suite || String(proof.cryptosuite || proof.type || "");
+  var vm = r.verificationMethod || String(proof.verificationMethod || "");
+  var out = { valid: false, suite: suite, verificationMethod: vm,
+              jwk: r.jwk, diagnosis: r.diagnosis };
+  if (r.unsupported) {
+    log.debug("Leaving verifyDataIntegrity(). Unsupported.");
     return Object.assign(out, { unsupported: true,
-      reason: DI_SUITES_NOT_VERIFIED[suite] || "cryptosuite " +
-        JSON.stringify(suite) + " is not one this debugger verifies (" +
-        Object.keys(DI_SUITES).join(", ") + ", and bbs-2023 on a " +
-        "credential)." });
+      reason: DI_SUITES_NOT_VERIFIED[suite] || r.reason });
   }
-  var pv = String(proof.proofValue || "");
-  if (pv.charAt(0) !== "z") {
-    log.debug("Leaving verifyDataIntegrity(). Not base58btc.");
-    return Object.assign(out, { reason: "proofValue is not multibase " +
-                                "base58btc (z)." });
-  }
-  var jwk;
-  try {
-    jwk = await proofKey(vm, o.fetchJson);
-  } catch (e) {
-    log.debug("Leaving verifyDataIntegrity(). Key unresolved.");
-    return Object.assign(out, { reason: "verificationMethod " + vm +
-                                " could not be resolved: " + e.message });
-  }
-  if (!jwk) {
-    log.debug("Leaving verifyDataIntegrity(). No key.");
-    return Object.assign(out, { reason: "verificationMethod " + vm +
-                                " resolves to no key." });
-  }
-  out.jwk = jwk;
-  var alg = diAlgorithm(suiteSpec.family, jwk);
-  if (!alg) {
-    log.debug("Leaving verifyDataIntegrity(). Wrong key type.");
-    return Object.assign(out, { reason: suite + " needs " +
-      (suiteSpec.family === "eddsa" ? "an Ed25519" : "a P-256 or P-384") +
-      " key and " + vm + " is " + (jwk.crv || jwk.kty) + "." });
-  }
-  var config = Object.assign({}, proof);
-  delete config.proofValue;
-  var unsecured = Object.assign({}, doc);
-  delete unsecured.proof;
-  var docCtx = [].concat(doc["@context"] || []);
-  var proofCtx = config["@context"] === undefined ? null :
-      [].concat(config["@context"]);
-  var jcsSuite = suiteSpec.canon === "jcs";
-  // The proof's @context against the document's (#469, C14). VC Data
-  // Integrity's EdDSA and ECDSA cryptosuites, "Verify Proof" step 4: when
-  // the proof options carry an @context, the secured document's @context
-  // MUST START WITH all of its values in the same order, and the unsecured
-  // document is then given the proof's @context. A JCS suite hashes the
-  // proof options EXACTLY AS RECEIVED; an RDFC suite needs a context to
-  // expand the proof configuration at all, so it takes the document's,
-  // and a proof that names one must name that same one.
-  if (proofCtx) {
-    var prefixOk = proofCtx.length <= docCtx.length &&
-        proofCtx.every(function (c, i) {
-          return JSON.stringify(c) === JSON.stringify(docCtx[i]);
-        });
-    var sameOk = prefixOk && proofCtx.length === docCtx.length;
-    if (jcsSuite ? !prefixOk : !sameOk) {
-      log.debug("Leaving verifyDataIntegrity(). Context mismatch.");
-      return Object.assign(out, { reason: jcsSuite ? "the document's " +
-        "@context does not start with the proof's @context, in order " +
-        "(VC Data Integrity, Verify Proof step 4.1)." : "the proof's " +
-        "@context is not the document's." });
-    }
-    if (jcsSuite) unsecured["@context"] = config["@context"];
-  }
-  if (!jcsSuite && doc["@context"]) config["@context"] = doc["@context"];
-  var configText;
-  var docText;
-  if (jcsSuite) {
-    configText = vpProtocols.jcs(config);
-    docText = vpProtocols.jcs(unsecured);
-  } else {
-    try {
-      configText = await rdfc(config);
-      docText = await rdfc(unsecured);
-    } catch (e) {
-      log.debug("Leaving verifyDataIntegrity(). Canonicalization failed.");
-      return Object.assign(out, { reason: "RDFC-1.0 canonicalization " +
-        "failed (every context must be one this debugger ships or was " +
-        "given, and every term defined): " + e.message });
-    }
-  }
-  var hashData = bytes.concatBytes(alg.hash(bytes.strBytes(configText)),
-                                   alg.hash(bytes.strBytes(docText)));
-  var signature = didLib.base58Decode(pv.slice(1));
-  var ok = diSignatureValid(alg, jwk, hashData, signature);
-  // The shape this tree's own wallet signed until #469: a JCS proof that
-  // HASHED the document's @context into its proof options and then left
-  // it out of the proof. It is a FAIL — the debugger reads the
-  // specification, and compatibility is not its business — and the old
-  // reading is tried only to say WHY it failed.
-  if (!ok && jcsSuite && !proofCtx && doc["@context"]) {
-    var injected = Object.assign({ "@context": doc["@context"] }, config);
-    if (diSignatureValid(alg, jwk, bytes.concatBytes(
-      alg.hash(bytes.strBytes(vpProtocols.jcs(injected))),
-      alg.hash(bytes.strBytes(docText))), signature)) {
-      log.debug("Leaving verifyDataIntegrity(). Omitted @context.");
-      return Object.assign(out, { reason: "non-conformant: the proof was " +
-        "signed over an @context it does not carry (" + suite + " Verify " +
-        "Proof hashes the proof options exactly as received). It verifies " +
-        "only with the document's @context put back into them, which no " +
-        "conformant verifier does." });
-    }
-  }
-  if (!ok) {
-    log.debug("Leaving verifyDataIntegrity(). Bad signature.");
-    return Object.assign(out, { reason: "the signature does not verify " +
-      "over the canonical document and proof configuration (altered, or " +
-      "signed by another key)." });
+  if (!r.valid) {
+    log.debug("Leaving verifyDataIntegrity(). Invalid.");
+    return Object.assign(out, { reason: r.reason });
   }
   if (o.purpose && proof.proofPurpose !== o.purpose) {
     log.debug("Leaving verifyDataIntegrity(). Wrong purpose.");
@@ -3142,7 +2998,7 @@ async function verifyDataIntegrity(doc, opts) {
   }
   log.debug("Leaving verifyDataIntegrity(). Valid.");
   return Object.assign(out, { valid: true, reason: suite + " (" +
-    alg.spec.alg + ") by " + vm + " verifies" +
+    (r.alg || "?") + ") by " + vm + " verifies" +
     (proofs.length > 1 ? "; it is the first of " + proofs.length +
      " proofs, and only the first is checked" : "") + "." });
 }
