@@ -168,15 +168,22 @@ var PROOF_ALGS = { ES256: true, RS256: true };
 
 // The JWS the proof is signed with: { algId, headerAlg } (vc_formats.jwsFor).
 // A DPoP key under Holder of Key names its own alg; a holder key made here
-// otherwise the curve decides, with the issuer's list choosing among RSA
-// algorithms.
+// otherwise the curve decides, with the issuer's list choosing between
+// EdDSA and Ed25519, or among RSA algorithms.
 function proofAlgFor(key, issuerAlgs) {
   log.debug("Entering proofAlgFor().");
   if (key && PROOF_ALGS[key.alg]) {
     log.debug("Leaving proofAlgFor(). The key's own.");
     return { algId: key.alg, headerAlg: key.alg };
   }
-  var j = vcFormats.jwsFor(key && key.publicJwk, issuerAlgs);
+  // An Ed25519 key made for "Ed25519" keeps that name when the issuer
+  // states no list; otherwise the issuer's list chooses.
+  var named = key && key.privateJwk && key.privateJwk.alg;
+  var offered = [].concat(issuerAlgs || []);
+  if (!offered.length && named) {
+    offered = [named];
+  }
+  var j = vcFormats.jwsFor(key && key.publicJwk, offered);
   if (!j) {
     log.debug("Leaving proofAlgFor(). Default.");
     return { algId: PROOF_ALG, headerAlg: PROOF_ALG };

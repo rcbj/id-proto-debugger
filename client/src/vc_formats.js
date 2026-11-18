@@ -151,12 +151,12 @@ var FORMATS = {
 };
 
 // The key proof a wallet signs a Credential Request with: the JOSE algs it
-// can generate a holder key for, best first. The fully-specified "Ed25519"
-// (RFC 9864) is not among them yet because jws.js does not sign under that
-// name until M7 of #468 lands; an Ed25519 key is made for, and signs as,
-// "EdDSA", which is the same key and the same signature bytes.
-var HOLDER_KEY_ALGS = ["ES256", "EdDSA", "ES384", "ES256K", "ES512",
-                       "PS256", "RS256"];
+// can generate a holder key for, best first. "EdDSA" (RFC 8037) and the
+// fully-specified "Ed25519" (RFC 9864) are the same key and the same
+// signature bytes under two names; which one a key signs as is whichever the
+// other side accepts (jwsFor()).
+var HOLDER_KEY_ALGS = ["ES256", "EdDSA", "Ed25519", "ES384", "ES256K",
+                       "ES512", "PS256", "RS256"];
 
 // The crypto_provider key spec behind each of them.
 var HOLDER_KEY_SPECS = {
@@ -173,8 +173,9 @@ var FORMAT_HOLDER_ALGS = {
 };
 
 // The JWS a holder JWK signs with: jws.js's algorithm id and the `alg` the
-// header names. The curve decides, except that an RSA key signs the first
-// RS/PS algorithm the other side accepts. `accepted` is that side's list,
+// header names. The curve decides, except that an Ed25519 key is named
+// "EdDSA" or "Ed25519" by whichever the other side accepts, and an RSA key
+// signs the first RS/PS algorithm it accepts. `accepted` is that side's list,
 // or nothing for no constraint.
 function jwsFor(jwk, accepted) {
   log.debug("Entering jwsFor().");
@@ -191,9 +192,11 @@ function jwsFor(jwk, accepted) {
                "secp256k1": "ES256K" }[k.crv];
     out = ec ? { algId: ec, headerAlg: ec } : null;
   } else if (k.kty === "OKP" && k.crv === "Ed25519") {
-    // "EdDSA" until jws.js signs under the fully-specified "Ed25519" (M7 of
-    // #468); see HOLDER_KEY_ALGS.
-    out = { algId: "EdDSA-Ed25519", headerAlg: "EdDSA" };
+    // RFC 8037's "EdDSA" unless the other side takes only RFC 9864's
+    // fully-specified "Ed25519" (jws.js signs both, since M7 of #468).
+    out = !takes("EdDSA") && takes("Ed25519") ?
+      { algId: "Ed25519", headerAlg: "Ed25519" } :
+      { algId: "EdDSA-Ed25519", headerAlg: "EdDSA" };
   } else if (k.kty === "RSA") {
     var rsa = ["PS256", "RS256", "PS384", "RS384", "PS512", "RS512"]
       .filter(takes)[0] || "RS256";

@@ -81,7 +81,7 @@ function verifyJwt(jwt, publicJwk) {
   var data = Buffer.from(parts[0] + "." + parts[1]);
   var sig = Buffer.from(parts[2], "base64url");
   var ok;
-  if (alg === "EdDSA") {
+  if (alg === "EdDSA" || alg === "Ed25519") {
     ok = nodeCrypto.verify(null, data, key, sig);
   } else if (/^ES/.test(alg)) {
     ok = nodeCrypto.verify({ ES256: "sha256", ES384: "sha384",
@@ -153,6 +153,11 @@ function choices() {
                      "ES256", "an mdoc's device key is ES256");
   assert.strictEqual(formats.holderKeyAlgFor("EdDSA", "mso_mdoc"), "",
                      "an mdoc issuer without ES256 gets no key");
+  assert.strictEqual(formats.holderKeyAlgFor("Ed25519"), "Ed25519",
+                     "an issuer taking only RFC 9864's Ed25519 gets one");
+  assert.strictEqual(formats.jwsFor({ kty: "OKP", crv: "Ed25519", x: "x" },
+                     ["Ed25519"]).headerAlg, "Ed25519",
+                     "and the key signs under that name for it");
   assert.strictEqual(formats.holderKeyAlgFor("HS256"), "",
                      "a list of nothing the wallet can make gets no key");
   var p256 = { kty: "EC", crv: "P-256", x: "x", y: "y" };
