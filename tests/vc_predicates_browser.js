@@ -21,6 +21,8 @@
 //      age_over_18 with values [true], against an SD-JWT VC holding true
 //      (answered, the claim selected) and one holding false (refused at
 //      step 1, saying why, and nothing built at step 2).
+//   3. The Verifier page builds the same predicate as the DCQL extension
+//      and as a presentation_definition.
 //
 // Needs only the client, and the anoncreds witness.
 // ---------------------------------------------------------------------------
@@ -350,6 +352,40 @@ async function valuesCase(driver, value) {
   log.debug("Leaving valuesCase().");
 }
 
+// The Verifier page builds predicate requests in both languages (its query
+// builder; the engine half, verification included, is vp_query_engine.js).
+async function verifierPage(driver) {
+  log.debug("Entering verifierPage().");
+  await loadUrl(driver, baseUrl + "/vc-verifier.html");
+  await waitForContent.waitForPageBundle(driver, "the Verifier page");
+  await driver.executeScript(
+    "document.getElementById('vpv_format').value = 'anoncreds';" +
+    "document.getElementById('vpv_claims').value = 'name';" +
+    "document.getElementById('vpv_predicates').value = 'age >= 18';" +
+    "document.getElementById('vpv_query_language').value = 'dcql';" +
+    "vcverifier.regenerateDcql();");
+  var dcql = JSON.parse(await waitForValue(driver, "vpv_dcql", function (v) {
+    return v.indexOf("x_debugger_crit") !== -1;
+  }, "the Verifier should build the DCQL extension", stepWait));
+  assert.deepStrictEqual(dcql.credentials[0].claims, [{ path: ["name"] }],
+                         "the predicated claim is not in claims");
+  assert.match(await statusOf(driver, "vpv_dcql_status"), /non-standard/);
+  await driver.executeScript(
+    "document.getElementById('vpv_query_language').value = 'pe';" +
+    "vcverifier.regenerateDcql();");
+  var pd = JSON.parse(await waitForValue(driver, "vpv_dcql", function (v) {
+    return v.indexOf("input_descriptors") !== -1;
+  }, "the Verifier should build a presentation_definition", stepWait));
+  var fields = pd.input_descriptors[0].constraints.fields;
+  assert.deepStrictEqual(fields[1].filter, { type: "integer", minimum: 18 });
+  assert.strictEqual(fields[1].predicate, "required");
+  assert.match(await statusOf(driver, "vpv_dcql_status"),
+               /removed in 1\.0/);
+  log.info("PASS the Verifier page builds age >= 18 as the DCQL " +
+           "extension and as a presentation_definition.");
+  log.debug("Leaving verifierPage().");
+}
+
 async function test() {
   log.debug("Entering test().");
   var ac = (await witness.load()).ac;
@@ -366,6 +402,7 @@ async function test() {
     await roundTrip(driver, ac, iss, "dcql");
     await valuesCase(driver, true);
     await valuesCase(driver, false);
+    await verifierPage(driver);
     log.info("vc_predicates_browser: all checks passed.");
   } finally {
     await driver.quit();
