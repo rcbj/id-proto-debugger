@@ -392,9 +392,10 @@ COPY tests/bbs_vectors.json ./
 # client/src/bbs2023.js does require("./contexts/..."), so the vendored JSON-LD
 # contexts come too: canonicalization must never depend on fetching one.
 # bbs2023.js takes its contexts and offline loader from jsonld_contexts.js
-# (#475), which every Data Integrity cryptosuite shares; without it beside
-# the flat copy, bbs2023.js is a MODULE_NOT_FOUND at require.
-COPY client/src/bbs2023.js client/src/jsonld_contexts.js ./
+# (#475) and the VC Data Integrity selective-disclosure functions from
+# di_selective.js (#476), both shared with the other cryptosuites; without
+# them beside the flat copy, bbs2023.js is a MODULE_NOT_FOUND at require.
+COPY client/src/bbs2023.js client/src/jsonld_contexts.js client/src/di_selective.js ./
 # (iya-sts's copy is NOT flattened here any more. It was, as ./sts_bbs2023.js,
 # on the grounds that it had no relative requires; since iya-sts v1.0.0 it
 # reads its JSON-LD contexts from ./contexts beside itself, which a flat copy
