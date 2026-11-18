@@ -9,6 +9,15 @@
 // provisions itself through /admin-api (sts_applications.js) — it is never
 // assumed to exist.
 //
+// IN A TRUST REALM OF ITS OWN, `vc-client-auth`, with oauth2.rfc9700 on
+// there. A development-mode iya-sts asks no OAuth client for a secret and
+// answers a token request whatever credential it carries, so on the shared
+// realm a wrong secret is issued a token and the right one proves nothing.
+// RFC 9700 mode (section 2.5) makes a client whose entry declares a
+// credentialed method present it, and verifies it. Doing that in a realm
+// of the job's own changes nothing any other job reads, which is also why
+// this job needs no lock.
+//
 // For each method the client declares, a fresh pre-authorized offer is
 // taken from iya-sts's portal wallet, step 1 is configured with the
 // confidential client and the method, and step 2's Token Request is sent:
@@ -25,8 +34,7 @@
 //     request carries both attestation headers.
 //
 // The secret is typed on step 2 and the test then checks that no storage
-// holds it. Holds the sts-vc lock (run-report.js JOB_LOCKS): it configures
-// iya-sts.
+// holds it.
 // ---------------------------------------------------------------------------
 
 const { Builder, By, until } = require("selenium-webdriver");
@@ -60,6 +68,8 @@ var CLIENT_ID = "vc-confidential-" + nodeCrypto.randomBytes(4)
   .toString("hex");
 var SECRET = nodeCrypto.randomBytes(24).toString("base64url") + "-:&+";
 var ATTESTATION_KEY = "oauth2.clientAttestationTrustedKeys";
+var REALM = "vc-client-auth";
+var realmBase = issuerBase.replace(/\/+$/, "") + "/realm/" + REALM;
 
 function jwk(pair) {
   log.debug("Entering jwk().");
@@ -110,9 +120,34 @@ async function setField(driver, id, v, event) {
   log.debug("Leaving setField().");
 }
 
+// The job's own trust realm, created when it is not there yet (a kept
+// stack has it from an earlier run), with RFC 9700 mode and this run's
+// attester configured in it.
+async function realm(attesterJwks) {
+  log.debug("Entering realm().");
+  var root = issuerBase.replace(/\/+$/, "");
+  var listed = await registry.adminGet(root, "/realms");
+  var ids = ((listed && listed.realms) || []).map(function (r) {
+    return r.id;
+  });
+  if (ids.indexOf(REALM) === -1) {
+    var made = await registry.adminPost(root, "/realms/create",
+                                        { id: REALM, name: REALM });
+    assert.ok(made && made.ok, "creating the " + REALM + " trust realm " +
+              "was refused: " + JSON.stringify(made).slice(0, 300));
+  }
+  for (const write of [{ key: "oauth2.rfc9700", value: true },
+                       { key: ATTESTATION_KEY, value: attesterJwks }]) {
+    var set = await registry.adminPost(realmBase, "/config/set", write);
+    assert.ok(set && set.ok, "setting " + write.key + " in " + REALM +
+              " was refused: " + JSON.stringify(set).slice(0, 300));
+  }
+  log.debug("Leaving realm().");
+}
+
 async function provision(signingKey) {
   log.debug("Entering provision().");
-  var base = registry.stsBaseFor(issuerBase);
+  var base = realmBase;
   await registry.provision(base, {
     identifier: CLIENT_ID,
     name: "VC issuance confidential client (client authentication)",
@@ -154,8 +189,8 @@ async function toStepTwo(driver, offerUri, methodName, fields) {
   await driver.executeScript(
     "document.getElementById('vci_metadata_endpoint').value = arguments[0];" +
     "document.getElementById('oidc_discovery_endpoint').value = arguments[1];",
-    issuerBase + "/.well-known/openid-credential-issuer",
-    issuerBase + "/.well-known/oauth-authorization-server");
+    realmBase + "/.well-known/openid-credential-issuer",
+    realmBase + "/.well-known/oauth-authorization-server");
   await driver.findElement(By.id("vci_retrieve_button")).click();
   await waitForStatus(driver, "vci_signed_metadata_status", function (s) {
     return /^Retrieved/.test(s);
@@ -182,7 +217,7 @@ async function toStepTwo(driver, offerUri, methodName, fields) {
     offerUri);
   await driver.findElement(By.id("scan_offer_button")).click();
   await driver.wait(async function () {
-    return (await value(driver, "vci_credential_endpoint")) === issuerBase +
+    return (await value(driver, "vci_credential_endpoint")) === realmBase +
       "/oid4vci/credential";
   }, fetchWait, "taking the offer should discover its issuer");
   await driver.sleep(400);
@@ -240,37 +275,11 @@ async function redeem(driver, offered, methodName, fields, secret, shownRe,
 async function offer(driver) {
   log.debug("Entering offer().");
   var screen = await common.offerFromThePortalWallet(driver, { By: By,
-    until: until, stsBase: issuerBase, username: OFFER_USER,
+    until: until, stsBase: realmBase, username: OFFER_USER,
     mode: "cross-device", configuration: VCI_CONFIG_ID, wait: fetchWait,
     consentScreen: consentScreen });
   log.debug("Leaving offer().");
   return { uri: screen.offerUri, txCode: screen.txCode };
-}
-
-// A setting's current value anywhere in GET /admin-api/config's reply
-// (an entry naming it as key or name, with a value), so it can be put back.
-function settingIn(json, key) {
-  log.debug("Entering settingIn(). " + key);
-  var found;
-  var walk = function (o) {
-    if (found !== undefined || !o || typeof o !== "object") return;
-    if ((o.key === key || o.name === key) && "value" in o) {
-      found = o.value;
-      return;
-    }
-    if (Object.prototype.hasOwnProperty.call(o, key) &&
-        typeof o[key] !== "object") {
-      found = o[key];
-      return;
-    }
-    Object.keys(o).forEach(function (k) {
-      walk(o[k]);
-    });
-  };
-  walk(json);
-  log.debug("Leaving settingIn(). " + (found === undefined ? "absent" :
-            "found"));
-  return found;
 }
 
 async function test() {
@@ -278,17 +287,9 @@ async function test() {
   var signing = nodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
   var attester = nodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
   var instance = nodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
-  var base = await provision(jwk(signing));
-  var previous = settingIn(await registry.adminGet(base, "/config"),
-                           ATTESTATION_KEY);
-  var trust = await registry.adminPost(base, "/config/set", {
-    key: ATTESTATION_KEY, value: JSON.stringify({ keys: [Object.assign(
-      pub(jwk(attester)), { kid: "job-attester", use: "sig" })] }) });
-  assert.ok(trust && trust.ok, "iya-sts would not trust this job's " +
-            "attester: " + JSON.stringify(trust).slice(0, 300));
-  // From here the shared iya-sts holds this job's attester, so EVERYTHING
-  // after this line — the browser's start included — is inside the try
-  // whose finally puts the setting back, whether the job passes or fails.
+  await realm(JSON.stringify({ keys: [Object.assign(pub(jwk(attester)),
+    { kid: "job-attester", use: "sig" })] }));
+  await provision(jwk(signing));
   var driver = null;
   try {
     var options = new chrome.Options();
@@ -321,25 +322,6 @@ async function test() {
       } catch (e) {
         log.warn("driver.quit() failed: " + e.message);
       }
-    }
-    // Restored even when the job failed; a failed restore is said out loud
-    // rather than masking the job's own error.
-    try {
-      var restored = await registry.adminPost(base, "/config/set", {
-        key: ATTESTATION_KEY,
-        value: previous === undefined || previous === null ? "" :
-          (typeof previous === "string" ? previous :
-           JSON.stringify(previous)) });
-      if (!restored || !restored.ok) {
-        log.error("RESTORE FAILED: " + ATTESTATION_KEY + " on " + base +
-                  " still holds this job's attester: " +
-                  JSON.stringify(restored).slice(0, 300));
-      } else {
-        log.info("Restored " + ATTESTATION_KEY + " on " + base + ".");
-      }
-    } catch (e) {
-      log.error("RESTORE FAILED: " + ATTESTATION_KEY + " on " + base + ": " +
-                e.message);
     }
   }
   log.debug("Leaving test().");

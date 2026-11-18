@@ -265,9 +265,6 @@ const EXCLUSIVE = "*";
 const JOB_LOCKS = {
   // The mock's credential + verifier configuration.
   "sd_jwt_vc_issuance.js": "sts-vc",
-  // Provisions a confidential client and sets iya-sts's trusted Client
-  // Attestation keys for its length.
-  "vc_issuance_client_auth.js": "sts-vc",
   "sd_jwt_vc_presentation.js": "sts-vc",
   "ldp_vc_issuance.js": "sts-vc",
   "ldp_vc_presentation.js": "sts-vc",
@@ -4097,9 +4094,10 @@ function buildJobs() {
       },
     });
     // Client authentication at the token endpoint against a CONFIDENTIAL
-    // client this job provisions on iya-sts: basic (and a wrong secret
-    // refused), post, private_key_jwt and a Client Attestation by an
-    // attester iya-sts is told to trust for the length of the job.
+    // client this job provisions in a trust realm of its own (RFC 9700 mode
+    // on there, so a wrong secret IS refused): basic, a wrong secret, post,
+    // private_key_jwt and a Client Attestation by an attester that realm
+    // trusts. Configures nothing any other job reads, so it takes no lock.
     jobs.push({
       name: "VC Issuance — client authentication at the token endpoint " +
           "(confidential client on iya-sts)",
