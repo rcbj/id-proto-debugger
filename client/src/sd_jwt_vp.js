@@ -63,6 +63,9 @@ var jwpLib = require("./jwp");
 var sdCwt = require("./sd_cwt");
 // AnonCreds presentations (#479).
 var anoncredsWallet = require("./anoncreds_wallet");
+// Predicate queries: Presentation Exchange (OpenID4VP drafts) and the
+// debugger's DCQL predicate extension (#474).
+var vpQuery = require("./vp_query");
 
 var KEYS = {
   // Which way the presentation is being started (see USE_CASES).
@@ -421,7 +424,7 @@ function forgetRequest() {
 var REQUEST_PARAMS = ["client_id", "response_type", "response_mode",
     "response_uri", "redirect_uri",
                       "nonce", "state", "dcql_query", "client_metadata",
-                          "request_uri",
+                          "request_uri", "presentation_definition",
                       "request_uri_method", "request", "scope",
                           "transaction_data", "id_token_type"];
 
@@ -606,6 +609,149 @@ function requiresKeyBinding(credentialQuery) {
 }
 
 // ---------------------------------------------------------------------------
+// The query, in either language (vp_query.js): DCQL, OpenID4VP 1.0's, with
+// the debugger's predicate extension when a credential query marks it
+// critical; or a DIF Presentation Exchange presentation_definition, which
+// the OpenID4VP DRAFTS carried and 1.0 removed.
+// ---------------------------------------------------------------------------
+function requestQuery(request) {
+  log.debug("Entering requestQuery().");
+  var params = (request && request.params) || {};
+  var dcql = (request && request.dcql) ||
+    requestObjectValue(params, "dcql_query");
+  var pd = (request && request.presentationDefinition) ||
+    requestObjectValue(params, "presentation_definition");
+  log.debug("Leaving requestQuery().");
+  return vpQuery.normalise({ dcql_query: dcql || undefined,
+                             presentation_definition: pd || undefined });
+}
+
+// A claim lookup over a parsed held credential, for vp_query.js planFor():
+// the path walked through the payload and the claims, then — as the rest
+// of this workflow names claims — by claimNameForPath() in the flat map.
+function heldLookup(parsed) {
+  log.debug("Entering heldLookup().");
+  if (!parsed) {
+    log.debug("Leaving heldLookup(). Nothing held.");
+    return function () {
+      return { found: false };
+    };
+  }
+  if (parsed.format === sdJwtVc.FORMAT_ANONCREDS && parsed.anoncreds) {
+    log.debug("Leaving heldLookup(). AnonCreds.");
+    return anoncredsWallet.claimLookup(parsed.anoncreds);
+  }
+  var flat = parsed.claims || {};
+  var view = Object.assign({}, parsed.payload || {}, flat);
+  if (parsed.document) view = Object.assign({}, parsed.document, view);
+  log.debug("Leaving heldLookup().");
+  return function (path) {
+    var segs = [].concat(path || []);
+    var hits = vpQuery.selectAll(view, segs);
+    if (hits.length) return { found: true, value: hits[0] };
+    var name = claimNameForPath(segs.join("."), parsed.format);
+    if (Object.prototype.hasOwnProperty.call(flat, name)) {
+      return { found: true, value: flat[name] };
+    }
+    var last = vpQuery.attributeOf(segs);
+    return Object.prototype.hasOwnProperty.call(flat, last) ?
+      { found: true, value: flat[last] } : { found: false };
+  };
+}
+
+// The workflow's claim name for a query path (DCQL, or the PE path that
+// matched): claimNameForPath() of its string segments. An AnonCreds
+// attribute is flat, so it is the last segment.
+function claimNameOf(path, format) {
+  log.debug("Entering claimNameOf().");
+  var segs = (path || []).filter(function (x) {
+    return typeof x === "string";
+  });
+  if (format === sdJwtVc.FORMAT_ANONCREDS) {
+    log.debug("Leaving claimNameOf(). AnonCreds.");
+    return segs[segs.length - 1] || "";
+  }
+  log.debug("Leaving claimNameOf().");
+  return claimNameForPath(segs.join("."), format);
+}
+
+// The plan for the credential in hand against the request: { model, item,
+// plan, blocking: [text] }. The wallet holds ONE credential, so it answers
+// one query item: DCQL's first credential query (as everywhere in this
+// workflow), or the first Input Descriptor the credential can answer.
+// opts: { allowPreferredDisclosure }.
+function planForRequest(request, parsed, opts) {
+  log.debug("Entering planForRequest().");
+  var model = requestQuery(request);
+  if (!model.items.length) {
+    log.debug("Leaving planForRequest(). No query.");
+    return { model: model, item: null, plan: null,
+             blocking: model.language ? model.errors.slice() : [] };
+  }
+  var held = { format: parsed ? parsed.format : "",
+               lookup: heldLookup(parsed),
+               w3c: !!(parsed && parsed.anoncreds && parsed.anoncreds.w3c),
+               ids: parsed && parsed.anoncreds ? {
+                 schema_id: parsed.anoncreds.schemaId,
+                 cred_def_id: parsed.anoncreds.credDefId,
+                 issuer_id: (parsed.anoncreds.credentialDefinition || {})
+                   .issuerId } : null };
+  var candidates = model.language === "dcql" ? [model.items[0]] :
+    model.items;
+  var plans = candidates.map(function (item) {
+    return { item: item, plan: vpQuery.planFor(model, item, held, opts) };
+  });
+  var chosen = plans.filter(function (x) {
+    return x.plan.ok;
+  })[0] || plans[0];
+  var plan = chosen.plan;
+  var rows = (plan.claims && plan.claims.rows) || [];
+  plan.disclose = plan.disclose.map(function (n) {
+    var row = rows.filter(function (x) {
+      return x.attribute === n && x.status === "available";
+    })[0];
+    return row && parsed ? claimNameOf(row.path, parsed.format) : n;
+  });
+  // What blocks: everything the plan refuses, except — for a plain DCQL
+  // query, no values, no claim_sets and no predicates — a claim this
+  // wallet's presence check cannot find, which stays the advisory it has
+  // always been (the check is approximate for nested paths).
+  var plain = model.language === "dcql" && !chosen.item.claimSets &&
+    !chosen.item.predicates.length && !(chosen.item.extension &&
+      (chosen.item.extension.refuse || chosen.item.extension.present)) &&
+    !chosen.item.claims.some(function (c) {
+      return c.values !== undefined;
+    });
+  var blocking = plain ? [] : plan.refusals.slice();
+  log.debug("Leaving planForRequest(). " + blocking.length +
+            " blocking.");
+  return { model: model, item: chosen.item, plan: plan,
+           blocking: blocking, plain: plain };
+}
+
+// The answer to a presentation_definition (OpenID4VP drafts): the vp_token
+// is the presentation itself and a presentation_submission maps the Input
+// Descriptor to it. An AnonCreds presentation in the W3C form is a
+// Verifiable Presentation (di_vp) carrying a di_vc.
+function peAnswer(model, item, built) {
+  log.debug("Entering peAnswer().");
+  var element = built.vpElement || built.presentation;
+  var entry = { id: item.id, format: built.format, path: "$" };
+  if (built.format === sdJwtVc.FORMAT_ANONCREDS) {
+    element = JSON.parse(built.presentation);
+    if (element && element.type && [].concat(element.type)
+        .indexOf("VerifiablePresentation") !== -1) {
+      entry.format = "di_vp";
+      entry.path_nested = { id: item.id, format: "di_vc",
+                            path: "$.verifiableCredential[0]" };
+    }
+  }
+  log.debug("Leaving peAnswer().");
+  return { vpToken: element, submission: vpQuery.buildSubmission(
+    model.definition.id, [entry]) };
+}
+
+// ---------------------------------------------------------------------------
 // Building the presentation.
 // ---------------------------------------------------------------------------
 // The bytes the KB-JWT is signed over: the issuer-signed JWT and the selected
@@ -638,6 +784,128 @@ function sdHash(prefix, sdAlg) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// transaction_data (OpenID4VP 1.0 section 8.4; Appendix B.3.3.1 for
+// SD-JWT VC). A Verifier may attach `transaction_data` — an array of
+// base64url JSON objects, each { type, credential_ids, ... } — describing
+// what the presentation authorizes. The wallet "MUST include a
+// representation or reference to the data in the respective Credential
+// presentation"; the SD-JWT VC profile is `transaction_data_hashes` in the
+// KB-JWT, each the hash of the base64url STRING as received (NOT decoded
+// first), by sha-256 unless the entry listed transaction_data_hashes_alg, in
+// which case the KB-JWT names the one it used. This mirrors what
+// vp_verifier.js checks on the answer.
+// ---------------------------------------------------------------------------
+// The digest this wallet computes for each Named Information registry name,
+// keyed exactly as the Verifier's own TD_HASHES set.
+var TD_HASH_NAMES = { "sha-256": "SHA-256", "sha-384": "SHA-384",
+  "sha-512": "SHA-512", "sha3-256": "SHA3-256", "sha3-384": "SHA3-384",
+  "sha3-512": "SHA3-512" };
+// The wallet's preference when the Verifier offers a choice of algorithms.
+var TD_ALG_PREFERENCE = ["sha-256", "sha-384", "sha-512", "sha3-256",
+  "sha3-384", "sha3-512"];
+
+function isArray(x) {
+  return Object.prototype.toString.call(x) === "[object Array]";
+}
+
+// The request's transaction_data strings (base64url) that name `queryId`,
+// each with its decoded object { type, credential_ids, ... }. An entry that
+// names no queryId applies to every query (there is only one credential
+// query in this wallet's requests), so a request with transaction_data and a
+// query id of "" still binds.
+function transactionDataFor(params, queryId) {
+  log.debug("Entering transactionDataFor().");
+  var raw = requestObjectValue(params, "transaction_data");
+  var list = isArray(raw) ? raw : [];
+  var out = [];
+  list.forEach(function (str) {
+    if (typeof str !== "string" || !str) {
+      return;
+    }
+    var td = null;
+    try {
+      td = JSON.parse(bytes.b64uToStr(str));
+    } catch (e) {
+      td = null;
+    }
+    if (td && isArray(td.credential_ids) &&
+        (!queryId || td.credential_ids.indexOf(queryId) !== -1)) {
+      out.push({ str: str, td: td });
+    }
+  });
+  log.debug("Leaving transactionDataFor(). " + out.length);
+  return out;
+}
+
+// The hash algorithm the KB-JWT will name, and whether it must name one at
+// all. Appendix B.3.3.1: an entry that listed transaction_data_hashes_alg
+// forces the KB-JWT to name the one used and to use one of that entry's; an
+// entry that listed none accepts sha-256 only — so if any entry lists none
+// the choice is sha-256.
+function chooseTransactionDataAlg(entries) {
+  log.debug("Entering chooseTransactionDataAlg().");
+  var anyWithout = false;
+  var offered = [];
+  entries.forEach(function (one) {
+    var list = isArray(one.td.transaction_data_hashes_alg) ?
+        one.td.transaction_data_hashes_alg : null;
+    if (list) {
+      offered.push(list);
+    } else {
+      anyWithout = true;
+    }
+  });
+  var candidates = TD_ALG_PREFERENCE.filter(function (a) {
+    if (anyWithout && a !== "sha-256") {
+      return false;
+    }
+    return offered.every(function (list) {
+      return list.indexOf(a) !== -1;
+    });
+  });
+  var alg = candidates[0] || "sha-256";
+  log.debug("Leaving chooseTransactionDataAlg(). " + alg);
+  return { alg: alg, includeAlg: offered.length > 0 };
+}
+
+// The transaction_data_hashes for `queryId`, with the algorithm name the
+// KB-JWT must carry (null when sha-256 is implied). Resolves to null when the
+// request carries no transaction_data for this query, so the KB-JWT is left
+// exactly as it was.
+function transactionDataHashes(params, queryId) {
+  log.debug("Entering transactionDataHashes().");
+  var entries = transactionDataFor(params || {}, queryId);
+  if (!entries.length) {
+    log.debug("Leaving transactionDataHashes(). None.");
+    return Promise.resolve(null);
+  }
+  var choice = chooseTransactionDataAlg(entries);
+  var hashName = TD_HASH_NAMES[choice.alg];
+  if (!hashName) {
+    log.debug("Leaving transactionDataHashes(). Unsupported alg.");
+    return Promise.reject(new Error("this wallet cannot compute the " +
+      'transaction_data hash algorithm "' + choice.alg + '" the Verifier ' +
+      "requires (section 8.4)."));
+  }
+  log.debug("Leaving transactionDataHashes().");
+  return Promise.all(entries.map(function (one) {
+    // The base64url STRING as received, US-ASCII — NOT the decoded object.
+    var b = new Uint8Array(one.str.length);
+    for (var i = 0; i < one.str.length; i++) {
+      b[i] = one.str.charCodeAt(i) & 0xff;
+    }
+    return Promise.resolve(provider.digest(hashName, b))
+      .then(function (buf) {
+        return metadataClient.bytesToB64u(buf);
+      });
+  })).then(function (hashes) {
+    log.debug("Leaving transactionDataHashes(). " + hashes.length);
+    return { hashes: hashes, alg: choice.includeAlg ? choice.alg : null,
+             entries: entries };
+  });
+}
+
 // The Key Binding JWT (RFC 9901 section 4.3): typ kb+jwt, and a payload of
 // exactly iat, aud, nonce and sd_hash. OID4VP fixes the first two of those: the
 // nonce is the request's nonce, and the aud is the verifier's Client
@@ -667,6 +935,17 @@ function signKbJwt(opts) {
     nonce: opts.nonce,
     sd_hash: opts.sdHash
   };
+  // transaction_data_hashes (section 8.4, Appendix B.3.3.1): the hashes of
+  // the transaction_data strings this presentation authorizes, and the
+  // algorithm name when the Verifier offered a choice. Both are extension
+  // members of the KB-JWT, placed after sd_hash.
+  if (isArray(opts.transactionDataHashes) &&
+      opts.transactionDataHashes.length) {
+    payload.transaction_data_hashes = opts.transactionDataHashes;
+    if (opts.transactionDataHashesAlg) {
+      payload.transaction_data_hashes_alg = opts.transactionDataHashesAlg;
+    }
+  }
   log.debug("Leaving signKbJwt().");
   // VERBATIM header: a Key Binding JWT's `typ` is `kb+jwt` and the SD-JWT VC
   // specification fixes the rest, so the bytes are not this module's to
@@ -700,16 +979,24 @@ function buildPresentation(opts) {
         log.debug("Leaving buildPresentation(). No key binding required.");
         return { presentation: prefix, prefix: prefix, sdHash: hash, kb: null };
       }
-      return signKbJwt({
-        holderPrivateJwk: opts.holderPrivateJwk,
-        aud: opts.aud,
-        nonce: opts.nonce,
-        sdHash: hash
-      }).then(function (kb) {
-        log.debug("Leaving buildPresentation(). Signed a KB-JWT.");
-        return { presentation: prefix + kb.jwt, prefix: prefix, sdHash: hash,
-                kb: kb };
-      });
+      // transaction_data (section 8.4): when the request carries any for the
+      // credential query being presented, the KB-JWT carries their hashes.
+      return transactionDataHashes(opts.params, opts.credentialQueryId)
+        .then(function (td) {
+          return signKbJwt({
+            holderPrivateJwk: opts.holderPrivateJwk,
+            acceptedAlgs: opts.acceptedAlgs,
+            aud: opts.aud,
+            nonce: opts.nonce,
+            sdHash: hash,
+            transactionDataHashes: td ? td.hashes : null,
+            transactionDataHashesAlg: td ? td.alg : null
+          });
+        }).then(function (kb) {
+          log.debug("Leaving buildPresentation(). Signed a KB-JWT.");
+          return { presentation: prefix + kb.jwt, prefix: prefix,
+                   sdHash: hash, kb: kb };
+        });
     });
 }
 
@@ -915,7 +1202,8 @@ function presentAnoncreds(opts) {
   log.debug("Entering presentAnoncreds().");
   try {
     var made = anoncredsWallet.present(opts.credential, opts.selected || [],
-                                       opts.holderPrivateJwk, opts.nonce);
+                                       opts.holderPrivateJwk, opts.nonce,
+                                       opts.predicates || []);
     log.debug("Leaving presentAnoncreds().");
     return Promise.resolve({ presentation: JSON.stringify(made.presentation),
       prefix: "", sdHash: "", kb: null, vp: null,
@@ -1064,6 +1352,8 @@ module.exports = {
   requiresKeyBinding: requiresKeyBinding,
   presentedPrefix: presentedPrefix,
   sdHash: sdHash,
+  transactionDataFor: transactionDataFor,
+  transactionDataHashes: transactionDataHashes,
   signKbJwt: signKbJwt,
   holderJws: holderJws,
   buildPresentation: buildPresentation,
@@ -1071,5 +1361,9 @@ module.exports = {
   buildMdocPresentation: buildMdocPresentation,
   signVpJwt: signVpJwt,
   vpToken: vpToken,
-  presentedClaims: presentedClaims
+  presentedClaims: presentedClaims,
+  requestQuery: requestQuery,
+  heldLookup: heldLookup,
+  planForRequest: planForRequest,
+  peAnswer: peAnswer
 };

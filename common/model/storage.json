@@ -3834,6 +3834,11 @@
       "group": "client/src/vci_metadata.js"
     },
     {
+      "key": "vcpred_request",
+      "class": "ordinary",
+      "group": "client/src/vc_predicates_page.js"
+    },
+    {
       "key": "verification_uri",
       "class": "ordinary",
       "group": "client/src/oauth2_oidc_1.js",

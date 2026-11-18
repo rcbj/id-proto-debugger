@@ -81,7 +81,7 @@ revision that defines a JWE `alg`, the `ek` header and a JOSE KDF.
   in the Verifier's order, with that key's `alg`. A Verifier that lists an
   X-Wing key first gets a post-quantum answer. HAIP keeps to ECDH-ES on P-256,
   and an mdoc presentation passes over an AKP key, which has no RFC 7638
-  thumbprint for the session transcript. See `docs/vc-presentation-guide.md`.
+  thumbprint for the session transcript. See `docs/vc/reference-presentation.md`.
 
 ## iya-sts
 

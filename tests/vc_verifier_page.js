@@ -46,6 +46,9 @@ const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const { loadUrl } = require("./page_load.js");
 const paths = require("./module_paths.js");
+// The user guide's pictures (docs/vc/). Inert unless DOC_SCREENSHOT_DIR is
+// set, so an ordinary run takes none.
+const docShots = require("./doc_screenshots.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -366,6 +369,8 @@ async function liveSigningRound(driver) {
   const credential = issueCredential(holder);
   await walletAnswers(claims, holder, credential);
   const seen = await waitForVerdict(driver);
+  await docShots.snap(driver, "07-live-signed-request",
+                      { ids: ["pane_response"] });
   check("every check on the answer to the live-signed request passes",
       function () {
         assert.ok(/every check passed/i.test(seen.verdict),
@@ -426,13 +431,23 @@ async function oneRound(driver, mode, opts) {
   log.debug("Entering oneRound(). " + mode);
   log.info("=== " + mode + (opts && opts.nonce ? ", wrong nonce" : "") +
            " ===");
+  const shots = (opts && opts.shots) || "";
   await driver.executeScript("return window.vcverifier.reset();");
   const request = await createRequest(driver, mode);
+  if (shots === "01") {
+    await docShots.snap(driver, "01-what-to-ask", { ids: ["pane_query"] });
+    await docShots.snap(driver, "02-how-to-ask", { ids: ["pane_request"] });
+    await docShots.snap(driver, "03-hand-off", { ids: ["pane_handoff"] });
+  }
   const claims = await walletFetchesTheRequest(request);
   const holder = ecPair();
   const credential = issueCredential(holder);
   await walletAnswers(claims, holder, credential, opts);
   const seen = await waitForVerdict(driver);
+  if (shots) {
+    await docShots.snap(driver, shots === "01" ? "04-checks" : shots,
+                        { ids: ["pane_response"] });
+  }
   log.debug("Leaving oneRound(). " + seen.verdict);
   return seen;
 }
@@ -470,7 +485,8 @@ async function test() {
       assert.ok(/will host/i.test(apiSays), "The page says: " + apiSays);
     });
 
-    let seen = await oneRound(driver, "direct_post");
+    docShots.setPrefix("vc-verifier");
+    let seen = await oneRound(driver, "direct_post", { shots: "01" });
     check("every check on a correct direct_post answer passes", function () {
       assert.ok(/every check passed/i.test(seen.verdict),
           seen.verdict + "\n" + seen.rows.filter(function (r) {
@@ -491,7 +507,8 @@ async function test() {
               "is a SKIP: " + JSON.stringify(status));
         });
 
-    seen = await oneRound(driver, "direct_post.jwt");
+    seen = await oneRound(driver, "direct_post.jwt",
+                          { shots: "05-checks-direct-post-jwt" });
     check("an encrypted direct_post.jwt answer is decrypted and passes",
         function () {
           assert.ok(/every check passed/i.test(seen.verdict), seen.verdict);
@@ -500,7 +517,8 @@ async function test() {
               JSON.stringify(decrypt));
         });
 
-    seen = await oneRound(driver, "direct_post", { nonce: "not-the-nonce" });
+    seen = await oneRound(driver, "direct_post", { nonce: "not-the-nonce",
+                          shots: "06-checks-wrong-nonce" });
     check("a KB-JWT with the wrong nonce fails that row and no other",
         function () {
           const failed = seen.rows.filter(function (r) {

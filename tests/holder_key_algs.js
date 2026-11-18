@@ -170,6 +170,73 @@ function choices() {
   log.debug("Leaving choices().");
 }
 
+// transaction_data (OpenID4VP 1.0 section 8.4; Appendix B.3.3.1 for
+// SD-JWT VC). The Verifier encodes each object as base64url JSON and the
+// wallet hashes that exact string into the KB-JWT. node's crypto is the
+// reference the wallet's pure-JS digest is held to.
+async function transactionData() {
+  log.debug("Entering transactionData().");
+  function encode(obj) {
+    return Buffer.from(JSON.stringify(obj)).toString("base64url");
+  }
+  function b64uHash(name, str) {
+    return nodeCrypto.createHash(name).update(Buffer.from(str, "ascii"))
+      .digest("base64url");
+  }
+  // Default algorithm: sha-256, and no alg member in the KB-JWT.
+  const strDefault = encode({ type: "payment", credential_ids: ["cred1"] });
+  const r1 = await sdJwtVp.transactionDataHashes(
+    { transaction_data: [strDefault] }, "cred1");
+  assert.deepStrictEqual(r1.hashes, [b64uHash("sha256", strDefault)],
+    "the hash is sha-256 of the base64url string as received");
+  assert.strictEqual(r1.alg, null,
+    "no alg member when the entry lists no transaction_data_hashes_alg");
+  // A choice of algorithms: the wallet prefers sha-256 and names it.
+  const strChoice = encode({ type: "payment", credential_ids: ["cred1"],
+    transaction_data_hashes_alg: ["sha-512", "sha-256"] });
+  const r2 = await sdJwtVp.transactionDataHashes(
+    { transaction_data: [strChoice] }, "cred1");
+  assert.strictEqual(r2.alg, "sha-256",
+    "the wallet prefers sha-256 among the offered algorithms");
+  assert.deepStrictEqual(r2.hashes, [b64uHash("sha256", strChoice)]);
+  // Only sha-512 offered: the wallet uses and names it.
+  const str512 = encode({ type: "payment", credential_ids: ["cred1"],
+    transaction_data_hashes_alg: ["sha-512"] });
+  const r3 = await sdJwtVp.transactionDataHashes(
+    { transaction_data: [str512] }, "cred1");
+  assert.strictEqual(r3.alg, "sha-512");
+  assert.deepStrictEqual(r3.hashes, [b64uHash("sha512", str512)]);
+  // Only the entry naming this credential query is bound.
+  const forOther = encode({ type: "x", credential_ids: ["other"] });
+  const forMine = encode({ type: "y", credential_ids: ["cred1"] });
+  const r4 = await sdJwtVp.transactionDataHashes(
+    { transaction_data: [forOther, forMine] }, "cred1");
+  assert.deepStrictEqual(r4.hashes, [b64uHash("sha256", forMine)],
+    "only the entry naming this query is hashed");
+  // No transaction_data: null, so the KB-JWT is left unchanged.
+  assert.strictEqual(
+    await sdJwtVp.transactionDataHashes({}, "cred1"), null);
+  // The KB-JWT carries the members when they are passed, and neither when not.
+  const key = await wallet.generateHolderKeyPair("ES256");
+  const kb = await sdJwtVp.signKbJwt({ aud: "x509_hash:v", nonce: "n",
+    sdHash: "h", holderPrivateJwk: key.privateJwk,
+    transactionDataHashes: r2.hashes, transactionDataHashesAlg: r2.alg });
+  const kbPayload = JSON.parse(
+    Buffer.from(kb.jwt.split(".")[1], "base64url").toString());
+  assert.deepStrictEqual(kbPayload.transaction_data_hashes, r2.hashes,
+    "the KB-JWT carries transaction_data_hashes");
+  assert.strictEqual(kbPayload.transaction_data_hashes_alg, "sha-256",
+    "and names the algorithm when the Verifier offered a choice");
+  const kb2 = await sdJwtVp.signKbJwt({ aud: "v", nonce: "n", sdHash: "h",
+    holderPrivateJwk: key.privateJwk });
+  const kb2Payload = JSON.parse(
+    Buffer.from(kb2.jwt.split(".")[1], "base64url").toString());
+  assert.ok(!("transaction_data_hashes" in kb2Payload),
+    "no member in a KB-JWT without transaction_data");
+  log.info("PASS transaction_data_hashes: section 8.4 / Appendix B.3.3.1.");
+  log.debug("Leaving transactionData().");
+}
+
 // The key proof TYPES of a Credential Request (OpenID4VCI 1.0 section 8.2.1):
 // `jwt` (the default, one proof of possession per key) and `attestation` (one
 // Key Attestation JWT vouching for the holder keys). node's crypto is the
@@ -222,6 +289,7 @@ async function main() {
   log.debug("Entering main().");
   choices();
   await everyAlgorithm();
+  await transactionData();
   await keyProofTypes();
   log.info("holder_key_algs: all checks passed.");
   log.debug("Leaving main().");

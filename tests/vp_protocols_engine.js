@@ -478,6 +478,56 @@ function deliveries() {
   log.debug("Leaving deliveries().");
 }
 
+// The Digital Credentials API answer (OpenID4VP 1.0 Appendix A; #471, E1):
+// dc_api returns the response fields as a data OBJECT, dc_api.jwt returns the
+// same fields as one JWE under `response`, and the holder-binding audience is
+// origin:<origin> for an unsigned request. Mirrors what vp_verifier.js reads.
+function dcApiAnswer() {
+  log.debug("Entering dcApiAnswer().");
+  assert.ok(vp.isDcApiMode("dc_api") && vp.isDcApiMode("dc_api.jwt"),
+    "dc_api and dc_api.jwt are DC API modes");
+  assert.ok(!vp.isDcApiMode("direct_post"), "direct_post is not");
+  // No response_uri or redirect_uri: the answer goes to the caller.
+  assert.strictEqual(vp.responseTarget({ response_mode: "dc_api",
+    redirect_uri: "https://v/cb" }), "", "a DC API answer names no target");
+  // Audience: a signed request uses the Client Identifier; an unsigned one
+  // uses origin:<origin> (Appendix A.4).
+  assert.strictEqual(vp.responseAudience({ response_mode: "dc_api",
+    client_id: "x509_hash:abc" }, { signed: true }), "x509_hash:abc",
+    "a signed DC API request's aud is the Client Identifier");
+  assert.strictEqual(vp.responseAudience({ response_mode: "dc_api",
+    client_id: "origin:https://verifier.example.com" }, { signed: false }),
+    "origin:https://verifier.example.com",
+    "an origin: Client Identifier becomes the origin aud");
+  // A non-DC mode is untouched, signed or not.
+  assert.strictEqual(vp.responseAudience({ response_mode: "direct_post",
+    client_id: "x509_hash:abc" }, { signed: true }), "x509_hash:abc",
+    "direct_post's aud stays the Client Identifier");
+  // dc_api delivery: a data object, not a POST or a redirect.
+  const fields = { vp_token: { cred: ["x~"] } };
+  const d = vp.deliveryFor({ response_mode: "dc_api" }, fields);
+  assert.strictEqual(d.kind, "dcapi", "dc_api is a dcapi delivery");
+  assert.strictEqual(d.target, "", "with no target");
+  assert.deepStrictEqual(d.dataObject, fields,
+    "the data object is the response fields");
+  assert.deepStrictEqual(JSON.parse(d.body), fields,
+    "and its body is their JSON");
+  // dc_api.jwt wraps the JWE under response.
+  const dj = vp.deliveryFor({ response_mode: "dc_api.jwt" }, fields,
+    { jwe: "aaa.bbb.ccc.ddd.eee" });
+  assert.strictEqual(dj.kind, "dcapi");
+  assert.deepStrictEqual(dj.dataObject, { response: "aaa.bbb.ccc.ddd.eee" },
+    "dc_api.jwt returns the JWE under response");
+  assert.ok(/navigator\.credentials\.get/.test(vp.describeDelivery(d)),
+    "the description says the wallet returns it to the DC API");
+  const meta = vp.walletMetadata();
+  assert.ok(meta.response_modes_supported.indexOf("dc_api") !== -1 &&
+    meta.response_modes_supported.indexOf("dc_api.jwt") !== -1,
+    "wallet metadata advertises the DC API modes");
+  log.info("PASS the Digital Credentials API answer (dc_api, dc_api.jwt).");
+  log.debug("Leaving dcApiAnswer().");
+}
+
 // #463 cleanup 2: a certificate's key and the pairwise subject key come from
 // crypto_provider.js now, not Web Crypto. node's crypto is the reference.
 async function keysWithoutWebCrypto() {
@@ -518,6 +568,7 @@ async function main() {
   protocolRules();
   clientIdPrefixes();
   deliveries();
+  dcApiAnswer();
   log.info("vp_protocols_engine: all checks passed.");
   log.debug("Leaving main().");
 }

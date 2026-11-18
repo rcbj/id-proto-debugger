@@ -629,10 +629,23 @@ async function offerFromThePortalWallet(driver, opts) {
     "the portal let this browser in with no sign-in screen although its " +
     "cookies for " + base + " were cleared, so the offer would be made for " +
     "somebody other than " + opts.username + ".");
-  await driver.findElement(By.id("username")).sendKeys(opts.username);
-  await driver.findElement(By.id("password"))
-      .sendKeys(opts.password || "any-password");
+  // Cleared first: on a second visit in the same run the browser may have
+  // pre-filled the username, and sendKeys would append to it (#authn
+  // "pepdemo1pepdemo1").
+  const portalUser = await driver.findElement(By.id("username"));
+  await portalUser.clear();
+  await portalUser.sendKeys(opts.username);
+  const portalPass = await driver.findElement(By.id("password"));
+  await portalPass.clear();
+  await portalPass.sendKeys(opts.password || "any-password");
   await driver.findElement(By.id("kc-login")).click();
+  // A second factor, where the authorization server asks for one (a
+  // product-mode iya-sts), answered by the caller — the documentation run
+  // has the account's authenticator secret. Other callers pass none and the
+  // sign-in has no second step.
+  if (typeof opts.afterLogin === "function") {
+    await opts.afterLogin(driver);
+  }
   if (opts.consentScreen) {
     await opts.consentScreen.passInBrowser(driver, By);
   }
@@ -864,7 +877,13 @@ async function provisionWallet(issuerBase, options) {
   const entry = await registry.provision(registry.stsBaseFor(issuerBase), {
     identifier: clientId,
     name: opts.name || "OID4VCI wallet (debugger tests)",
-    protocols: ["oauth2", "oid4vci"],
+    // oauth2 and oid4vci by default; oidc too when the caller asks for an
+    // openid scope, because an openid scope has the issuer mint an ID token,
+    // whose issuance a product-mode XACML policy refuses to an application
+    // not declared for the oidc family (STS-XACML-0084).
+    protocols: opts.protocols || ([].concat(opts.scopes || [])
+      .indexOf("openid") >= 0 ? ["oauth2", "oidc", "oid4vci"]
+      : ["oauth2", "oid4vci"]),
     fields: fields,
     why: opts.why || "the wallet that collects credentials from this issuer"
   });

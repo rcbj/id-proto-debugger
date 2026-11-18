@@ -10,14 +10,23 @@
 // in machine-readable form, so a copied barcode on a forged card does not
 // verify. #480.
 //
-// Two cases, one mechanism:
+// Three cases, one mechanism:
 //   * MachineReadableZone — an ID card or travel document. The credential is
 //     a QR code beside the MRZ, and the signature also covers every MRZ line.
 //   * AamvaDriversLicenseScannableInformation — a North American driver's
 //     licence. The credential rides inside the licence's own PDF417, and the
 //     signature also covers the mandatory AAMVA fields its
 //     protectedComponentIndex selects.
-// Either way the proof is ecdsa-xi-2023 (data_integrity.js): ecdsa-rdfc-2019
+//   * IsoDrivingLicenceMachineReadableInformation (Appendix B, INFORMATIVE
+//     and "expected to be refined ... before use") — an ISO/IEC 18013-2
+//     licence. The signature covers the data groups DG1..DG11 a 2-byte
+//     protectedComponentIndex selects, each as "DGn" + base64url(contents)
+//     + "\n" in data-group NUMBER order, and the credential rides in DG11.
+//     No vector exists; tests/vc_barcodes_engine.js builds one and holds it
+//     to Digital Bazaar's cryptosuite. Neither published context names the
+//     type, so a credential issued here carries a one-term inline context
+//     mapping it into the vc-barcodes vocabulary (see ISO_CONTEXT).
+// In each, the proof is ecdsa-xi-2023 (data_integrity.js): ecdsa-rdfc-2019
 // with SHA-256 of the "optical data" appended to what is signed. The
 // credential is CBOR-LD (cborld.js), registry entry 100.
 //
@@ -65,6 +74,28 @@ var CONTEXTS = ["https://www.w3.org/ns/credentials/v2",
                 "https://w3id.org/vc-barcodes/v1"];
 var MRZ = "MachineReadableZone";
 var AAMVA = "AamvaDriversLicenseScannableInformation";
+var ISO_IDL = "IsoDrivingLicenceMachineReadableInformation";
+var VCB_VOCAB = "https://w3id.org/vc-barcodes#";
+
+// Appendix B names the type and https://w3id.org/vc-barcodes/v1 does not
+// define it (nor MachineReadableInformation), so a credential naming it by
+// its short name needs a context that does. This is the smallest one that
+// says nothing the TR does not: the term, in the vocabulary every other
+// vc-barcodes term is in. It is inline rather than a URL because inventing
+// a context URL for somebody else's vocabulary is worse than spending the
+// ~120 bytes; CBOR-LD carries an embedded context as an ordinary map, and
+// Digital Bazaar's library writes the same bytes for it
+// (tests/vc_barcodes_engine.js).
+var ISO_CONTEXT = {};
+ISO_CONTEXT[ISO_IDL] = VCB_VOCAB + ISO_IDL;
+
+// Appendix B.1: the components are the ISO/IEC 18013-2 data groups in
+// ascending order of NUMBER, and bit i of the 2-byte index is the i-th.
+// Numerically: a code-point sort would put DG10 and DG11 before DG2.
+var ISO_DATA_GROUPS = ["DG1", "DG2", "DG3", "DG4", "DG5", "DG6", "DG7",
+  "DG8", "DG9", "DG10", "DG11"];
+// Ibid.: "The encoded VCB is expected to be placed in Data Group 11".
+var ISO_VCB_GROUP = "DG11";
 
 // VC Barcodes Appendix A: the 22 mandatory AAMVA data elements, in
 // code-point order. Bit i of protectedComponentIndex (most significant bit
@@ -281,6 +312,238 @@ function protectedComponents(index) {
 }
 
 // ---------------------------------------------------------------------------
+// ISO/IEC 18013-2 driving licences (VC Barcodes Appendix B, informative).
+//
+// The optical data is the licence's compact-encoded machine-readable data,
+// organised into data groups DG1..DG11. HOW that encoding is split into
+// data groups ("as delimited by the data group delimiter character") is
+// ISO/IEC 18013-2's, which is not freely available, so this module does
+// not guess at it: it takes the data groups already separated, as
+//     DG1: <contents>
+//     DG2: hex:<contents as hex>
+// one per line, the contents literal text (UTF-8) in which \n, \r, \t,
+// \\ and \xNN stand for those bytes, or hex after "hex:".
+// ---------------------------------------------------------------------------
+
+// The credentialSubject's types, with the vocabulary IRI of each of this
+// module's types read as its short name (a credential that names the type
+// by IRI rather than through a context means the same thing).
+function subjectTypes(subject) {
+  log.debug("Entering subjectTypes().");
+  var types = [].concat((subject && subject.type) || []).map(function (t) {
+    var s = String(t);
+    return s.indexOf(VCB_VOCAB) === 0 ? s.slice(VCB_VOCAB.length) : s;
+  });
+  log.debug("Leaving subjectTypes(). " + types.join(","));
+  return types;
+}
+
+function unescapeGroupText(text, label) {
+  log.debug("Entering unescapeGroupText(). " + label);
+  var out = [];
+  var plain = "";
+  var flush = function flush() {
+    log.debug("Entering flush().");
+    if (plain) {
+      Array.prototype.push.apply(out, Array.from(cbytes.strBytes(plain)));
+      plain = "";
+    }
+    log.debug("Leaving flush().");
+  };
+  for (var i = 0; i < text.length; i++) {
+    var c = text.charAt(i);
+    if (c !== "\\") {
+      plain += c;
+      continue;
+    }
+    var n = text.charAt(i + 1);
+    var simple = { n: 10, r: 13, t: 9, "\\": 92 }[n];
+    if (simple !== undefined) {
+      flush();
+      out.push(simple);
+      i += 1;
+    } else if (n === "x" && /^[0-9a-fA-F]{2}$/.test(text.substr(i + 2, 2))) {
+      flush();
+      out.push(parseInt(text.substr(i + 2, 2), 16));
+      i += 3;
+    } else {
+      log.debug("Leaving unescapeGroupText(). Bad escape.");
+      throw new Error(label + ": \"\\" + n + "\" is not an escape this " +
+                      "reads (\\n, \\r, \\t, \\\\ or \\xNN).");
+    }
+  }
+  flush();
+  log.debug("Leaving unescapeGroupText().");
+  return new Uint8Array(out);
+}
+
+// { DG1: Uint8Array, ... } from the text form above, or from an object
+// whose values are bytes or strings (UTF-8).
+function parseIsoDataGroups(input) {
+  log.debug("Entering parseIsoDataGroups().");
+  var groups = {};
+  if (input && typeof input === "object" && !(input instanceof Uint8Array)) {
+    Object.keys(input).forEach(function (k) {
+      if (ISO_DATA_GROUPS.indexOf(k) === -1) {
+        log.debug("Leaving parseIsoDataGroups(). Unknown group.");
+        throw new Error(k + " is not one of the ISO/IEC 18013-2 data " +
+                        "groups DG1..DG11.");
+      }
+      var v = input[k];
+      groups[k] = typeof v === "string" ? cbytes.strBytes(v) :
+        cbytes.asBytes(v);
+    });
+    log.debug("Leaving parseIsoDataGroups(). Object.");
+    return groups;
+  }
+  String(input || "").split(/\r?\n/).forEach(function (line, n) {
+    if (!line.trim()) {
+      return;
+    }
+    var m = /^\s*(DG\d+)\s*[:=] ?(.*)$/.exec(line);
+    if (!m) {
+      log.debug("Leaving parseIsoDataGroups(). Bad line.");
+      throw new Error("line " + (n + 1) + " is not \"DGn: contents\".");
+    }
+    var name = m[1];
+    if (ISO_DATA_GROUPS.indexOf(name) === -1) {
+      log.debug("Leaving parseIsoDataGroups(). Unknown group.");
+      throw new Error("line " + (n + 1) + ": " + name + " is not one of " +
+                      "the data groups DG1..DG11 (VC Barcodes Appendix B).");
+    }
+    if (groups[name]) {
+      log.debug("Leaving parseIsoDataGroups(). Duplicate.");
+      throw new Error("line " + (n + 1) + ": " + name + " appears twice.");
+    }
+    var body = m[2];
+    if (/^hex:/i.test(body)) {
+      var h = body.slice(4).replace(/\s+/g, "");
+      if (!/^([0-9a-fA-F]{2})*$/.test(h)) {
+        log.debug("Leaving parseIsoDataGroups(). Bad hex.");
+        throw new Error(name + ": the contents after \"hex:\" are not " +
+                        "hex.");
+      }
+      groups[name] = cbytes.hexToBytes(h);
+    } else {
+      groups[name] = unescapeGroupText(body, name);
+    }
+  });
+  if (!Object.keys(groups).length) {
+    log.debug("Leaving parseIsoDataGroups(). Empty.");
+    throw new Error("no data groups (\"DG1: ...\" lines).");
+  }
+  log.debug("Leaving parseIsoDataGroups(). " +
+            Object.keys(groups).join(","));
+  return groups;
+}
+
+// The text form of a set of data groups, in data-group order: printable
+// text as text (with the escapes above), anything else as hex.
+function formatIsoDataGroups(groups) {
+  log.debug("Entering formatIsoDataGroups().");
+  var lines = ISO_DATA_GROUPS.filter(function (name) {
+    return groups[name] !== undefined;
+  }).map(function (name) {
+    var b = cbytes.asBytes(groups[name]);
+    var text = null;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(b);
+    } catch (e) {
+      text = null;
+    }
+    if (text === null || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text) &&
+        text.replace(/[^\x00-\x1f\x7f]/g, "").length * 4 > text.length) {
+      return name + ": hex:" + cbytes.bytesToHex(b);
+    }
+    return name + ": " + text.replace(/\\/g, "\\\\")
+      .replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")
+      .replace(/[\x00-\x1f\x7f]/g, function (c) {
+        return "\\x" + ("0" + c.charCodeAt(0).toString(16)).slice(-2);
+      });
+  });
+  log.debug("Leaving formatIsoDataGroups().");
+  return lines.join("\n");
+}
+
+// The data groups with the credential's field as DG11's contents.
+function withVcbInDg11(groups, field) {
+  log.debug("Entering withVcbInDg11().");
+  var g = Object.assign({}, typeof groups === "string" ?
+                        parseIsoDataGroups(groups) : groups);
+  g[ISO_VCB_GROUP] = cbytes.strBytes(field);
+  log.debug("Leaving withVcbInDg11().");
+  return g;
+}
+
+// protectedComponentIndex <-> data groups (Appendix B.1): two bytes, the
+// first 11 bits DG1..DG11, the last five padding and 0.
+function isoComponentIndex(names) {
+  log.debug("Entering isoComponentIndex().");
+  var bits = new Uint8Array(2);
+  (names || []).forEach(function (name) {
+    var i = ISO_DATA_GROUPS.indexOf(name);
+    if (i === -1) {
+      log.debug("Leaving isoComponentIndex(). Not a data group.");
+      throw new Error(name + " is not one of the data groups DG1..DG11.");
+    }
+    bits[i >> 3] |= 0x80 >> (i & 7);
+  });
+  log.debug("Leaving isoComponentIndex().");
+  return "u" + cbytes.bytesToB64u(bits);
+}
+
+function isoProtectedGroups(index) {
+  log.debug("Entering isoProtectedGroups().");
+  var s = String(index || "");
+  if (s.charAt(0) !== "u" || s.length !== 4) {
+    log.debug("Leaving isoProtectedGroups(). Not 4 characters.");
+    throw new Error("an IsoDrivingLicenceMachineReadableInformation " +
+                    "protectedComponentIndex is multibase base64url of two " +
+                    "bytes, \"u\" + 3 characters (\"a total of 4 " +
+                    "characters\", Appendix B.1); this is " +
+                    JSON.stringify(s) + ".");
+  }
+  var bits = cbytes.b64uToBytes(s.slice(1));
+  if (bits.length !== 2) {
+    log.debug("Leaving isoProtectedGroups(). Wrong length.");
+    throw new Error("protectedComponentIndex must be 2 bytes; this is " +
+                    bits.length + ".");
+  }
+  if (bits[1] & 0x1f) {
+    log.debug("Leaving isoProtectedGroups(). Padding set.");
+    throw new Error("protectedComponentIndex's last five bits are padding " +
+                    "and must be 0 (Appendix B.1).");
+  }
+  var names = ISO_DATA_GROUPS.filter(function (name, i) {
+    return bits[i >> 3] & (0x80 >> (i & 7));
+  });
+  log.debug("Leaving isoProtectedGroups(). " + names.join(","));
+  return names;
+}
+
+// Appendix B.2: for each protected data group, in data-group order,
+// "DGn" + base64url(its contents) + "\n". base64url is RFC 4648 section 5
+// WITHOUT padding: the TR says only "a base64url encoding", and unpadded is
+// what every other base64url in Data Integrity and in this TR's multibase
+// values is. tests/vc_barcodes_engine.js asserts this by spelling the rule
+// out with node's own Buffer.
+function isoCanonical(groups, index) {
+  log.debug("Entering isoCanonical().");
+  var g = typeof groups === "string" ? parseIsoDataGroups(groups) :
+      (groups || {});
+  var parts = isoProtectedGroups(index).map(function (name) {
+    if (g[name] === undefined) {
+      log.debug("Leaving isoCanonical(). Missing group.");
+      throw new Error("the protectedComponentIndex protects " + name +
+                      ", and the licence data has no " + name + ".");
+    }
+    return name + cbytes.bytesToB64u(g[name]) + "\n";
+  });
+  log.debug("Leaving isoCanonical().");
+  return parts.join("");
+}
+
+// ---------------------------------------------------------------------------
 // The optical data (VC Barcodes section 3.2.4.4): the protected components,
 // each ending "\n", ordered by the type's rule, joined, SHA-256.
 // ---------------------------------------------------------------------------
@@ -340,17 +603,25 @@ function sha256Of(text) {
 function opticalData(credential, printed) {
   log.debug("Entering opticalData().");
   var subject = (credential && credential.credentialSubject) || {};
-  var type = [].concat(subject.type || []);
+  var type = subjectTypes(subject);
   var p = printed || {};
   var canonical;
   if (type.indexOf(MRZ) !== -1) {
     canonical = mrzCanonical(p.mrz);
   } else if (type.indexOf(AAMVA) !== -1) {
     canonical = aamvaCanonical(p.aamva, subject.protectedComponentIndex);
+  } else if (type.indexOf(ISO_IDL) !== -1) {
+    if (p.iso === undefined) {
+      log.debug("Leaving opticalData(). No data groups.");
+      throw new Error("an " + ISO_IDL + " credential signs the licence's " +
+                      "data groups, and none were given.");
+    }
+    canonical = isoCanonical(p.iso, subject.protectedComponentIndex);
   } else {
     log.debug("Leaving opticalData(). Unknown subject type.");
     throw new Error("credentialSubject.type is " + JSON.stringify(type) +
-                    "; VC Barcodes defines " + MRZ + " and " + AAMVA + ".");
+                    "; VC Barcodes defines " + MRZ + ", " + AAMVA +
+                    " and (Appendix B, informative) " + ISO_IDL + ".");
   }
   log.debug("Leaving opticalData().");
   return { canonical: canonical, opticalDataBytes: sha256Of(canonical) };
@@ -387,20 +658,35 @@ function expandStatus(entry, opts) {
 // Issue and verify.
 // ---------------------------------------------------------------------------
 
-// An unsigned OpticalBarcodeCredential for one of the two subject types.
-// opts: { issuer, subjectType (MRZ or AAMVA), protect (AAMVA element ids),
+// An unsigned OpticalBarcodeCredential for one of the three subject types.
+// opts: { issuer, subjectType (MRZ, AAMVA or ISO_IDL), protect (AAMVA
+// element ids, or ISO data groups),
 // contexts (more @contexts after the two required ones), status
 // ({ terseStatusListBaseUrl, terseStatusListIndex }) }.
 function credentialTemplate(opts) {
   log.debug("Entering credentialTemplate().");
   var o = opts || {};
-  var subject = { type: o.subjectType === AAMVA ? AAMVA : MRZ };
+  var subject = { type: [AAMVA, ISO_IDL].indexOf(o.subjectType) !== -1 ?
+                  o.subjectType : MRZ };
+  var contexts = CONTEXTS.slice();
   if (subject.type === AAMVA) {
     subject.protectedComponentIndex = componentIndex(o.protect ||
                                                      ["DAC", "DAQ", "DCS"]);
+  } else if (subject.type === ISO_IDL) {
+    var groups = o.protect || ["DG1"];
+    if (groups.indexOf(ISO_VCB_GROUP) !== -1) {
+      log.debug("Leaving credentialTemplate(). DG11 protected.");
+      throw new Error("the credential is carried in " + ISO_VCB_GROUP +
+                      ", so " + ISO_VCB_GROUP + " cannot be protected: " +
+                      "\"the corresponding element of " +
+                      "protectedComponentIndex is set to 0\" (Appendix " +
+                      "B.1). A signature cannot cover its own container.");
+    }
+    subject.protectedComponentIndex = isoComponentIndex(groups);
+    contexts.push(ISO_CONTEXT);
   }
   var vc = {
-    "@context": CONTEXTS.concat(o.contexts || []),
+    "@context": contexts.concat(o.contexts || []),
     type: ["VerifiableCredential", "OpticalBarcodeCredential"],
     credentialSubject: subject,
     issuer: o.issuer
@@ -414,10 +700,12 @@ function credentialTemplate(opts) {
 }
 
 // opts: { privateJwk (P-256 or P-384), verificationMethod, printed
-// ({ mrz } or { aamva }), documentLoader, created (default false: the
+// ({ mrz }, { aamva } or { iso }), documentLoader, created (default false:
+// the
 // published barcodes carry none, and it costs bytes) }. Answers
-// { credential, cborld, text, canonical, opticalDataBytes }, where text is
-// the QR text for an MRZ credential and the PDF417 field for an AAMVA one.
+// { credential, cborld, text, canonical, opticalDataBytes, carrier }, where
+// text is the QR text for an MRZ credential and the PDF417 field (base64url)
+// for an AAMVA or ISO one; carrier is "qr", "pdf417" or "dg11".
 async function issue(unsigned, opts) {
   log.debug("Entering issue().");
   var o = opts || {};
@@ -432,17 +720,21 @@ async function issue(unsigned, opts) {
   });
   var bytes = await cborld.encode(signed, { registryEntryId: REGISTRY_ENTRY,
     documentLoader: o.documentLoader });
-  var isMrz = [].concat(unsigned.credentialSubject.type).indexOf(MRZ) !== -1;
+  var types = subjectTypes(unsigned.credentialSubject);
+  var isMrz = types.indexOf(MRZ) !== -1;
   log.debug("Leaving issue(). " + bytes.length + " bytes.");
   return { credential: signed, cborld: bytes, canonical: optical.canonical,
            opticalDataBytes: optical.opticalDataBytes,
            text: isMrz ? qrText(bytes) : pdf417FieldText(bytes),
-           carrier: isMrz ? "qr" : "pdf417" };
+           carrier: isMrz ? "qr" : types.indexOf(ISO_IDL) !== -1 ? "dg11" :
+             "pdf417" };
 }
 
 // The barcode's bytes from whatever was scanned or pasted: QR text, the
 // PDF417 field, the whole AAMVA PDF417 text (the credential is read from
-// element ZZA of subfile ZZ, as the TR's example puts it), or hex.
+// element ZZA of subfile ZZ, as the TR's example puts it), an ISO
+// licence's data groups ("DGn: ..." lines; the credential is DG11's
+// contents, Appendix B.1), or hex.
 function barcodeBytes(input) {
   log.debug("Entering barcodeBytes().");
   if (input instanceof Uint8Array) {
@@ -453,6 +745,17 @@ function barcodeBytes(input) {
   if (s.indexOf(QR_PREFIX) === 0) {
     log.debug("Leaving barcodeBytes(). QR text.");
     return { bytes: fromQrText(s), carrier: "qr" };
+  }
+  if (/^DG\d+\s*[:=]/.test(s)) {
+    var groups = parseIsoDataGroups(s);
+    if (!groups[ISO_VCB_GROUP] || !groups[ISO_VCB_GROUP].length) {
+      log.debug("Leaving barcodeBytes(). No DG11.");
+      throw new Error("the data groups have no " + ISO_VCB_GROUP + ", " +
+                      "which is where Appendix B.1 expects the credential.");
+    }
+    log.debug("Leaving barcodeBytes(). ISO DG11.");
+    return { bytes: fromPdf417FieldText(cbytes.bytesToStr(
+      groups[ISO_VCB_GROUP])), carrier: "dg11", iso: groups };
   }
   if (s.indexOf("ANSI ") !== -1 || s.charAt(0) === "@") {
     var aamva = parseAamva(input);
@@ -481,8 +784,9 @@ function barcodeBytes(input) {
   return { bytes: fromPdf417FieldText(s), carrier: "pdf417" };
 }
 
-// opts: { printed ({ mrz } or { aamva }; for a whole AAMVA PDF417 the
-// elements are read from it when not given), documentLoader, resolveKey }.
+// opts: { printed ({ mrz }, { aamva } or { iso }; for a whole AAMVA PDF417
+// or an ISO licence's data groups they are read from the input when not
+// given), documentLoader, resolveKey }.
 // Answers { valid, reason, credential, cborld, format, registryEntryId,
 // canonical, opticalDataBytes, proof, protected, status }.
 async function verify(input, opts) {
@@ -501,9 +805,13 @@ async function verify(input, opts) {
   out.proofType = proof.type;
   out.cryptosuite = proof.cryptosuite;
   var subject = out.credential.credentialSubject || {};
+  out.subjectTypes = subjectTypes(subject);
+  var isIso = out.subjectTypes.indexOf(ISO_IDL) !== -1;
   if (subject.protectedComponentIndex) {
     try {
-      out.protected = protectedComponents(subject.protectedComponentIndex);
+      out.protected = isIso ?
+        isoProtectedGroups(subject.protectedComponentIndex) :
+        protectedComponents(subject.protectedComponentIndex);
     } catch (e) {
       out.reason = e.message;
       log.debug("Leaving verify(). Bad index.");
@@ -515,6 +823,18 @@ async function verify(input, opts) {
   }
   var printed = Object.assign({}, o.printed);
   if (!printed.aamva && got.aamva) printed.aamva = got.aamva.elements;
+  if (!printed.iso && got.iso) {
+    printed.iso = got.iso;
+  }
+  if (isIso && got.carrier === "dg11" && out.protected &&
+      out.protected.indexOf(ISO_VCB_GROUP) !== -1) {
+    out.reason = "the credential was read from " + ISO_VCB_GROUP + " and " +
+      "its protectedComponentIndex protects " + ISO_VCB_GROUP + ": a " +
+      "signature cannot cover its own container, and Appendix B.1 says " +
+      "that bit \"is set to 0\".";
+    log.debug("Leaving verify(). DG11 protected.");
+    return out;
+  }
   if (proof.cryptosuite === CRYPTOSUITE) {
     // Section 3.2.4.5: the proof configuration must be exactly this.
     if (proof.type !== "DataIntegrityProof") {
@@ -557,6 +877,17 @@ module.exports = {
   MRZ: MRZ,
   AAMVA: AAMVA,
   AAMVA_MANDATORY: AAMVA_MANDATORY,
+  ISO_IDL: ISO_IDL,
+  ISO_CONTEXT: ISO_CONTEXT,
+  ISO_DATA_GROUPS: ISO_DATA_GROUPS,
+  ISO_VCB_GROUP: ISO_VCB_GROUP,
+  subjectTypes: subjectTypes,
+  parseIsoDataGroups: parseIsoDataGroups,
+  formatIsoDataGroups: formatIsoDataGroups,
+  withVcbInDg11: withVcbInDg11,
+  isoComponentIndex: isoComponentIndex,
+  isoProtectedGroups: isoProtectedGroups,
+  isoCanonical: isoCanonical,
   base45Encode: base45Encode,
   base45Decode: base45Decode,
   qrText: qrText,

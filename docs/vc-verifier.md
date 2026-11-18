@@ -5,7 +5,7 @@ behind it, `client/src/vp_verifier.js`. Issue #364.
 
 The VC presentation workflow has two roles. The **Wallet** is the debugger
 answering somebody else's Verifier: `vc-presentation-0.html` through `-3`,
-described in `docs/vc-presentation-guide.md`. The **Verifier** is this page:
+described in `docs/vc/` (user guide). The **Verifier** is this page:
 the debugger asks a wallet for claims and checks the answer. The role
 selector at the top of `vc-presentation-0.html` links the two.
 
@@ -287,9 +287,11 @@ answered. Per format:
     and `ecdsa-jcs-2019`, on the presentation and on each credential;
   * the proof's challenge and domain.
 
-  `ecdsa-sd-2023` is reported as SKIP; its derived proofs are not
-  implemented. Of bbs-2023's feature options only `baseline` is; a proof
-  using anonymous holder binding or pseudonyms is refused by name.
+  `ecdsa-sd-2023` derived proofs are verified too (#476): `vp_verifier.js`
+  loads `data_integrity_rdfc.js`, which registers `ecdsa_sd_2023.js` with
+  `data_integrity.js`. Of bbs-2023's feature options only `baseline` is
+  implemented; a proof using anonymous holder binding or pseudonyms is
+  refused by name.
 
 **Whose key it is (#467).** A signature that verifies says nothing until
 something ties the key to the issuer:
@@ -505,6 +507,35 @@ wallet:
   `authorization_encryption_alg_values_supported` is reported.
 * `client_id_prefixes_supported` and `vp_formats_supported`: a prefix or a
   requested format the wallet lacks is reported.
+
+## Predicate requests and AnonCreds (#474)
+
+The page can ask for a **predicate** (`age >= 18`, proven rather than
+shown). It has a Predicates box, a query-language choice and an AnonCreds
+issuer-material box, and none of the three is stored. `docs/predicates.md`
+is the full note. The Verifier-side rules:
+
+- **DCQL**: the predicates go in this debugger's **non-standard**
+  extension, `x_debugger_predicates`, marked critical in
+  `x_debugger_crit`. `buildDcql()` refuses a predicate whose claim is also
+  in `claims`, because a 1.0 wallet ignoring the extension would then
+  disclose it. `anoncreds` is a format a query may name (`QUERY_FORMATS`,
+  `meta: {}`); `FORMATS` is unchanged.
+- **Presentation Exchange 2.1.1** (`buildPresentationDefinition()`) is sent
+  as `presentation_definition`, labelled "OpenID4VP drafts —
+  presentation_definition, removed in 1.0". It is refused under HAIP and
+  over the DC API. The answer's `presentation_submission` gets its own
+  row. Only an AnonCreds presentation is verified under it; any other
+  format is an essential SKIP, so the verdict is **incomplete**.
+- **AnonCreds**: the CL proof is checked against the AnonCreds request this
+  debugger maps the query onto, and every predicate gets its own row. The
+  issuer's schema and credential definition (and a revocable credential's
+  status list) come from `session.anoncreds`. Without them the proof row is
+  an essential SKIP, so the verdict is incomplete, never a pass. The
+  witness for every row is anoncreds-rs (`tests/vp_query_engine.js`).
+- **The extension on another format**: an mdoc's `age_over_NN` must be
+  `true`. Any other format FAILs the predicate. A disclosed value is never
+  accepted in a predicate's place.
 
 ## Tests
 

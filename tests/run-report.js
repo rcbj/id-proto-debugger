@@ -284,6 +284,9 @@ const JOB_LOCKS = {
   "oid4vci_request_encryption.js": "sts-vc",
   "dpop_workflow.js": "sts-vc",
   "vci_offer_modes.js": "sts-vc",
+  // The user guide's walk through the VC pages (docs/vc/): it collects
+  // credentials through the same shared wallet entry the job above declares.
+  "vc_user_guide.js": "sts-vc",
   "metadata_schema_validation.js": "sts-vc",
   // walt.id's issuer-api2 and verifier-api2.
   "sd_jwt_vc_waltid.js": "waltid",
@@ -3965,10 +3968,24 @@ function buildJobs() {
     env: {},
   });
 
+  // Predicate queries (#474): DIF Presentation Exchange 2.1.1 and its
+  // Predicate Feature, OpenID4VP 1.0 section 6.4.1's values matching, the
+  // debugger's DCQL predicate extension and its crit rule, the fail-closed
+  // plans, and AnonCreds predicates through the new paths against
+  // anoncreds-rs both ways. No services; fails without the witness.
+  jobs.push({
+    name: "Predicate queries (Presentation Exchange, DCQL extension, " +
+        "AnonCreds against anoncreds-rs; in node)",
+    script: "vp_query_engine.js",
+    env: {},
+  });
+
   // VC Barcodes (#480, W3C Working Draft): CBOR-LD 1.0 and ecdsa-xi-2023 —
   // the specification's three printed payloads, its PDF417 and QR text, and
   // Digital Bazaar's released cborld 8.1.0 and ecdsa-xi-2023-cryptosuite
-  // 1.2.0 byte for byte and both ways. No services.
+  // 1.2.0 byte for byte and both ways; the ISO (Appendix B) vector built
+  // there; status lists against @digitalbazaar/vc-bitstring-status-list
+  // 2.0.1 both ways; and the PDF417 draw/read round trip. No services.
   jobs.push({
     name: "VC Barcodes (CBOR-LD and ecdsa-xi-2023 against the spec's " +
         "vectors and Digital Bazaar's library, in node)",
@@ -3978,8 +3995,10 @@ function buildJobs() {
 
   // Gordian Envelope (#480, IETF drafts): dCBOR, the digest tree, UR, and
   // Schnorr / ECDSA / Ed25519, reproducing bc-envelope 0.43.0's and dcbor
-  // 0.25.2's own test vectors byte for byte, signatures included. No
-  // services.
+  // 0.25.2's own test vectors byte for byte, signatures included; then the
+  // obscuring cases (encryption, recipients, password locks, compression,
+  // SSKR), multi-part URs, ML-DSA and SSH signatures, against the crates'
+  // vectors and bc-envelope-cli 0.35.0 both ways. No services.
   jobs.push({
     name: "Gordian Envelope (the Rust crates' vectors, and Blockchain " +
         "Commons' bc-envelope-cli both ways, in node)",
@@ -3995,6 +4014,17 @@ function buildJobs() {
     name: "ACDC (KEL, registry, anchors and credential, both ways with " +
         "signify-ts, in node)",
     script: "acdc_engine.js",
+    env: {},
+  });
+
+  // ACDC against keri-ts 2.2.9 and cesr-ts 2.2.1 (#480): CESR version 2
+  // KELs, weighted thresholds, delegation, witness receipts, credentials
+  // (no-backer and backer registries, chains), IPEX and v2 ACDC messages,
+  // both ways, in memory. No services.
+  jobs.push({
+    name: "ACDC (CESR v2, thresholds, delegation, witnesses, chains and " +
+        "IPEX, both ways with keri-ts and cesr-ts, in node)",
+    script: "acdc_keri_ts.js",
     env: {},
   });
 
@@ -4231,10 +4261,22 @@ function buildJobs() {
       script: "anoncreds_presentation.js",
       env: {},
     });
+    // The predicate query page (#474): age >= 18 composed in Presentation
+    // Exchange and in the DCQL extension, proven by the wallet without
+    // revealing age, verified by anoncreds-rs and by the page; and the
+    // wallet's DCQL values matching (OpenID4VP 1.0 section 6.4.1). Needs
+    // the client and the anoncreds witness.
+    jobs.push({
+      name: "VC Predicates page — compose, prove in the wallet, verify; " +
+          "DCQL values matching",
+      script: "vc_predicates_browser.js",
+      env: {},
+    });
     // The VC Barcodes page (#480): the specification's two examples, a
     // changed MRZ refused, and an MRZ and an AAMVA barcode issued in the
-    // page, the drawn QR code read back from its image. Needs only the
-    // client.
+    // page, the drawn QR code and PDF417 symbol read back from their
+    // images; the ISO example and an ISO issue; a status list fetched from
+    // a server the job runs itself, and pasted. Needs only the client.
     jobs.push({
       name: "VC Barcodes page — read, verify and issue (MRZ QR code, " +
           "AAMVA PDF417)",
@@ -4243,10 +4285,13 @@ function buildJobs() {
     });
     // The Gordian Envelope page (#480): issue bc-envelope's example,
     // present four claims (the root digest unchanged, verified in the page
-    // and in node), another key refused, salted Ed25519. Needs only the
-    // client.
+    // and in node), another key refused, salted Ed25519; encrypt to a
+    // recipient and a password, compress, split into SSKR shares, send as
+    // multi-part URs, and issue with ML-DSA-44 and SSH Ed25519. Needs only
+    // the client.
     jobs.push({
-      name: "Gordian Envelope page — issue, verify and present by elision",
+      name: "Gordian Envelope page — issue, verify, present, encrypt, " +
+          "compress, SSKR and multi-part URs",
       script: "gordian_envelope_browser.js",
       env: {},
     });
@@ -4478,6 +4523,25 @@ function buildJobs() {
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // THE USER GUIDE'S TUTORIALS, walked the way docs/vc/ tells a reader to
+    // walk them: step 1 from the issuer's metadata, pre-authorized offers
+    // (Transaction Code, DPoP, deferred, every format the issuer offers),
+    // DID Tools against the issuer's origin, and a presentation to the
+    // debugger's own Verifier page under OpenID4VP 1.0 and HAIP 1.0 where
+    // the target has an api. Its doc_screenshots.js calls are inert unless
+    // DOC_SCREENSHOT_DIR is set.
+    jobs.push({
+      name: "VC user guide — the tutorials of docs/vc/ (issuance by " +
+          "pre-authorized offer, DID Tools, presentation to the debugger's " +
+          "own Verifier)",
+      script: "vc_user_guide.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        API_URL: env.LDAP_AVAILABLE === "false" ? "" :
+            (env.API_URL || "https://localhost:4000"),
       },
     });
     jobs.push({
