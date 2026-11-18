@@ -14,6 +14,36 @@ selective-disclosure suites. `bbs-2023` lives in `bbs2023.js`, and
 | `client/src/jsonld_contexts.js` | The shipped JSON-LD contexts and the offline document loader. It was the top of `bbs2023.js` until #475. |
 | `client/src/vc_formats.js` | What each credential format allows. Every page reads its defaults and menus from it. |
 
+## Selective disclosure (`ecdsa-sd-2023`, `bbs-2023`)
+
+`client/src/di_selective.js` holds VC Data Integrity 1.1's
+selective-disclosure functions, which both selective cryptosuites are
+specified over: RDFC-1.0, blank-node relabelling, skolemization, JSON-pointer
+selection, `canonicalizeAndGroup` and the proof hash. They moved there from
+`bbs2023.js` in #476, unchanged.
+
+`client/src/ecdsa_sd_2023.js` is `ecdsa-sd-2023` (vc-di-ecdsa sections
+3.4–3.6) and registers with `data_integrity.js`.
+
+- **How it signs:** the issuer signs each non-mandatory statement with a
+  one-time P-256 key. Its own key signs `proofHash`, the one-time key and
+  `mandatoryHash`.
+- **What the holder sends:** a holder discloses a statement by handing over
+  its signature. Two presentations of one credential can therefore be
+  linked, and nothing inside the derived proof names the request; only the
+  holder's VP binds it to one.
+- **P-256 only:** the issuer key must be P-256, because section 3.5.8
+  requires a 64-byte base signature. That section also gives the public
+  key's length as 36 bytes, which every implementation reads as the 35 a
+  P-256 Multikey is.
+- **In the wallet:** it uses the same JSON-pointer rows as `bbs-2023`
+  (`ldpEcdsaSd()` in `vc_presentation_2.js`).
+
+`tests/ecdsa_sd_2023_engine.js` checks it against the W3C test vectors. For
+both examples, the derived `proofValue` matches byte for byte. It is also
+checked in every direction against Digital Bazaar's released
+`ecdsa-sd-2023-cryptosuite`.
+
 ## Suites
 
 | Proof | Canonicalization | Keys | Written as |

@@ -27,7 +27,11 @@
 //   3. a BbsBlsSignature2020 credential (MATTR), asked for one claim of two:
 //      the wallet derives a BbsBlsSignatureProof2020 disclosing that claim
 //      only, which MATTR's verifier accepts, inside a holder VP Digital
-//      Bazaar accepts.
+//      Bazaar accepts;
+//   4. an ecdsa-sd-2023 credential (Digital Bazaar), asked for one claim of
+//      two: the wallet derives an ecdsa-sd-2023 proof disclosing that claim
+//      and the mandatory ones only, which Digital Bazaar verifies, inside a
+//      holder VP it also verifies (#476).
 //
 // Needs only the client: nothing is posted to anybody.
 // ---------------------------------------------------------------------------
@@ -134,6 +138,8 @@ async function digitalBazaar() {
       ecdsaRdfc: (await import("@digitalbazaar/ecdsa-rdfc-2019-cryptosuite"))
         .cryptosuite,
       eddsaJcs: await import("@digitalbazaar/eddsa-jcs-2022-cryptosuite"),
+      ecdsaSd: await import("@digitalbazaar/ecdsa-sd-2023-cryptosuite"),
+      ecdsaJcs: await import("@digitalbazaar/ecdsa-jcs-2019-cryptosuite"),
       Ed25519Multikey: await import("@digitalbazaar/ed25519-multikey"),
       EcdsaMultikey: await import("@digitalbazaar/ecdsa-multikey")
     };
@@ -186,6 +192,25 @@ async function eddsaCredential(holder) {
   return d.jsigs.sign(credential(issuer, holder.did), {
     suite: new d.DataIntegrityProof({ signer: kp.signer(),
                                       cryptosuite: d.eddsaRdfc }),
+    purpose: new d.jsigs.purposes.AssertionProofPurpose(),
+    documentLoader: loader });
+}
+
+// Digital Bazaar's ecdsa-sd-2023 base proof, with the issuer and validity
+// mandatory.
+async function ecdsaSdCredential(holder) {
+  log.debug("Entering ecdsaSdCredential().");
+  var d = await digitalBazaar();
+  var issuer = "https://issuer.example/issuers/ecdsa-sd";
+  var kp = await d.EcdsaMultikey.generate({ curve: "P-256",
+                                            controller: issuer });
+  publish(issuer, await kp.export({ publicKey: true }));
+  var unsigned = credential(issuer, holder.did);
+  log.debug("Leaving ecdsaSdCredential().");
+  return d.jsigs.sign(unsigned, {
+    suite: new d.DataIntegrityProof({ signer: kp.signer(),
+      cryptosuite: d.ecdsaSd.createSignCryptosuite({
+        mandatoryPointers: ["/issuer", "/issuanceDate"] }) }),
     purpose: new d.jsigs.purposes.AssertionProofPurpose(),
     documentLoader: loader });
 }
@@ -281,7 +306,9 @@ async function verifyHolderProof(vp, nonce, cryptosuite, label) {
                      label + ": the holder proof is " + cryptosuite);
   var verifySuite = cryptosuite === "eddsa-jcs-2022" ?
     d.eddsaJcs.createVerifyCryptosuite() :
-    cryptosuite === "ecdsa-rdfc-2019" ? d.ecdsaRdfc : null;
+    cryptosuite === "ecdsa-jcs-2019" ?
+      d.ecdsaJcs.createVerifyCryptosuite() :
+      cryptosuite === "ecdsa-rdfc-2019" ? d.ecdsaRdfc : null;
   assert.ok(verifySuite, label + ": a verify suite for " + cryptosuite);
   var r = await d.jsigs.verify(vp, {
     suite: new d.DataIntegrityProof({ cryptosuite: verifySuite }),
@@ -360,6 +387,34 @@ async function test() {
               (v3.error ? String(v3.error.errors || v3.error) : ""));
     log.info("PASS the wallet derived a BbsBlsSignatureProof2020 " +
              "disclosing given_name only; MATTR verifies it.");
+
+    log.info("=== 4. ecdsa-sd-2023, one claim of two ===");
+    var sdHolder = await holderKey("P-256");
+    var sdCred = await ecdsaSdCredential(sdHolder);
+    var nonce4 = "n-" + nodeCrypto.randomBytes(8).toString("hex");
+    var vp4 = await presentThroughThePages(driver, sdCred, sdHolder,
+                                           requestQuery(nonce4));
+    await verifyHolderProof(vp4, nonce4, "ecdsa-jcs-2019", "case 4");
+    var sdDerived = vp4.verifiableCredential[0];
+    assert.strictEqual(sdDerived.proof.cryptosuite, "ecdsa-sd-2023",
+                       "the wallet derived an ecdsa-sd-2023 proof");
+    assert.strictEqual(sdDerived.credentialSubject.given_name, "Alice",
+                       "the asked-for claim is disclosed");
+    assert.ok(!("family_name" in sdDerived.credentialSubject),
+              "the claim nobody asked for is not");
+    assert.strictEqual(sdDerived.issuer, sdCred.issuer,
+                       "the mandatory issuer is disclosed");
+    var v4 = await d.jsigs.verify(sdDerived, {
+      suite: new d.DataIntegrityProof({
+        cryptosuite: d.ecdsaSd.createVerifyCryptosuite() }),
+      purpose: new d.jsigs.purposes.AssertionProofPurpose(),
+      documentLoader: loader });
+    assert.ok(v4.verified, "Digital Bazaar verifies the derived " +
+      "ecdsa-sd-2023 credential: " + (v4.error ? String((v4.error.errors ||
+      [v4.error])[0].message) : ""));
+    log.info("PASS the wallet derived an ecdsa-sd-2023 proof disclosing " +
+             "given_name and the mandatory claims; Digital Bazaar verifies " +
+             "it and the holder's VP.");
     log.info("ldp_vc_whole_presentation: all checks passed.");
   } finally {
     await driver.quit();

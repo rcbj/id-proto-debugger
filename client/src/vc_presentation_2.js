@@ -41,6 +41,8 @@ require("./data_integrity_rdfc");
 var vcFormats = require("./vc_formats");
 // BbsBlsSignature2020: the holder derives a BbsBlsSignatureProof2020 (#475).
 var bbsBls2020 = require("./bbs_bls_2020");
+// ecdsa-sd-2023: derived over the same JSON pointers as bbs-2023 (#476).
+var ecdsaSd = require("./ecdsa_sd_2023");
 var didLib = require("./did");
 var vpProtocols = require("./vp_protocols");
 var cbor = require("./cbor");
@@ -245,6 +247,45 @@ function bbs2020Frame() {
            credentialSubject: subject };
 }
 
+// ecdsa-sd-2023's derivation. It has no presentation header: the issuer's
+// signatures go to the Verifier as they are, so nothing in the derived proof
+// names this request, and two presentations of one credential carry the
+// same signatures (linkable). Freshness is the holder's VP around it.
+function deriveEcdsaSd() {
+  log.debug("Entering deriveEcdsaSd().");
+  log.debug("Leaving deriveEcdsaSd().");
+  return ecdsaSd.deriveProof(state.parsed.document, {
+    selectivePointers: selectedPointers()
+  }).then(function (derived) {
+    var revealed = derived.document;
+    state.built = { presentation: JSON.stringify(revealed),
+        vpElement: revealed, derived: derived,
+        format: sdJwtVc.FORMAT_LDP_VC };
+    setValue("vp_presentation", state.built.presentation);
+    setText("vp_sd_hash", "");
+    setValue("vp_kb_jwt", "");
+    setJson("vp_kb_header", { cryptosuite: ecdsaSd.CRYPTOSUITE,
+      mandatoryStatements: derived.mandatoryCount,
+      disclosed: derived.selectiveCount, of: derived.statementCount });
+    setJson("vp_kb_payload", revealed.proof);
+    setJson("vp_presented_claims", revealed.credentialSubject || null);
+    status("vp_present_status", "Derived an ecdsa-sd-2023 proof: " +
+      derived.mandatoryCount + " mandatory statement(s) and " +
+      derived.selectiveCount + " of " + derived.statementCount +
+      " selectively disclosable ones, each with the issuer's own " +
+      "signature — so this presentation can be linked to any other of " +
+      "the same credential, and only the holder's VP binds it to this " +
+      "request.", "vc-ok");
+    log.debug("Leaving deriveEcdsaSd(). Derived.");
+    return finishResponse();
+  }).catch(function (e) {
+    log.error("could not derive the ecdsa-sd-2023 proof: " + e.message);
+    status("vp_present_status", "Could not derive the proof: " +
+           e.message, "vc-bad");
+    return false;
+  });
+}
+
 function selectedEncoded() {
   log.debug("Entering selectedEncoded().");
   log.debug("Leaving selectedEncoded().");
@@ -292,6 +333,16 @@ function requestedPointers(doc) {
 // the canonicalization check: a context nobody supplied is found HERE, with
 // the JSON-LD Contexts pane to fix it, rather than at Present. Answers false
 // when the credential cannot be presented, having said why.
+// An ecdsa-sd-2023 credential: selected by JSON pointer exactly as a
+// bbs-2023 one is, derived by ecdsa_sd_2023.js (#476).
+function ldpEcdsaSd() {
+  log.debug("Entering ldpEcdsaSd().");
+  var yes = state.format === sdJwtVc.FORMAT_LDP_VC && !!state.parsed &&
+    state.parsed.ldpSuite === ecdsaSd.CRYPTOSUITE;
+  log.debug("Leaving ldpEcdsaSd(). " + yes);
+  return yes;
+}
+
 function prepareLdpPointers() {
   log.debug("Entering prepareLdpPointers().");
   var doc = (state.parsed && state.parsed.document) || null;
@@ -301,12 +352,17 @@ function prepareLdpPointers() {
   }
   var base;
   try {
-    base = bbs2023.parseBaseProofValue((doc.proof || {}).proofValue);
+    // Both parsers answer the base proof's mandatoryPointers, which is all
+    // the rows below need.
+    base = (ldpEcdsaSd() ? ecdsaSd : bbs2023).parseBaseProofValue(
+      (doc.proof || {}).proofValue);
   } catch (e) {
+    var suiteName = ldpEcdsaSd() ? "ecdsa-sd-2023" : "bbs-2023";
     log.warn("the credential's base proof is unreadable: " + e.message);
-    status("vp_present_status", "This credential's bbs-2023 proof cannot " +
-           "be derived from: " + e.message + " Issue it again from an " +
-           "issuer that speaks W3C bbs-2023.", "vc-bad");
+    status("vp_present_status", "This credential's " + suiteName +
+           " proof cannot be derived from: " + e.message + " Issue it " +
+           "again from an issuer that speaks W3C " + suiteName + ".",
+           "vc-bad");
     log.debug("Leaving prepareLdpPointers(). Unreadable base proof.");
     return Promise.resolve(false);
   }
@@ -644,6 +700,10 @@ function buildPresentation() {
              "can be chosen…", "vc-pending");
       log.debug("Leaving buildPresentation(). ldp_vc not read yet.");
       return Promise.resolve(false);
+    }
+    if (ldpEcdsaSd()) {
+      log.debug("Leaving buildPresentation(). ecdsa-sd-2023.");
+      return deriveEcdsaSd();
     }
     log.debug("Leaving buildPresentation().");
     // The nonce is the BBS presentation header, so a bare reveal document
