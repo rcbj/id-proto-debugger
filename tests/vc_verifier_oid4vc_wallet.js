@@ -48,6 +48,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const childProcess = require("child_process");
+const nodeCrypto = require("crypto");
 const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
@@ -142,6 +143,8 @@ function wallet(where, args) {
 function describeSdJwt(document) {
   log.debug("Entering describeSdJwt().");
   const parts = String(document).split("~");
+  const header = JSON.parse(Buffer.from(parts[0].split(".")[0],
+                                        "base64url").toString("utf8"));
   const payload = JSON.parse(Buffer.from(parts[0].split(".")[1],
                                          "base64url").toString("utf8"));
   const names = parts.slice(1).filter(Boolean).map(function (one) {
@@ -154,7 +157,46 @@ function describeSdJwt(document) {
     }
   }).filter(Boolean);
   log.debug("Leaving describeSdJwt(). " + names.length + " name(s).");
-  return { vct: payload.vct, names: names };
+  return { vct: payload.vct, names: names,
+           x5c: Array.isArray(header.x5c) ? header.x5c : [] };
+}
+
+// THE ISSUER'S ROOT, FETCHED OUT OF BAND, the way an operator configures
+// trust: from the last x5c certificate, follow Authority Information Access
+// caIssuers (RFC 5280 section 4.2.2.1) until a self-signed certificate. That
+// is iya-sts's published CA (its /pki/ca/...). The Verifier is then given
+// it as a trust anchor; nothing in the credential is trusted for being
+// there. PEM, or "" when the chain names no AIA to follow.
+async function issuerRootOutOfBand(x5c) {
+  log.debug("Entering issuerRootOutOfBand(). " + x5c.length);
+  if (!x5c.length) {
+    log.debug("Leaving issuerRootOutOfBand(). No x5c.");
+    return "";
+  }
+  let cert = new nodeCrypto.X509Certificate(
+    Buffer.from(x5c[x5c.length - 1], "base64"));
+  for (let hop = 0; hop < 5; hop++) {
+    if (cert.issuer === cert.subject && cert.verify(cert.publicKey)) {
+      log.info("  issuer root (out of band): " + cert.subject
+        .replace(/\n/g, ", ") + ", sha256 " + cert.fingerprint256);
+      log.debug("Leaving issuerRootOutOfBand(). Found.");
+      return cert.toString();
+    }
+    const m = /CA Issuers - URI:(\S+)/.exec(cert.infoAccess || "");
+    if (!m) {
+      log.debug("Leaving issuerRootOutOfBand(). No AIA.");
+      return "";
+    }
+    const got = await fetch(m[1]);
+    const body = Buffer.from(await got.arrayBuffer());
+    assert.strictEqual(got.status, 200, m[1] + " answered " + got.status);
+    const text = body.toString("utf8");
+    const pem = (/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/
+      .exec(text) || [])[0];
+    cert = new nodeCrypto.X509Certificate(pem || body);
+  }
+  log.debug("Leaving issuerRootOutOfBand(). Too many hops.");
+  return "";
 }
 
 // ---------------------------------------------------------------------------
@@ -338,17 +380,27 @@ function failedRows(seen) {
   return failed;
 }
 
+// The first round has NO trust anchor for the issuer: its verdict must be
+// "incomplete", with only the issuer's x5c trust not performed. The second
+// is given iya-sts's root, fetched out of band, and must be a FULL pass:
+// the anchored path against a third party's real chain.
 const ROUNDS = [
-  { label: "x509_hash, request_uri GET, direct_post",
-    prefix: "x509_hash", delivery: "reference-get", mode: "direct_post" },
-  { label: "x509_san_dns, request_uri_method=post, direct_post.jwt",
+  { label: "x509_hash, request_uri GET, direct_post, no issuer anchor",
+    prefix: "x509_hash", delivery: "reference-get", mode: "direct_post",
+    anchored: false },
+  { label: "x509_san_dns, request_uri_method=post, direct_post.jwt, " +
+      "issuer anchored",
     prefix: "x509_san_dns", delivery: "reference-post",
-    mode: "direct_post.jwt" }
+    mode: "direct_post.jwt", anchored: true }
 ];
 
 async function walletPresents(driver, where, credential, round) {
   log.debug("Entering walletPresents(). " + round.label);
   log.info("=== " + round.label + " ===");
+  await loadUrl(driver, baseUrl + "/vc-verifier.html");
+  await setField(driver, "vpv_trust_anchors",
+                 round.anchored ? credential.rootPem : "");
+  await driver.executeScript("window.vcverifier.settingsChanged();");
   const request = await createRequest(driver, credential, round);
   const answered = wallet(where, ["present", request.invocation, "--approve",
                                   "--json"]);
@@ -370,34 +422,52 @@ async function walletPresents(driver, where, credential, round) {
   log.info("  asked (DCQL claims): " + asked);
   log.info("  disclosed (as the page read the answer): " +
            String(disclosed).replace(/\s+/g, " ").slice(0, 600));
-  // NOTHING FAILS, and anything essential that was not performed is the
-  // issuer's x5c trust. iya-sts signs this credential with an x5c chain and
-  // this job configures no trust anchor for it, so "the certificate is
-  // trusted" cannot be established, and the page says so rather than
-  // passing it (SD-JWT VC -27 section 2.5: a certificate is not trusted
-  // because it is in x5c). Every other check must pass. Whether iss is
-  // bound to that certificate is reported on its own row, and never fails.
+  // NOTHING FAILS. Unanchored, the issuer's x5c trust is the one essential
+  // check not performed (a certificate is not trusted because it is in
+  // x5c, SD-JWT VC -27 section 2.5). Anchored at iya-sts's root, it is a
+  // full pass. Whether iss is bound to the certificate is reported on its
+  // own row either way, and never fails.
   const unperformed = seen.rows.filter(function (r) {
     return /unperformed/.test(r.cls);
   }).map(function (r) {
     return r.id;
   });
-  const issRow = seen.rows.find(function (r) {
-    return /\.issuer\.iss$/.test(r.id);
-  });
+  const rowEnding = function rowEnding(suffix) {
+    return seen.rows.find(function (r) {
+      return r.id.slice(-suffix.length) === suffix;
+    });
+  };
+  const issRow = rowEnding(".issuer.iss");
   if (issRow) {
     log.info("  iss binding: " + issRow.text.replace(/\s+/g, " ")
       .slice(0, 300));
   }
-  check("nothing on the wallet's answer fails, and only the issuer's x5c " +
-      "trust may be unperformed (" + round.label + ")", function () {
+  check("nothing on the wallet's answer fails (" + round.label + ")",
+      function () {
         assert.deepStrictEqual(failedRows(seen), [], seen.verdict);
-        assert.ok(/every check passed|could not be performed/i.test(
-            seen.verdict), seen.verdict);
-        assert.ok(unperformed.every(function (id) {
-          return /\.issuer\.trust$/.test(id);
-        }), "essential checks not performed: " + unperformed.join(", "));
       });
+  if (round.anchored) {
+    check("anchored at iya-sts's root, every check passes, issuer trust " +
+        "included (" + round.label + ")", function () {
+          assert.ok(/every check passed/i.test(seen.verdict),
+              seen.verdict + "; not performed: " + unperformed.join(", "));
+          const trust = rowEnding(".issuer.trust");
+          assert.ok(trust && /pass/.test(trust.cls),
+              "issuer.trust: " + JSON.stringify(trust));
+          assert.ok(issRow, "the issuer.iss row is reported");
+        });
+  } else {
+    check("without an issuer anchor the verdict is incomplete, and only " +
+        "the issuer's x5c trust is unperformed (" + round.label + ")",
+        function () {
+          assert.ok(/could not be performed/i.test(seen.verdict),
+              seen.verdict);
+          assert.ok(unperformed.length > 0 && unperformed.every(
+            function (id) {
+              return /\.issuer\.trust$/.test(id);
+            }), "essential checks not performed: " + unperformed.join(", "));
+        });
+  }
   check("the api saw the wallet fetch the Request Object and the root " +
       "(" + round.label + ")", function () {
         const all = seen.events.join("\n");
@@ -457,13 +527,20 @@ async function test() {
   const where = walletHome();
   try {
     const credential = await walletHoldsACredential(driver, where);
+    credential.rootPem = await issuerRootOutOfBand(credential.x5c);
+    check("iya-sts's issuer root is fetched out of band, through the " +
+        "chain's Authority Information Access", function () {
+          assert.ok(/BEGIN CERTIFICATE/.test(credential.rootPem),
+              "no root reached from x5c (" + credential.x5c.length +
+              " certificate(s))");
+        });
     let round;
     for (round of ROUNDS) {
       await walletPresents(driver, where, credential, round);
     }
     await walletRefuses(driver, where, credential);
     log.info(checks + " checks passed.");
-    assert.ok(checks >= 16, "Only " + checks + " checks ran.");
+    assert.ok(checks >= 17, "Only " + checks + " checks ran.");
     log.info("Test completed successfully.");
   } finally {
     await driver.quit();
