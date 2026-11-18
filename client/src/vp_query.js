@@ -1926,6 +1926,7 @@ module.exports = {
   valueMatches: valueMatches,
   selectClaims: selectClaims,
   capabilityOf: capabilityOf,
+  ageOverThreshold: ageOverThreshold,
   planPredicate: planPredicate,
   planFor: planFor,
   nominalPlan: nominalPlan,
