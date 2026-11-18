@@ -3972,8 +3972,8 @@ function buildJobs() {
   // 0.25.2's own test vectors byte for byte, signatures included. No
   // services.
   jobs.push({
-    name: "Gordian Envelope (dCBOR, digests, signatures, elision against " +
-        "the Rust crates' vectors, in node)",
+    name: "Gordian Envelope (the Rust crates' vectors, and Blockchain " +
+        "Commons' bc-envelope-cli both ways, in node)",
     script: "gordian_envelope_engine.js",
     env: {},
   });

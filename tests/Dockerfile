@@ -80,6 +80,10 @@
 # /usr/src/anoncreds-witness (tests/anoncreds_witness.js).
 # ---------------------------------------------------------------------------
 FROM anoncreds-witness:0.5.0-0.2.3 AS anoncreds-witness
+# THE GORDIAN ENVELOPE WITNESS (#480): Blockchain Commons' bc-envelope-cli
+# 0.35.0, built into the private mirror (tests/gordian-witness/Dockerfile).
+# tests/gordian_witness.js finds it at /usr/local/bin/bc-envelope.
+FROM gordian-witness:0.35.0 AS gordian-witness
 
 FROM rust:1.97-bookworm AS oid4vc-wallet
 ENV OID4VC_WALLET_COMMIT=7cf061a63e2c1f9814b404b0415e65765f1b979a
@@ -454,7 +458,7 @@ COPY tests/vp_verifier_engine.js ./
 # And tests/client_module_bindings.js: every name the browser bundles use is
 # bound (client/src and the staged common/ modules, read from
 # /usr/src/source-tree).
-COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js tests/holder_key_algs.js tests/ldp_vc_whole_presentation.js tests/ecdsa_sd_2023_engine.js tests/vc_jose_cose_engine.js tests/vc_jose_cose_presentation.js tests/jwp_engine.js tests/sd_cwt_engine.js tests/jwp_sd_cwt_presentation.js tests/anoncreds_engine.js tests/anoncreds_witness.js tests/anoncreds_presentation.js tests/client_auth_engine.js tests/vc_issuance_client_auth.js tests/vc_barcodes_engine.js tests/vc_barcodes_browser.js tests/gordian_envelope_engine.js tests/gordian_envelope_browser.js tests/acdc_engine.js tests/acdc_browser.js ./
+COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js tests/holder_key_algs.js tests/ldp_vc_whole_presentation.js tests/ecdsa_sd_2023_engine.js tests/vc_jose_cose_engine.js tests/vc_jose_cose_presentation.js tests/jwp_engine.js tests/sd_cwt_engine.js tests/jwp_sd_cwt_presentation.js tests/anoncreds_engine.js tests/anoncreds_witness.js tests/anoncreds_presentation.js tests/client_auth_engine.js tests/vc_issuance_client_auth.js tests/vc_barcodes_engine.js tests/vc_barcodes_browser.js tests/gordian_envelope_engine.js tests/gordian_witness.js tests/gordian_envelope_browser.js tests/acdc_engine.js tests/acdc_browser.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./
@@ -842,6 +846,7 @@ COPY .github/image-mirror-builds.txt .github/workflows/terraform.yml \
      deploy/deploy-local.sh infra/terraform-local.sh ./
 COPY shibboleth-idp/dist/Dockerfile ./shibboleth-idp-dist_Dockerfile
 COPY tests/anoncreds-witness/Dockerfile ./tests-anoncreds-witness_Dockerfile
+COPY tests/gordian-witness/Dockerfile ./tests-gordian-witness_Dockerfile
 COPY infra/Dockerfile ./infra_Dockerfile
 COPY deploy/Dockerfile ./deploy_Dockerfile
 COPY embedded/Dockerfile ./embedded_Dockerfile
@@ -1305,6 +1310,7 @@ RUN apt-get update \
 # passes.
 COPY --from=oid4vc-wallet /out/ /opt/oid4vc-wallet/
 COPY --from=anoncreds-witness /anoncreds/ /usr/src/anoncreds-witness/
+COPY --from=gordian-witness /envelope/envelope /usr/local/bin/bc-envelope
 ENV OID4VC_WALLET_BIN=/opt/oid4vc-wallet/oid4vc-wallet
  
 # Create app directory
