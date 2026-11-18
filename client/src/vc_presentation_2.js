@@ -1708,7 +1708,16 @@ function onload() {
   setText("vp_nonce", params.nonce || "—");
   setText("vp_requested", state.requested.length ?
           state.requested.join(", ") : "—");
-  if (state.format === sdJwtVc.FORMAT_JPT) {
+  if (state.format === sdJwtVc.FORMAT_ANONCREDS) {
+    setText("vp_key_binding",
+      "This credential is AnonCreds (CL signatures). The chosen attributes " +
+      "are revealed in a zero-knowledge proof under the holder's link " +
+      "secret — the holder key here — and every other attribute stays " +
+      "hidden. Neither OpenID4VCI nor OpenID4VP defines AnonCreds, so the " +
+      "presentation request is this debugger's mapping of the OpenID4VP " +
+      "one: an attribute per requested claim and the nonce as AnonCreds " +
+      "needs it (decimal digits; hashed when it is not).");
+  } else if (state.format === sdJwtVc.FORMAT_JPT) {
     var jalg = ((state.parsed || {}).header || {}).alg || "";
     setText("vp_key_binding",
       "This credential is a JSON Proof Token (" + jalg + ", " +

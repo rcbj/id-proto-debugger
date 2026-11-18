@@ -4156,6 +4156,14 @@ function buildJobs() {
       script: "ldp_vc_whole_presentation.js",
       env: {},
     });
+    // AnonCreds through the presentation pages (#479): anoncreds-rs issues
+    // to our holder, the wallet reveals two of three attributes, and
+    // anoncreds-rs verifies. Needs the client and the anoncreds witness.
+    jobs.push({
+      name: "VC Presentation — AnonCreds (anoncreds-rs issuer and verifier)",
+      script: "anoncreds_presentation.js",
+      env: {},
+    });
     // JPT and SD-CWT through the presentation pages (#478, drafts): the
     // JPA-15 SU-ES256 example, a BBS JPT signed by Digital Bazaar and the
     // SD-CWT-09 example, each presentation checked by node's crypto,

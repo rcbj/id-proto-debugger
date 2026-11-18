@@ -30,6 +30,9 @@ var vcJoseCose = require("./vc_jose_cose");
 var jwpLib = require("./jwp");
 var sdCwt = require("./sd_cwt");
 var sdJwtVp = require("./sd_jwt_vp");
+// AnonCreds (#479).
+var anoncreds = require("./anoncreds");
+var anoncredsWallet = require("./anoncreds_wallet");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_3',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -327,6 +330,10 @@ function verify() {
     log.debug("Leaving verify(). " + parsed.format);
     return verifyJoseCose();
   }
+  if (parsed.format === sdJwtVc.FORMAT_ANONCREDS) {
+    log.debug("Leaving verify(). anoncreds.");
+    return verifyAnoncreds();
+  }
   if (parsed.format === sdJwtVc.FORMAT_JPT ||
       parsed.format === sdJwtVc.FORMAT_SD_CWT) {
     log.debug("Leaving verify(). " + parsed.format);
@@ -570,6 +577,38 @@ function verifyJoseCose() {
            "signature: " + e.message, "vc-bad");
   });
   log.debug("Leaving verifyJoseCose().");
+  return false;
+}
+
+// An AnonCreds credential as held (#479): its CL signature, A^e = Q, under
+// the holder's link secret (held as the holder key).
+function verifyAnoncreds() {
+  log.debug("Entering verifyAnoncreds().");
+  var b = parsed.anoncreds;
+  var key = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK);
+  var checks = [{ name: "Format", ok: true, detail: "AnonCreds, CL " +
+    "signatures: " + parsed.disclosures.length + " attribute(s) under " +
+    "schema " + b.schemaId + " and credential definition " + b.credDefId +
+    ". Neither OpenID4VCI nor OpenID4VP defines AnonCreds." }];
+  if (!anoncredsWallet.isLinkSecretJwk(key)) {
+    checks.push({ name: "Issuer signature", ok: false, detail: "the link " +
+      "secret is not held here, so the CL signature (which covers it) " +
+      "cannot be checked." });
+  } else {
+    var bad = anoncreds.verifyCredentialSignature(b.credential,
+      b.credentialDefinition, anoncredsWallet.linkSecretOf(key));
+    checks.push({ name: "Issuer signature", ok: !bad, detail: bad ||
+      "the CL signature verifies under the credential definition's key " +
+      "and this holder's link secret." });
+  }
+  renderChecks(checks);
+  var ok = checks.every(function (c) {
+    return c.ok;
+  });
+  status("vc_credential_status", ok ? "The credential's CL signature is " +
+         "valid." : "The credential's CL signature was not verified.",
+         ok ? "vc-ok" : "vc-bad");
+  log.debug("Leaving verifyAnoncreds().");
   return false;
 }
 

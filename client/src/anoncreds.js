@@ -443,6 +443,32 @@ function processCredential(credential, opts) {
   return out;
 }
 
+// A held (processed) credential's CL signature, re-checked with the link
+// secret: A^e = Q. Returns null, or why not.
+function verifyCredentialSignature(credential, credentialDefinition,
+                                   linkSecret) {
+  log.debug("Entering verifyCredentialSignature().");
+  try {
+    var pk = primaryKey(credentialDefinition);
+    var sig = credential.signature.p_credential;
+    var values = credentialValues(credential, linkSecret);
+    var rx = (modPow(pk.s, big(sig.v), pk.n) *
+              modPow(pk.rctxt, big(sig.m_2), pk.n)) % pk.n;
+    Object.keys(pk.r).forEach(function (k) {
+      if (values[k] === undefined) throw new Error("no value for " + k);
+      rx = (rx * modPow(pk.r[k], values[k], pk.n)) % pk.n;
+    });
+    var q = (pk.z * inverse(rx, pk.n)) % pk.n;
+    var ok = modPow(big(sig.a), big(sig.e), pk.n) === q;
+    log.debug("Leaving verifyCredentialSignature(). " + ok);
+    return ok ? null : "the CL signature does not verify under this link " +
+      "secret (A^e is not Q).";
+  } catch (e) {
+    log.debug("Leaving verifyCredentialSignature(). " + e.message);
+    return e.message;
+  }
+}
+
 // --- presentation (spec 6) ---------------------------------------------------
 function schemaAttrs(schema) {
   log.debug("Entering schemaAttrs().");
@@ -1031,6 +1057,7 @@ module.exports = {
   verifyKeyCorrectnessProof: verifyKeyCorrectnessProof,
   createCredentialRequest: createCredentialRequest,
   processCredential: processCredential,
+  verifyCredentialSignature: verifyCredentialSignature,
   createPresentation: createPresentation,
   verifyPresentation: verifyPresentation,
   // the arithmetic, for the tests

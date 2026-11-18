@@ -39,6 +39,9 @@ var dataIntegrity = require("./data_integrity_rdfc");
 var vcFormats = require("./vc_formats");
 // W3C VC-JOSE-COSE presentations (#477).
 var vcJoseCose = require("./vc_jose_cose");
+// AnonCreds presentations (#479).
+var anoncreds = require("./anoncreds");
+var anoncredsWallet = require("./anoncreds_wallet");
 // JPT and SD-CWT presentations (#478).
 var jwpLib = require("./jwp");
 var sdCwt = require("./sd_cwt");
@@ -313,6 +316,10 @@ function recheckOwnPresentation() {
   if (vcJoseCose.detect(sent.presentation)) {
     log.debug("Leaving recheckOwnPresentation(). VC-JOSE-COSE.");
     return recheckJoseCose();
+  }
+  if (anoncredsWallet.looksLikePresentation(sent.presentation)) {
+    log.debug("Leaving recheckOwnPresentation(). AnonCreds.");
+    return recheckAnoncreds();
   }
   if (jwpLib.looksLikeJwp(sent.presentation) ||
       (String(sent.presentation).indexOf(".") === -1 &&
@@ -610,6 +617,41 @@ function recheckJoseCose() {
       log.debug("Leaving recheckJoseCose(). " + all.length + " check(s).");
       return true;
     });
+}
+
+// An AnonCreds presentation re-checked by anoncreds.js's verifier, against
+// the request this debugger maps the OpenID4VP one to, with the held
+// credential's schema and credential definition (#479).
+function recheckAnoncreds() {
+  log.debug("Entering recheckAnoncreds().");
+  var pres = JSON.parse(sent.presentation);
+  var held = sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "";
+  var checks = [];
+  try {
+    var b = anoncredsWallet.parseBundle(held);
+    var names = Object.keys(anoncredsWallet.revealedClaims(pres, null));
+    var request = anoncredsWallet.presentationRequestFor(names, sent.nonce);
+    var schemas = {};
+    schemas[b.schemaId] = b.schema;
+    var cds = {};
+    cds[b.credDefId] = b.credentialDefinition;
+    var r = anoncreds.verifyPresentation(pres, { presentationRequest: request,
+      schemas: schemas, credentialDefinitions: cds });
+    checks.push({ name: "AnonCreds presentation (CL)", ok: r.valid,
+      detail: r.valid ? names.length + " attribute(s) revealed; the proof " +
+        "verifies under the request nonce " + request.nonce + " (from the " +
+        "OpenID4VP nonce by this debugger's mapping)." :
+        r.errors.join(" ") });
+    (r.warnings || []).forEach(function (w) {
+      checks.push({ name: "Note", ok: true, detail: w });
+    });
+  } catch (e) {
+    checks.push({ name: "AnonCreds presentation (CL)", ok: false,
+                  detail: "could not be re-checked: " + e.message });
+  }
+  renderRecheck(checks);
+  log.debug("Leaving recheckAnoncreds().");
+  return Promise.resolve(true);
 }
 
 // A JPT or an SD-CWT Key Binding Token re-checked from the bytes that went
