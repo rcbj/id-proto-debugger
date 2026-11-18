@@ -912,9 +912,13 @@ async function signComposite(cfg, message, priv) {
   if (cfg.trad.kind === 'ec') {
     var info = TRAD_EC[cfg.trad.curve];
     var digest = hashFn(cfg.trad.sigHash)(mPrime);
-    tradSig = asBytes(info.curve
+    // noble signs; the provider writes the DER (#351). @noble/curves 1.4.0's
+    // own toDERRawBytes() emits a short-form length, so a P-521 half came out
+    // as `30 88 ...`, which is not DER and which OpenSSL refuses. The compact
+    // r || s form has no length to get wrong.
+    tradSig = asBytes(provider.rawToDerEcdsa(info.curve
         .sign(digest, ecScalarFromDer(cfg.trad, halves.trad))
-        .toDERRawBytes());
+        .toCompactRawBytes()));
   } else if (cfg.trad.kind === 'ed') {
     var edCurve = cfg.trad.name === 'Ed448' ? ed448 : ed25519;
     tradSig = asBytes(edCurve.sign(mPrime, halves.trad));
@@ -951,7 +955,14 @@ async function verifyComposite(cfg, sig, message, pub) {
     var info = TRAD_EC[cfg.trad.curve];
     var digest = hashFn(cfg.trad.sigHash)(mPrime);
     try {
-      tradOk = info.curve.verify(sigHalves.trad, digest, pubHalves.trad);
+      // The provider reads the DER, long form included, and refuses trailing
+      // bytes and negative integers; noble then checks r and s (#351). noble
+      // 1.4.0's own DER reader refuses a correct P-521 `30 81 87 ...`. The
+      // halves go to noble as a Signature, not as bytes: given bytes, noble
+      // tries DER first and falls back to compact, which is a guess.
+      var raw = provider.derToRawEcdsa(sigHalves.trad, info.fieldLen);
+      tradOk = info.curve.verify(info.curve.Signature.fromCompact(raw),
+          digest, pubHalves.trad);
     } catch (e) {
       log.debug("verifyComposite(): ECDSA half refused: " + e.message);
       tradOk = false;
