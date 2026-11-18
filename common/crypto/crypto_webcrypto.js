@@ -291,7 +291,24 @@ async function verifyWithCryptoKey(alg, cryptoKey, data, signature) {
   return { valid: !!ok, engine: "webcrypto" };
 }
 
+// A caller's CryptoKey as a JWK, for the pure-JS code that needs its bytes.
+// It must be extractable; a non-extractable one is refused by name.
+async function exportCryptoKeyJwk(cryptoKey) {
+  log.debug("Entering exportCryptoKeyJwk().");
+  try {
+    var jwk = await realSubtle().exportKey("jwk", cryptoKey);
+    log.debug("Leaving exportCryptoKeyJwk().");
+    return jwk;
+  } catch (e) {
+    log.debug("Leaving exportCryptoKeyJwk(). Not extractable.");
+    throw new Error("This operation runs in JavaScript and needs the key's " +
+        "bytes; the CryptoKey given is not extractable. Pass a JWK or PEM, " +
+        "or an extractable key.");
+  }
+}
+
 module.exports = {
+  exportCryptoKeyJwk: exportCryptoKeyJwk,
   sign: sign,
   verify: verify,
   digest: digest,
