@@ -11169,9 +11169,9 @@
                 "type": "null"
               }
             ],
-            "description": "The signed Request Object, a compact JWS.",
+            "description": "The signed Request Object, a compact JWS; or, when the Wallet's\nwallet_metadata gave a key to encrypt to, that JWS encrypted to it, a\ncompact JWE (section 5.10; RFC 9101 section 4).",
             "x-passthrough": true,
-            "x-checked-in-code": "api/oid4vp_verifier.js: required, three base64url segments, at most oid4vpVerifierMaxRequestObjectBytes"
+            "x-checked-in-code": "api/oid4vp_verifier.js: required, three base64url segments (a JWS) or five (a JWE), at most oid4vpVerifierMaxRequestObjectBytes"
           }
         },
         "description": "The Request Object the page signed for ONE held Wallet."

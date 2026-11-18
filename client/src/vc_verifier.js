@@ -1157,6 +1157,8 @@ function eventLine(event) {
       (event.method || "GET") + ")" +
       (event.walletNonce ? ", sending wallet_nonce " + event.walletNonce
                          : "") +
+      (event.walletMetadata !== undefined ? " and wallet_metadata " +
+        JSON.stringify(event.walletMetadata).slice(0, 300) : "") +
       (event.signingId ? "; the api is holding it open for a Request " +
         "Object signed with that nonce" : "") + "." +
       (event.problem ? " " + event.problem : "");
@@ -1194,18 +1196,55 @@ function eventLine(event) {
 // Request Object carrying its wallet_nonce (section 5.10) and hand it over.
 // A 404 means the wait ran out and the wallet already has the one signed in
 // advance, which the event that follows will say.
+// What honouring wallet_metadata found, one line each in the event list.
+function showWalletMetadataFindings(findings) {
+  log.debug("Entering showWalletMetadataFindings().");
+  var list = el("vpv_events");
+  if (!list) {
+    log.debug("Leaving showWalletMetadataFindings(). No list.");
+    return;
+  }
+  (findings || []).forEach(function (f) {
+    var li = document.createElement("li");
+    li.className = f.level === "ok" ? "vc-ok" : "vc-pending";
+    li.textContent = "wallet_metadata: " + f.text;
+    list.appendChild(li);
+  });
+  log.debug("Leaving showWalletMetadataFindings().");
+}
+
 async function signLive(event) {
   log.debug("Entering signLive(). " + event.signingId);
   try {
+    // What the wallet said it can do (section 5.10), honoured where this
+    // Verifier can and reported where it cannot.
+    var dcql = current.claimsInput.dcql || {};
+    var plan = verifier.planForWalletMetadata(event.walletMetadata, {
+      keyJwk: (current.signer.identity || {}).privateJwk,
+      prefix: current.signer.prefix, responseMode:
+        current.claimsInput.responseMode,
+      responseAlg: current.claimsInput.encryptionJwk ? "ECDH-ES" : "",
+      formats: (dcql.credentials || []).map(function (q) {
+        return q.format;
+      }) });
     var input = Object.assign({}, current.claimsInput, {
-      walletNonce: event.walletNonce || undefined });
+      walletNonce: event.walletNonce || undefined,
+      encValuesSupported: plan.encValues });
     var claims = verifier.requestObjectClaims(input);
-    var jws = await signWith(current.signer, claims);
+    var jws = await verifier.signRequestObject({
+      claims: claims, identity: current.signer.identity,
+      attester: current.signer.attester || undefined,
+      algId: plan.signAlg });
+    var served = plan.encryptTo
+      ? await verifier.encryptRequestObject(jws, plan) : jws;
     await apiJson("PUT", "/oid4vp/verifier/" + current.hosted.id +
                   "/request/" + encodeURIComponent(event.signingId),
-                  { requestObject: jws }, current.hosted.secret);
+                  { requestObject: served }, current.hosted.secret);
     setVal("vpv_request_object", decodeJws(jws) + "\n(signed live, for " +
-           "wallet_nonce " + (event.walletNonce || "none") + ")");
+           "wallet_nonce " + (event.walletNonce || "none") +
+           (plan.encryptTo ? "; then encrypted to the wallet's key" : "") +
+           ")");
+    showWalletMetadataFindings(plan.findings);
   } catch (e) {
     setText("vpv_wait_status", "Could not sign a live Request Object: " +
             e.message, "vc-bad");

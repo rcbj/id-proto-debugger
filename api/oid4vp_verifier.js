@@ -565,6 +565,12 @@ function authorized(appconfig, id, authorization) {
 // and is let through, since showing a Wallet refusing one is a thing this
 // debugger exists to do.
 var COMPACT_JWS = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
+// A compact JWE (RFC 7516 section 7.1): five segments, the protected header
+// not empty. The encrypted key and the IV may be empty (direct, HPKE
+// integrated), and the ciphertext may be. Served only as the live answer to
+// one Wallet whose wallet_metadata gave a key to encrypt to (section 5.10;
+// RFC 9101 section 4, signed then encrypted).
+var COMPACT_JWE = new RegExp('^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]*){4}$');
 
 // The CA certificate as base64 DER, or as PEM (the armour is stripped). It
 // has to decode to a DER SEQUENCE; nothing else about it is checked.
@@ -597,8 +603,10 @@ function readCertificate(value) {
 // ---------------------------------------------------------------------------
 // The `requestObject` member of a page's PUT, by the rules both publishes
 // share: required, at most oid4vpVerifierMaxRequestObjectBytes, a compact
-// JWS by shape.
-function readRequestObject(appconfig, asked) {
+// JWS by shape. With `allowEncrypted` (the live answer to one Wallet,
+// publishFor()), a compact JWE as well: an object pre-signed for every
+// Wallet has nobody's key to be encrypted to.
+function readRequestObject(appconfig, asked, allowEncrypted) {
   log.debug('Entering readRequestObject().');
   var jws = asked.requestObject === undefined || asked.requestObject === null
     ? '' : String(asked.requestObject).trim();
@@ -616,11 +624,18 @@ function readRequestObject(appconfig, asked) {
     return { error: 'requestObject is ' + size + ' bytes and this service ' +
         'serves at most ' + limit + ' (oid4vpVerifierMaxRequestObjectBytes).' };
   }
+  if (allowEncrypted && COMPACT_JWE.test(jws)) {
+    log.debug('Leaving readRequestObject(). Encrypted: ' + size + ' bytes.');
+    return { jws: jws, size: size, limit: limit, encrypted: true };
+  }
   if (!COMPACT_JWS.test(jws)) {
     log.debug('Leaving readRequestObject(). Not a compact JWS.');
     return { error: 'requestObject is not a compact JWS: three base64url ' +
-        'segments separated by dots, the first two not empty. An encrypted ' +
-        'Request Object (five segments) is not served here.' };
+        'segments separated by dots, the first two not empty.' +
+        (allowEncrypted ? ' Nor a compact JWE: five segments, the first ' +
+          'not empty.' : ' An encrypted Request Object (five segments) is ' +
+          'served only as the live answer to one Wallet, which gave the ' +
+          'key in its wallet_metadata (PUT .../request/:signingId).') };
   }
   log.debug('Leaving readRequestObject(). ' + size + ' bytes.');
   return { jws: jws, size: size, limit: limit };
@@ -1031,7 +1046,7 @@ function publishFor(appconfig, id, signingId, authorization, body) {
     log.debug('Leaving publishFor(). No such wait.');
     return { ok: false, status: 404, error: NO_SUCH_SIGNING };
   }
-  var object = readRequestObject(appconfig, body || {});
+  var object = readRequestObject(appconfig, body || {}, true);
   if (object.error) {
     log.debug('Leaving publishFor(). requestObject refused.');
     return { ok: false, status: 400, error: object.error };

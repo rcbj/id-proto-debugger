@@ -740,6 +740,38 @@ async function moduleLiveSigning() {
       assert.strictEqual(verifier.fetchRequest(cfg, made.id,
         { method: "GET" }).body, preSigned);
     });
+    // #471 E4: a Request Object signed then encrypted (RFC 9101 section 4)
+    // to a key from the Wallet's wallet_metadata is a five-segment compact
+    // JWE. The live answer to that one Wallet may be one; an object
+    // pre-signed for every Wallet may not, since it has nobody's key.
+    const sealedJwe = "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiQTI1NkdDTSIsImN0eSI6" +
+      "IkpXVCJ9..aXY.Y3Q.dGFn";
+    check("a pre-signed publish refuses a JWE, naming the live route",
+      function () {
+        const r = verifier.publish(cfg, made.id, bearer,
+                                   { requestObject: sealedJwe });
+        assert.strictEqual(r.status, 400);
+        assert.match(r.error, /five segments.*live answer to one Wallet/);
+      });
+    const sealedHeld = verifier.fetchRequest(cfg, made.id,
+                                             walletPost("wn-sealed"));
+    check("the live PUT takes a compact JWE for the held Wallet",
+      function () {
+        assert.strictEqual(verifier.publishFor(cfg, made.id,
+          sealedHeld.signingId, bearer, { requestObject: "a.b.c.d" })
+          .status, 400);
+        assert.deepStrictEqual(verifier.publishFor(cfg, made.id,
+          sealedHeld.signingId, bearer, { requestObject: sealedJwe }),
+          { ok: true, status: 200 });
+      });
+    const sealedAnswer = await sealedHeld.pending;
+    check("and the Wallet is served it as application/oauth-authz-req+jwt",
+      function () {
+        assert.strictEqual(sealedAnswer.status, 200);
+        assert.strictEqual(sealedAnswer.contentType,
+                           "application/oauth-authz-req+jwt");
+        assert.strictEqual(sealedAnswer.body, sealedJwe);
+      });
     const late = verifier.fetchRequest(cfg, made.id, walletPost("wn-late"));
     check("a timeout with a wallet_nonce does not fall back", function () {
       assert.ok(late.pending);

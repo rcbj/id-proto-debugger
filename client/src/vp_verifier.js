@@ -1209,6 +1209,18 @@ async function signRequestObject(opts) {
   }
   var who = vpProtocols.clientIdPrefix(claims.client_id);
   var alg = algForJwk(identity.privateJwk);
+  if (o.algId) {
+    // An alg chosen for this wallet (planForWalletMetadata()): it must be
+    // one this key signs with.
+    if (signingAlgsFor(identity.privateJwk).indexOf(o.algId) === -1) {
+      log.debug("Leaving signRequestObject(). Key cannot sign " + o.algId);
+      throw new Error("this Verifier's request key (" +
+                      (identity.privateJwk.crv || "?") + ") cannot sign " +
+                      o.algId + ".");
+    }
+    alg = { algId: o.algId === "EdDSA" ? "EdDSA-Ed25519" : o.algId,
+            alg: o.algId };
+  }
   var header = { alg: alg.alg, typ: REQUEST_TYP };
   if (who.prefix === "openid_federation") {
     log.debug("Leaving signRequestObject(). Federation.");
@@ -1258,6 +1270,210 @@ async function signRequestObject(opts) {
   log.debug("Leaving signRequestObject(). " + (who.prefix ||
             "pre-registered"));
   return signed.serialized;
+}
+
+// The JWS alg values a request key signs with, preferred first: P-256 and
+// P-384 one each; Ed25519 both its fully-specified name and RFC 8037's
+// polymorphic "EdDSA" (draft-ietf-jose-fully-specified-algorithms).
+function signingAlgsFor(jwk) {
+  log.debug("Entering signingAlgsFor().");
+  var crv = String((jwk && jwk.crv) || "");
+  var out = crv === "P-384" ? ["ES384"]
+          : crv === "Ed25519" ? ["Ed25519", "EdDSA"]
+          : ["ES256"];
+  log.debug("Leaving signingAlgsFor(). " + out.join(","));
+  return out;
+}
+
+// The key management alg a Verifier uses to encrypt to a wallet's key:
+// the key's own `alg` when this tree performs it, else ECDH-ES for an EC or
+// OKP key and RSA-OAEP-256 for an RSA one. "" when none fits.
+function requestEncAlgFor(key, listed) {
+  log.debug("Entering requestEncAlgFor().");
+  var can = joseJwe.supportedAlgs();
+  var wanted = isArray(listed) && listed.length ? listed : null;
+  var byKty = key.kty === "RSA" ? ["RSA-OAEP-256", "RSA-OAEP"]
+            : key.kty === "EC" || key.kty === "OKP"
+              ? ["ECDH-ES", "ECDH-ES+A256KW", "ECDH-ES+A128KW"] : [];
+  var candidates = key.alg ? [key.alg] : byKty;
+  var out = candidates.filter(function (a) {
+    return can.indexOf(a) !== -1 && (!wanted || wanted.indexOf(a) !== -1);
+  })[0] || "";
+  log.debug("Leaving requestEncAlgFor(). " + (out || "none"));
+  return out;
+}
+
+// HONOURING wallet_metadata (OpenID4VP 1.0 section 5.10), for a Request
+// Object signed live for a wallet that POSTed to request_uri. `meta` is
+// what the wallet sent (parsed, or the text that arrived); `ctx` is
+// { keyJwk, prefix, formats, responseMode, responseAlg, encValues }.
+//
+// Answers { signAlg, encryptTo, requestEncAlg, requestEnc, encValues,
+// findings }. Each finding is { level: "ok" | "warn", text }, for the page
+// to show: none of them refuses the wallet, because section 5.10 gives the
+// Verifier no MUST to apply to what the wallet lists.
+//
+//   request_object_signing_alg_values_supported  sign with the first alg the
+//       key can make that the wallet lists; when there is none, sign with
+//       the key's own and say so. ("the Wallet SHOULD list supported
+//       cryptographic algorithms for securing the Request Object")
+//   jwks  encrypt the Request Object, signed then encrypted (RFC 9101
+//       section 4), to the first key that is not use "sig" and that this
+//       tree can encrypt to, by request_object_encryption_alg/enc
+//       _values_supported when listed (RFC 9101 section 4, RFC 8414). ("If
+//       the Wallet requires the Verifier to encrypt the Request Object, it
+//       SHOULD use the jwks parameter within the wallet_metadata")
+//   authorization_encryption_alg/enc_values_supported  the response
+//       encryption offered in client_metadata is narrowed to the enc values
+//       both sides do; an alg the wallet does not list is reported.
+//   client_id_prefixes_supported, vp_formats_supported  reported when the
+//       request's prefix or a requested format is not among them.
+function planForWalletMetadata(meta, ctx) {
+  log.debug("Entering planForWalletMetadata().");
+  var c = ctx || {};
+  var findings = [];
+  var keyAlgs = signingAlgsFor(c.keyJwk);
+  var plan = { signAlg: keyAlgs[0], encryptTo: null, requestEncAlg: "",
+               requestEnc: "", encValues: (c.encValues ||
+                 DEFAULT_ENC_VALUES).slice(), findings: findings };
+  var m = meta;
+  if (typeof m === "string") {
+    try {
+      m = JSON.parse(m);
+    } catch (e) {
+      findings.push({ level: "warn", text: "wallet_metadata is not JSON, " +
+        "so nothing in it could be honoured." });
+      log.debug("Leaving planForWalletMetadata(). Not JSON.");
+      return plan;
+    }
+  }
+  if (!m || typeof m !== "object" || isArray(m)) {
+    if (m !== undefined && m !== null) {
+      findings.push({ level: "warn", text: "wallet_metadata is not a JSON " +
+        "object, so nothing in it could be honoured." });
+    }
+    log.debug("Leaving planForWalletMetadata(). Nothing sent.");
+    return plan;
+  }
+  var signing = m.request_object_signing_alg_values_supported;
+  if (isArray(signing)) {
+    var pick = keyAlgs.filter(function (a) {
+      return signing.indexOf(a) !== -1;
+    })[0];
+    if (pick) {
+      plan.signAlg = pick;
+      findings.push({ level: "ok", text: "signed with " + pick + ", which " +
+        "the wallet lists in request_object_signing_alg_values_supported." });
+    } else {
+      findings.push({ level: "warn", text: "the wallet lists " +
+        JSON.stringify(signing) + " in request_object_signing_alg_values" +
+        "_supported, and this Verifier's request key signs only " +
+        keyAlgs.join(" or ") + "; signed with " + keyAlgs[0] + " anyway." });
+    }
+  }
+  var keys = m.jwks && isArray(m.jwks.keys) ? m.jwks.keys : null;
+  if (m.jwks !== undefined && !keys) {
+    findings.push({ level: "warn", text: "wallet_metadata.jwks has no keys " +
+      "array, so the Request Object is not encrypted." });
+  }
+  if (keys) {
+    var algList = m.request_object_encryption_alg_values_supported;
+    var encList = m.request_object_encryption_enc_values_supported;
+    var to = keys.filter(function (k) {
+      return k && typeof k === "object" && k.use !== "sig" &&
+        !!requestEncAlgFor(k, algList);
+    })[0];
+    if (!to) {
+      findings.push({ level: "warn", text: "wallet_metadata.jwks carries " +
+        keys.length + " key(s) and none is one this Verifier can encrypt " +
+        "to" + (isArray(algList) ? " under " + JSON.stringify(algList) :
+        "") + ", so the Request Object is sent signed only." });
+    } else {
+      var encCan = joseJwe.supportedEncs();
+      var enc = (isArray(encList) ? encList : ["A256GCM"])
+        .filter(function (e) {
+          return encCan.indexOf(e) !== -1;
+        })[0];
+      if (!enc) {
+        findings.push({ level: "warn", text: "the wallet's request_object_" +
+          "encryption_enc_values_supported " + JSON.stringify(encList) +
+          " names no content encryption this Verifier performs, so the " +
+          "Request Object is sent signed only." });
+      } else {
+        plan.encryptTo = to;
+        plan.requestEncAlg = requestEncAlgFor(to, algList);
+        plan.requestEnc = enc;
+        findings.push({ level: "ok", text: "the Request Object is signed " +
+          "then encrypted (RFC 9101 section 4) to the wallet's key" +
+          (to.kid ? " " + to.kid : "") + " with " + plan.requestEncAlg +
+          " / " + enc + "." });
+      }
+    }
+  }
+  if (c.responseMode === "direct_post.jwt" || c.responseMode ===
+      "dc_api.jwt") {
+    var rAlgs = m.authorization_encryption_alg_values_supported;
+    var rEncs = m.authorization_encryption_enc_values_supported;
+    if (isArray(rAlgs) && c.responseAlg &&
+        rAlgs.indexOf(c.responseAlg) === -1) {
+      findings.push({ level: "warn", text: "the response is to be " +
+        "encrypted with " + c.responseAlg + ", which the wallet does not " +
+        "list in authorization_encryption_alg_values_supported " +
+        JSON.stringify(rAlgs) + "." });
+    }
+    if (isArray(rEncs)) {
+      var both = plan.encValues.filter(function (e) {
+        return rEncs.indexOf(e) !== -1;
+      });
+      if (both.length) {
+        plan.encValues = both;
+        findings.push({ level: "ok", text: "encrypted_response_enc_values" +
+          "_supported narrowed to " + JSON.stringify(both) + ", the values " +
+          "both sides do." });
+      } else {
+        findings.push({ level: "warn", text: "the wallet's authorization_" +
+          "encryption_enc_values_supported " + JSON.stringify(rEncs) +
+          " shares nothing with this Verifier's " +
+          JSON.stringify(plan.encValues) + ", which are offered unchanged." });
+      }
+    }
+  }
+  var prefixes = m.client_id_prefixes_supported;
+  var mine = c.prefix || "pre-registered";
+  if (isArray(prefixes) && prefixes.indexOf(mine) === -1) {
+    findings.push({ level: "warn", text: "the wallet's client_id_prefixes" +
+      "_supported " + JSON.stringify(prefixes) + " does not include " +
+      mine + ", the prefix this request uses." });
+  }
+  var formats = m.vp_formats_supported;
+  if (formats && typeof formats === "object") {
+    (c.formats || []).forEach(function (f) {
+      if (!Object.prototype.hasOwnProperty.call(formats, f)) {
+        findings.push({ level: "warn", text: "the request asks for " + f +
+          ", which is not in the wallet's vp_formats_supported (" +
+          Object.keys(formats).join(", ") + ")." });
+      }
+    });
+  }
+  log.debug("Leaving planForWalletMetadata(). " + findings.length +
+            " finding(s).");
+  return plan;
+}
+
+// A signed Request Object encrypted to a wallet's key (RFC 9101 section 4:
+// "the JWT MUST be signed, then encrypted"): a Nested JWT, so cty is "JWT"
+// (RFC 7519 section 5.2). The five-segment compact JWE.
+async function encryptRequestObject(jwsCompact, plan) {
+  log.debug("Entering encryptRequestObject().");
+  var header = { cty: "JWT" };
+  if (plan.encryptTo.kid) {
+    header.kid = plan.encryptTo.kid;
+  }
+  var sealed = await joseJwe.encryptCompact({
+    alg: plan.requestEncAlg, enc: plan.requestEnc, plaintext: jwsCompact,
+    key: plan.encryptTo, header: header });
+  log.debug("Leaving encryptRequestObject(). " + sealed.jwe.length);
+  return sealed.jwe;
 }
 
 // The request handed to navigator.credentials.get({ digital: { requests:
@@ -5923,6 +6139,9 @@ module.exports = {
   vpFormatsSupported: vpFormatsSupported,
   requestObjectClaims: requestObjectClaims,
   signRequestObject: signRequestObject,
+  signingAlgsFor: signingAlgsFor,
+  planForWalletMetadata: planForWalletMetadata,
+  encryptRequestObject: encryptRequestObject,
   dcApiRequest: dcApiRequest,
   authorizationRequestUri: authorizationRequestUri,
   parseResponse: parseResponse,
