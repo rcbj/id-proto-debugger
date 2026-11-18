@@ -3935,6 +3935,17 @@ function buildJobs() {
     env: {},
   });
 
+  // W3C VC-JOSE-COSE (vc+jwt, vc+sd-jwt, vc+cose and their envelopes,
+  // #477): both directions against iya-sts's own vc_jose_cose.js (loaded
+  // from its image), jose, @sd-jwt/core and @auth0/cose, and the
+  // specification's rules. Fails, naming the image, without iya-sts's tree.
+  jobs.push({
+    name: "VC-JOSE-COSE (vc+jwt, vc+sd-jwt, vc+cose; against iya-sts, jose, " +
+        "@sd-jwt/core and @auth0/cose, in node)",
+    script: "vc_jose_cose_engine.js",
+    env: {},
+  });
+
   // ecdsa-sd-2023: the specification's own vectors (canonical statements,
   // hashes, and the derived proofValue byte for byte) and Digital Bazaar's
   // released implementation in every direction (#476). Needs nothing.
@@ -4112,6 +4123,17 @@ function buildJobs() {
       name: "VC Presentation — ldp_vc presented whole (eddsa, ecdsa) and " +
           "BbsBlsSignature2020 derived, verified by Digital Bazaar and MATTR",
       script: "ldp_vc_whole_presentation.js",
+      env: {},
+    });
+    // W3C VC-JOSE-COSE through the presentation pages (#477): a vc+jwt
+    // (jose) and a vc+cose (@auth0/cose) enveloped in the holder's vp+jwt,
+    // and a vc+sd-jwt (@sd-jwt/core) presented as one Disclosure and a Key
+    // Binding JWT, each verified by the library that made it. Needs only
+    // the client.
+    jobs.push({
+      name: "VC Presentation — W3C vc+jwt, vc+cose (enveloped) and " +
+          "vc+sd-jwt, verified by jose, @auth0/cose and @sd-jwt/core",
+      script: "vc_jose_cose_presentation.js",
       env: {},
     });
     jobs.push({

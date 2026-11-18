@@ -24,6 +24,8 @@ var sdJwtVc = require("./sd_jwt_vc");
 var didLib = require("./did");
 // An ldp_vc's issuer proof, in any suite this debugger verifies (#475).
 var dataIntegrity = require("./data_integrity_rdfc");
+// A VC-JOSE-COSE credential's issuer signature (#477).
+var vcJoseCose = require("./vc_jose_cose");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_3',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -317,6 +319,10 @@ function verify() {
     log.debug("Leaving verify(). ldp_vc.");
     return verifyLdp();
   }
+  if (sdJwtVc.isJoseCose(parsed.format)) {
+    log.debug("Leaving verify(). " + parsed.format);
+    return verifyJoseCose();
+  }
   var checks = [];
   var payload = parsed.payload || {};
   var header = parsed.header || {};
@@ -508,6 +514,53 @@ function verifyLdp() {
              e.message, "vc-bad");
     });
   log.debug("Leaving verifyLdp().");
+  return false;
+}
+
+// A W3C VC-JOSE-COSE credential as issued (#477): its media type, the
+// issuer's signature found by kid or iss (section 4), the Disclosures of a
+// vc+sd-jwt, who it is bound to, and when it is valid.
+function verifyJoseCose() {
+  log.debug("Entering verifyJoseCose().");
+  var checks = [];
+  var bound = sdJwtVc.boundHolderJwk(parsed);
+  checks.push({
+    name: "Format", ok: true,
+    detail: parsed.format + " (W3C VC-JOSE-COSE): the credential is the " +
+      (parsed.form === "cose" ? "COSE_Sign1" : "JWS") + " payload itself, " +
+      "with no vc claim." + (parsed.form === "sdjwt" ? " " +
+      parsed.disclosures.length + " Disclosure(s); @context, type and " +
+      "issuer are never selectively disclosable." : "")
+  });
+  checks.push({
+    name: "Holder binding", ok: !!bound,
+    detail: bound ? "bound to a " + bound.kty + " key" +
+      (holderKeyMatches(bound) ? " — the holder key generated in step 2." :
+       " that is NOT the holder key generated in step 2.") :
+      "neither cnf.jwk nor a did:jwk / did:key credentialSubject.id names " +
+      "a holder key."
+  });
+  renderChecks(checks);
+  status("vc_credential_status", "Verifying the issuer's signature …",
+         "vc-pending");
+  vcJoseCose.verify(parsed.serialized).then(function (r) {
+    checks.push({ name: "Issuer signature", ok: r.valid,
+      detail: r.valid ? (r.header || {}).alg + " by " +
+        r.verificationMethod + " verifies." + (r.warnings.length ? " " +
+        r.warnings.join(" ") : "") : r.errors.join(" ") });
+    renderChecks(checks);
+    status("vc_credential_status", r.valid ?
+      "The credential's issuer signature is valid." :
+      "The credential's issuer signature is INVALID.",
+      r.valid ? "vc-ok" : "vc-bad");
+  }).catch(function (e) {
+    checks.push({ name: "Issuer signature", ok: false,
+                  detail: "could not be checked: " + e.message });
+    renderChecks(checks);
+    status("vc_credential_status", "Could not verify the issuer " +
+           "signature: " + e.message, "vc-bad");
+  });
+  log.debug("Leaving verifyJoseCose().");
   return false;
 }
 

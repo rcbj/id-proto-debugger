@@ -303,6 +303,8 @@ What a row is depends on the format:
 | `jwt_vc_json` | Every claim listed, none selectable. The format has no selective disclosure, so every claim goes | A Verifiable Presentation JWT signed with the bound key |
 | `ldp_vc` | One per value, named by its JSON pointer; the issuer's mandatory pointers are ticked and cannot be cleared | The `bbs-2023` derived proof over a reveal document, with the `nonce` as its presentation header; under holder binding, also a holder-signed `VerifiablePresentation` |
 | `mso_mdoc` | One per element, named `namespace/element` | A device signature (COSE_Sign1, ES256) over the session transcript |
+| `vc+sd-jwt` (W3C) | One per Disclosure; `@context`, `type` and `issuer` are never among them | A Key Binding JWT, as for `dc+sd-jwt` |
+| `vc+jwt`, `vc+cose` (W3C) | Every claim listed, none selectable | The credential as an `EnvelopedVerifiableCredential` inside a `vp+jwt` signed with the bound key, carrying the `nonce` and the Client Identifier as `aud` |
 
 ### Holder private key
 

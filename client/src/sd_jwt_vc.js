@@ -43,6 +43,8 @@ var mdoc = require("./mdoc");
 // Which proofs make a JSON object an ldp_vc, and which of them the holder
 // derives a presentation from (#475).
 var vcFormats = require("./vc_formats");
+// W3C VC-JOSE-COSE: vc+jwt, vc+sd-jwt and vc+cose (#477).
+var vcJoseCose = require("./vc_jose_cose");
 
 var KEYS = {
   // "active" while the workflow is driving oauth2_oidc_1.html /
@@ -1460,6 +1462,18 @@ var FORMAT_LDP_VC = "ldp_vc";
 // ISO/IEC 18013-5 mdoc: base64url CBOR, as OpenID4VCI 1.0 Appendix A.2
 // delivers it. See mdoc.js.
 var FORMAT_MSO_MDOC = "mso_mdoc";
+// W3C VC-JOSE-COSE (#477). Not OpenID4VCI 1.0 identifiers — that
+// specification names none for these — but the media types' own names.
+var FORMAT_VC_JWT = vcJoseCose.FORMAT_VC_JWT;
+var FORMAT_VC_SD_JWT = vcJoseCose.FORMAT_VC_SD_JWT;
+var FORMAT_VC_COSE = vcJoseCose.FORMAT_VC_COSE;
+var JOSE_COSE_FORMATS = [FORMAT_VC_JWT, FORMAT_VC_SD_JWT, FORMAT_VC_COSE];
+
+function isJoseCose(format) {
+  log.debug("Entering isJoseCose().");
+  log.debug("Leaving isJoseCose().");
+  return JOSE_COSE_FORMATS.indexOf(format) !== -1;
+}
 
 // Which format some stored bytes are.
 //
@@ -1481,6 +1495,13 @@ function credentialFormat(serialized) {
   if (!raw) {
     log.debug("Leaving credentialFormat().");
     return "";
+  }
+  // A VC-JOSE-COSE credential first: a W3C vc+sd-jwt has tildes too, and
+  // only its v2 @context (and the absence of vct) tells it from a dc+sd-jwt.
+  var joseCose = vcJoseCose.detect(raw);
+  if (joseCose && joseCose.kind === "vc") {
+    log.debug("Leaving credentialFormat(). " + joseCose.format);
+    return joseCose.format;
   }
   if (raw.charAt(0) === "{") {
     try {
@@ -1619,6 +1640,15 @@ function claimsOf(parsed) {
     log.debug("Leaving claimsOf().");
     return out;
   }
+  if (isJoseCose(parsed.format)) {
+    var csubject = [].concat(((parsed.document || {}).credentialSubject) ||
+                             [])[0] || {};
+    Object.keys(csubject).forEach(function (name) {
+      if (name !== "id") out[name] = csubject[name];
+    });
+    log.debug("Leaving claimsOf(). " + parsed.format);
+    return out;
+  }
   if (parsed.format === FORMAT_JWT_VC_JSON || parsed.format === FORMAT_LDP_VC) {
     var subject = parsed.credentialSubject || {};
     Object.keys(subject).forEach(function (name) {
@@ -1644,7 +1674,8 @@ function parseCredential(serialized) {
   var format = credentialFormat(serialized);
   if (!format) throw new Error("This does not look like an SD-JWT VC, a " +
       "jwt_vc_json, an ldp_vc or an ISO mdoc credential.");
-  var parsed = format === FORMAT_LDP_VC ? parseLdpVc(serialized)
+  var parsed = isJoseCose(format) ? vcJoseCose.parse(serialized)
+             : format === FORMAT_LDP_VC ? parseLdpVc(serialized)
              : format === FORMAT_JWT_VC_JSON ? parseJwtVc(serialized)
              : format === FORMAT_MSO_MDOC ? parseMdoc(serialized)
              : parseSdJwt(serialized);
@@ -1655,6 +1686,7 @@ function parseCredential(serialized) {
   // Which ldp_vc depends on its proof: a bbs-2023 (or ecdsa-sd-2023)
   // credential is derived from, an eddsa-rdfc-2022 one is presented whole.
   parsed.selectivelyDisclosable = format === FORMAT_SD_JWT ||
+      format === FORMAT_VC_SD_JWT ||
       (format === FORMAT_LDP_VC && parsed.ldpSelective) ||
       format === FORMAT_MSO_MDOC;
   // What the credential says it IS: a vct for an SD-JWT VC, a type array for a
@@ -1665,9 +1697,13 @@ function parseCredential(serialized) {
   parsed.docType = format === FORMAT_MSO_MDOC ? parsed.mdoc.docType : "";
   parsed.types = format === FORMAT_JWT_VC_JSON ? [].concat((parsed.vc ||
       {}).type || [])
-               : format === FORMAT_LDP_VC ? [].concat((parsed.document ||
-                   {}).type || [])
+               : format === FORMAT_LDP_VC || isJoseCose(format) ?
+                   [].concat((parsed.document || {}).type || [])
                : [];
+  if (isJoseCose(format)) {
+    parsed.credentialSubject = [].concat((parsed.document || {})
+      .credentialSubject || [])[0] || {};
+  }
   parsed.subject = (parsed.payload || {}).sub || (parsed.credentialSubject ||
       {}).id || "";
   log.debug("Leaving parseCredential(). format=" + format + ", " +
@@ -1683,7 +1719,8 @@ function credentialLabel(parsed) {
     log.debug("Leaving credentialLabel().");
     return "credential";
   }
-  if (parsed.format === FORMAT_JWT_VC_JSON || parsed.format === FORMAT_LDP_VC) {
+  if (parsed.format === FORMAT_JWT_VC_JSON || parsed.format === FORMAT_LDP_VC ||
+      isJoseCose(parsed.format)) {
     var types = (parsed.types ||
         []).filter(function (t) { return t !== "VerifiableCredential"; });
     log.debug("Leaving credentialLabel().");
@@ -1745,6 +1782,12 @@ function boundHolderJwk(parsed) {
     log.debug("Leaving boundHolderJwk().");
     return jwkFromDid((parsed.credentialSubject || {}).id);
   }
+  // A VC-JOSE-COSE credential is bound by cnf (section 4.1.3) when it has
+  // one, otherwise by the DID its subject is.
+  if (isJoseCose(parsed.format) && !((parsed.payload || {}).cnf || {}).jwk) {
+    log.debug("Leaving boundHolderJwk(). credentialSubject.id.");
+    return jwkFromDid((parsed.credentialSubject || {}).id);
+  }
   var cnf = (parsed.payload || {}).cnf;
   log.debug("Leaving boundHolderJwk().");
   return (cnf && cnf.jwk) || null;
@@ -1789,7 +1832,12 @@ function typeMemberName(parsed) {
 function validityWindowOf(parsed) {
   log.debug("Entering validityWindowOf().");
   var payload = (parsed && parsed.payload) || {};
-  if (parsed && parsed.format === FORMAT_LDP_VC) {
+  if (parsed && isJoseCose(parsed.format)) {
+    payload = Object.assign({}, parsed.document || {}, { nbf: payload.nbf,
+                                                        exp: payload.exp });
+  }
+  if (parsed && (parsed.format === FORMAT_LDP_VC ||
+      (isJoseCose(parsed.format) && !payload.exp && !payload.nbf))) {
     var from = payload.validFrom || payload.issuanceDate || "";
     var until = payload.validUntil || payload.expirationDate || "";
     log.debug("Leaving validityWindowOf(). ldp_vc: " + (from || "no start") +
@@ -1865,7 +1913,13 @@ function presentationReadiness() {
   // What a Verifier would be shown, said differently for the two formats
   // because the difference is the point: an SD-JWT offers a CHOICE of claims,
   // a jwt_vc_json offers all of them or nothing.
-  var offered = parsed.format === FORMAT_JWT_VC_JSON
+  var offered = parsed.format === FORMAT_VC_JWT ||
+      parsed.format === FORMAT_VC_COSE
+    ? "the " + credentialLabel(parsed) + " above (" + parsed.format +
+        ") — all " + Object.keys(parsed.claims).length + " of its claims, " +
+        "as an EnvelopedVerifiableCredential inside a presentation the " +
+        "holder signs"
+    : parsed.format === FORMAT_JWT_VC_JSON
     ? "the " + credentialLabel(parsed) + " above — all " +
         Object.keys(parsed.claims).length +
       " of its claims, because jwt_vc_json has no selective disclosure"
@@ -2073,6 +2127,10 @@ module.exports = {
   FORMAT_SD_JWT: FORMAT_SD_JWT,
   FORMAT_JWT_VC_JSON: FORMAT_JWT_VC_JSON,
   FORMAT_LDP_VC: FORMAT_LDP_VC,
+  FORMAT_VC_JWT: FORMAT_VC_JWT,
+  FORMAT_VC_SD_JWT: FORMAT_VC_SD_JWT,
+  FORMAT_VC_COSE: FORMAT_VC_COSE,
+  isJoseCose: isJoseCose,
   FORMAT_MSO_MDOC: FORMAT_MSO_MDOC,
   parseLdpVc: parseLdpVc,
   digestForDisclosure: digestForDisclosure,
