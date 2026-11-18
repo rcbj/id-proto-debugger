@@ -200,11 +200,9 @@ like any other, and its presentation goes out in the W3C form too
 
 ## Not yet
 
-- **Predicates from DCQL.** OpenID4VP 1.0's DCQL can ask only for a claim's
-  presence or exact `values`; it has no way to say "age ≥ 18". The engine
-  proves predicates (`tests/anoncreds_engine.js`), but no OpenID4VP request
-  can ask for one, and inventing a request syntax would be this debugger's
-  own extension rather than the specification.
+- Nothing on predicates is pending here. They can be asked for over
+  OpenID4VP now: in DIF Presentation Exchange (the OpenID4VP drafts), or in
+  DCQL through this debugger's critical extension. See `docs/predicates.md`.
 
 ## Tests
 
