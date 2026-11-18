@@ -10,8 +10,13 @@ the answer, one row per check. The second half does the same under
 
 **You need:**
 
-- a deployment **with the api** (the Verifier page needs it to host the
-  `request_uri` and `response_uri`; the static sites cannot);
+- a deployment **with the api** (the **local containers**) for this tutorial:
+  it uses the `request_uri` / `response_uri` hosting modes, which the static
+  content sites do not offer because hosting a wallet's answer would store a
+  presented credential on the server
+  ([why](index.md#what-the-static-sites-can-and-cannot-do)). On a static
+  site the Verifier still works in Digital Credentials API mode and checks a
+  pasted answer;
 - an SD-JWT VC in the wallet — the one
   [tutorials-issuance.md](tutorials-issuance.md) received from your issuer,
   or any other.

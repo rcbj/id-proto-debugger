@@ -31,8 +31,9 @@ does is in the developer notes listed [at the end](#developer-notes).
 Start the debugger as the [README](../../README.md#getting-started)
 describes, open `https://localhost:3000`, and choose **VC Issuance** or
 **VC Presentation**. The deployed copy at [idptools.com](https://idptools.com)
-has every VC page, but it has no api, so the **Verifier page cannot host a
-request there**, and nothing that goes "through the api" is available.
+has every VC page, but it runs no backend, so some things work there and some
+need the local containers — see
+[What the static sites can and cannot do](#what-the-static-sites-can-and-cannot-do).
 
 **The other end is yours to choose.** Nothing in these workflows is specific
 to one product: the wallet works with any OpenID4VCI Credential Issuer and
@@ -48,6 +49,47 @@ that party must send CORS headers naming the debugger's origin. Where it
 does not, upload the document from a file (issuance step 1), or send the
 call through the api (presentation step 0, and the Verifier page's
 issuer-side fetches).
+
+## What the static sites can and cannot do
+
+The deployed copies ([idptools.com](https://idptools.com) and
+test.idptools.com) are **S3 + CloudFront with no backend** — they run no
+server and **store nothing**. Everything a page does happens in your browser.
+One principle follows, and it decides every row below: anything that needs a
+server to **hold a message between two parties**, to **keep state**, or to
+speak a **non-browser wire protocol** needs the local containers; everything
+else works on the static sites too.
+
+**Works on the static sites:**
+
+- **OAuth 2.0 / OIDC** — the Authorization Code flow and the other grants.
+  The token-endpoint calls run in the browser and the redirect returns to
+  `/callback`. (The "through the api" option is simply off here.)
+- **SAML 2.0 and WS-Federation** sign-in — the identity provider's POST is
+  received at the CDN edge by a Lambda@Edge (`/samlacs`, `/samlslo`,
+  `/wsfed`). SAML HTTP-Artifact is the one leg that still needs the api.
+- **VC issuance** as the wallet — against an issuer that sends CORS headers
+  (or upload its metadata from a file). The credential lives only in your
+  browser; nothing is stored server-side.
+- **The VC Verifier** in **Digital Credentials API** mode, and **pane 4**
+  paste-checking of an answer.
+- **Every offline tool** — JWT, PKI, encryption, hashing, XACML, DID Tools,
+  the predicates page, VC Barcodes / Gordian Envelope / ACDC, and the
+  decoders. They need no network at all.
+
+**Not available on the static sites:**
+
+- **The Verifier's hosted `request_uri` / `response_uri` modes** (by
+  reference, and `direct_post`). Hosting a wallet's answer would mean holding
+  a **presented credential on the server**, and these sites store nothing, so
+  those modes are not offered. Use DC API mode, paste the answer into pane 4,
+  or run the local containers.
+- **Kerberos, SPNEGO, LDAP and SPIFFE** — those pages are not built into the
+  static sites at all. A browser cannot speak their wire protocols; the api
+  does, so the whole page lives behind it.
+- **Anything routed through the api** — the presentation workflow's "through
+  the api" proxy (used when the other party sends no CORS), the server-side
+  token-proxy option, and SAML HTTP-Artifact.
 
 ## Optional: iya-sts setup
 
@@ -103,8 +145,8 @@ implements.
 |---|---|---|---|
 | [Read a Credential Issuer's metadata](tutorial-issuer-discovery.md) | step 0, step 1's four documents, the configuration they produce | any OpenID4VCI issuer | yes |
 | [Receiving a credential](tutorials-issuance.md) | pre-authorized code with a Transaction Code, an offer from its QR code, authorization code, a claims subset, DPoP, deferred issuance, refresh and the Credential History, no keys in the browser, `private_key_jwt` and Client Attestation, other formats | an OpenID4VCI issuer **where you have an account** (pre-authorized) **or a registered client** (authorization code) | no — see below |
-| [Present selected claims to the debugger's own Verifier](tutorial-present-to-verifier.md) | both ends of OpenID4VP 1.0 in one browser, then HAIP 1.0 with an encrypted answer | the debugger's own Verifier page (needs the api); any OpenID4VP Verifier for the wallet half | yes |
-| [The Verifier page, and reading its checks](tutorial-verifier-checks.md) | DCQL, the Verifier's identity, the hand-off, every check row, `direct_post.jwt`, a wrong nonce, a request signed live for a `wallet_nonce` | any OpenID4VP wallet (needs the api) | yes |
+| [Present selected claims to the debugger's own Verifier](tutorial-present-to-verifier.md) | both ends of OpenID4VP 1.0 in one browser, then HAIP 1.0 with an encrypted answer | the debugger's own Verifier page (hosted modes need the local containers); any OpenID4VP Verifier for the wallet half | yes |
+| [The Verifier page, and reading its checks](tutorial-verifier-checks.md) | DCQL, the Verifier's identity, the hand-off, every check row, `direct_post.jwt`, a wrong nonce, a request signed live for a `wallet_nonce` | any OpenID4VP wallet (hosted modes need the local containers; DC API and paste work statically) | yes |
 | [Resolve an issuer's DID and check its domain linkage](tutorial-did-linkage.md) | `did:web` resolution and the DIF Domain Linkage Credential | any site that publishes them | yes |
 | [Prove age >= 18 without revealing it](tutorial-predicates.md) | a predicate query by Presentation Exchange and by the DCQL extension, answered with an AnonCreds proof; a `values` mismatch refused | none — the page and the wallet carry everything | yes |
 | [VC Barcodes, Gordian Envelope and ACDC](tutorials-tools.md) | verify and issue a barcode; elide claims of an envelope; issue, verify and revoke an ACDC | none — the pages carry their own samples | yes |

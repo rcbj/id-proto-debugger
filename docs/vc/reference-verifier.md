@@ -25,8 +25,15 @@ The page signs everything itself, with keys that never leave the tab. It
 [vc-verifier-api.md](../vc-verifier-api.md), and the design is in
 [vc-verifier.md](../vc-verifier.md).
 
-**Without an api** (the static sites), `vpv_api_status` says so. The page
-cannot host a request there, but pane 4 still checks an answer you paste.
+**Without an api** (the static content sites), `vpv_api_status` says so. The
+page cannot **host** a `request_uri` or `response_uri` there — not merely
+because there is no api, but because hosting a wallet's `direct_post` answer
+would mean holding a **presented credential on the server**, which the static
+sites deliberately never do. Two modes still work with nothing hosted: the
+**Digital Credentials API** (`dc_api` / `dc_api.jwt`), where the answer comes
+back in the same browser, and **pane 4**, which checks an answer you paste.
+For the hosted modes, run the local containers. See
+[What the static sites can and cannot do](index.md#what-the-static-sites-can-and-cannot-do).
 
 Unless a row says otherwise, every setting below is stored in `localStorage`
 under its own element id (`VERIFIER_KEYS` in `client/src/vc_verifier.js`,

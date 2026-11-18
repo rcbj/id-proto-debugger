@@ -12,10 +12,16 @@ The debugger plays **both ends**:
   answers any Verifier that sends an OpenID4VP request, with the credential
   the issuance workflow left in this browser.
 - **the Verifier** — `vc-verifier.html`, reached from the role chooser on
-  `vc-presentation-0.html`. It composes and signs requests, has the
-  debugger's api host the `request_uri` and the `response_uri`, and checks
-  the answer one row per check. It needs the api; the static sites cannot
-  host a request.
+  `vc-presentation-0.html`. It composes and signs requests, and checks the
+  answer one row per check. The modes that **host** a `request_uri` or a
+  `response_uri` for a wallet on another device need the debugger's api (the
+  local containers): hosting a wallet's `direct_post` answer would mean
+  holding a **presented credential on the server**, and the static content
+  sites deliberately store nothing, so they do not offer those modes. On a
+  static site the Verifier still works fully in **Digital Credentials API**
+  mode (nothing is hosted — the answer comes back in the same browser) and
+  still **checks an answer you paste** into pane 4. See
+  [What the static sites can and cannot do](index.md#what-the-static-sites-can-and-cannot-do).
 
 Two profiles of the same exchange are separate pages:
 [HAIP 1.0](haip.md) and [SIOPv2](siopv2.md). Field references:
