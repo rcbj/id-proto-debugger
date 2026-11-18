@@ -163,9 +163,10 @@ var VERIFIED_ELSEWHERE = {
     "verified by bbs2023.js.",
   "ecdsa-sd-2023": "ecdsa-sd-2023 is selective disclosure and is not " +
     "verified yet (#476).",
-  "BbsBlsSignature2020": "BbsBlsSignature2020 is not verified yet (#475).",
-  "BbsBlsSignatureProof2020": "BbsBlsSignatureProof2020 is not verified " +
-    "yet (#475)."
+  "BbsBlsSignature2020": "BbsBlsSignature2020 is verified by " +
+    "bbs_bls_2020.js, which this page does not load.",
+  "BbsBlsSignatureProof2020": "BbsBlsSignatureProof2020 is verified by " +
+    "bbs_bls_2020.js, which this page does not load."
 };
 
 // The suite id a proof object is an instance of: its cryptosuite when it is a
@@ -248,12 +249,38 @@ function jcs(value) {
 // error, not a silently unsigned claim), with no base IRI, through the
 // offline loader. These are jsonld-signatures' own options.
 var rdfcCanonize = null;
+var jsonldLibrary = null;
 
-// data_integrity_rdfc.js hands in jsonld.canonize.
-function registerRdfc(canonize) {
+// data_integrity_rdfc.js hands in jsonld.canonize — and, for the suites that
+// also need to frame and read RDF back (BbsBlsSignatureProof2020), the jsonld
+// library itself.
+function registerRdfc(canonize, library) {
   log.debug("Entering registerRdfc().");
   rdfcCanonize = canonize;
+  jsonldLibrary = library || null;
   log.debug("Leaving registerRdfc().");
+}
+
+function jsonldLib() {
+  log.debug("Entering jsonldLib().");
+  if (!jsonldLibrary) {
+    log.debug("Leaving jsonldLib(). Not registered.");
+    throw new Error("jsonld is not loaded on this page " +
+                    "(data_integrity_rdfc.js registers it).");
+  }
+  log.debug("Leaving jsonldLib().");
+  return jsonldLibrary;
+}
+
+// Proof types implemented by a module of their own, registered here when it
+// is loaded (bbs_bls_2020.js), so verifyProof() answers for them too and the
+// pages that never load them do not carry their curve.
+var EXTERNAL_SUITES = {};
+
+function registerSuite(id, impl) {
+  log.debug("Entering registerSuite(). " + id);
+  EXTERNAL_SUITES[id] = impl;
+  log.debug("Leaving registerSuite().");
 }
 
 function rdfcAvailable() {
@@ -781,6 +808,11 @@ async function verifyOneProof(doc, proof, opts) {
               verificationMethod: String(p.verificationMethod || ""),
               proofPurpose: p.proofPurpose, challenge: p.challenge,
               domain: p.domain, created: p.created, expires: p.expires };
+  if (!row && EXTERNAL_SUITES[id]) {
+    var ext = await EXTERNAL_SUITES[id].verify(doc, p, o);
+    log.debug("Leaving verifyOneProof(). " + id + " " + !!ext.valid);
+    return Object.assign(out, ext);
+  }
   if (!row) {
     log.debug("Leaving verifyOneProof(). Unsupported.");
     return Object.assign(out, { unsupported: true,
@@ -909,6 +941,8 @@ module.exports = {
   jcs: jcs,
   rdfc: rdfc,
   registerRdfc: registerRdfc,
+  jsonldLib: jsonldLib,
+  registerSuite: registerSuite,
   rdfcAvailable: rdfcAvailable,
   withSuiteContext: withSuiteContext,
   methodToJwk: methodToJwk,

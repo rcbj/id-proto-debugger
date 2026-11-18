@@ -27,8 +27,23 @@ selective-disclosure suites. `bbs-2023` lives in `bbs2023.js`, and
 | `JsonWebSignature2020` | RDFC-1.0 | Ed25519, secp256k1, P-256/384/521, RSA | detached JWS, `alg` from the key (RSA: RS*/PS*) |
 | `EcdsaSecp256k1Signature2019` | RDFC-1.0 | secp256k1 | detached JWS, `ES256K` |
 
-`BbsBlsSignature2020` is recognised but not yet verified; it is still open
-under #475.
+`BbsBlsSignature2020` and the `BbsBlsSignatureProof2020` a holder derives
+from it are in `client/src/bbs_bls_2020.js` (the JSON-LD suite) over
+`client/src/bbs_plus_2020.js` (the 2020 BBS+ scheme). Both are pure JS and
+register themselves with `data_integrity.js` when `data_integrity_rdfc.js`
+loads. They follow MATTR's released implementation, which defines the
+suite in practice:
+
+- **The signature scheme** is the Rust `bbs` crate 0.4.1, which is **not**
+  the IETF BBS that `bbs-2023` uses.
+- **Its generators** come from an older draft of hash-to-curve whose `sgn0`
+  is not RFC 9380's. RFC 9380's map gets the generator right only about half
+  the time, so `bbs_plus_2020.js` keeps RFC 9380's SWU and isogeny but uses
+  the draft's sign rule.
+- **The messages** are the canonical statements of the proof options and of
+  the document.
+- **A presentation** is derived by framing the credential to the chosen
+  claims. The wallet uses the request's nonce as the derived proof's nonce.
 
 ## The @context rules
 
@@ -77,4 +92,5 @@ Issuance step 3 and presentation step 3 verify both proofs with
 | Test | What it checks |
 |---|---|
 | `tests/data_integrity_engine.js` | Both directions against released Digital Bazaar and Blockcerts implementations, and JsonWebSignature2020 against `jose` (and node's crypto for ES256K) over `jsonld`'s RDFC-1.0. Includes two byte-for-byte vectors: Digital Bazaar's `eddsa-rdfc-2022` README example and Blockcerts' `EcdsaSecp256k1Signature2019` test. |
+| `tests/bbs_bls_2020_engine.js` | The scheme (1, 3, 9 and 17 messages) and the suite, in both directions against MATTR's released `bbs-signatures` and `jsonld-signatures-bbs` 1.2.0. |
 | `tests/data_integrity_iyasts.js` | Both directions against iya-sts's own `vc_data_integrity.js`, loaded from its image, plus the wallet's holder VP through iya-sts's Verifier. |

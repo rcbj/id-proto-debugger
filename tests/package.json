@@ -23,6 +23,8 @@
     "@digitalbazaar/eddsa-rdfc-2022-cryptosuite": "^1.3.0",
     "@grpc/grpc-js": "^1.14.5",
     "@grpc/proto-loader": "^0.8.1",
+    "@mattrglobal/bbs-signatures": "^1.2.0",
+    "@mattrglobal/jsonld-signatures-bbs": "^1.2.0",
     "@noble/curves": "1.4.0",
     "@noble/hashes": "1.4.0",
     "@noble/post-quantum": "^0.4.1",
@@ -56,6 +58,8 @@
   "overrides": {
     "brace-expansion@1": "^1.1.17",
     "brace-expansion@2": "^2.1.3",
-    "glob@10": "^14.0.3"
+    "glob@10": "^14.0.3",
+    "node-forge": "$node-forge",
+    "@mattrglobal/node-bbs-signatures": "npm:@mattrglobal/bbs-signatures@1.2.0"
   }
 }

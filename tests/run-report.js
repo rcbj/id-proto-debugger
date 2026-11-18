@@ -3935,6 +3935,26 @@ function buildJobs() {
     env: {},
   });
 
+  // BbsBlsSignature2020 and BbsBlsSignatureProof2020: the 2020 BBS+ scheme
+  // and the JSON-LD suite over it, in both directions against MATTR's
+  // released bbs-signatures and jsonld-signatures-bbs 1.2.0. Needs nothing.
+  jobs.push({
+    name: "BbsBlsSignature2020 and its derived proofs (BBS+ 2020, " +
+        "cross-implementation with MATTR, in node)",
+    script: "bbs_bls_2020_engine.js",
+    env: {},
+  });
+
+  // The holder key follows the issuer's proof_signing_alg_values_supported
+  // and the format, and the key proof, KB-JWT, VP JWT and ldp_vc holder VP
+  // each sign in that key's algorithm, verified by OpenSSL. Needs nothing.
+  jobs.push({
+    name: "Holder key algorithms (ES256, EdDSA, ES384, ES256K, ES512, " +
+        "PS256, RS256; every wallet signature, in node)",
+    script: "holder_key_algs.js",
+    env: {},
+  });
+
   // The same engine against iya-sts's own vc_data_integrity.js, loaded in
   // process from the image the stack runs: its credentials verified here,
   // ours there, and the wallet's holder VP through its Verifier. Fails,
@@ -4070,6 +4090,19 @@ function buildJobs() {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
+    });
+    // An ldp_vc that is NOT bbs-2023, through the presentation pages: an
+    // eddsa-rdfc-2022 credential presented whole in the holder's VP (in the
+    // suite the key and the Verifier allow), and a BbsBlsSignature2020 one
+    // derived to one claim. Made in node by Digital Bazaar and MATTR, the
+    // request handed to step 1 by value, and the result verified by them —
+    // iya-sts's Verifier reads only the bbs-2023 envelope. Needs only the
+    // client.
+    jobs.push({
+      name: "VC Presentation — ldp_vc presented whole (eddsa, ecdsa) and " +
+          "BbsBlsSignature2020 derived, verified by Digital Bazaar and MATTR",
+      script: "ldp_vc_whole_presentation.js",
+      env: {},
     });
     jobs.push({
       name: "VC Presentation — ldp_vc / bbs-2023 (statement disclosure, " +

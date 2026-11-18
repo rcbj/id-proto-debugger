@@ -828,7 +828,12 @@ function selfIssuedIdToken(opts) {
   var now = Math.floor((opts.now || Date.now()) / 1000);
   log.debug("Leaving selfIssuedIdToken().");
   return subjectFor(opts.syntax, opts.privateJwk).then(function (subject) {
-    var header = { alg: "ES256", typ: "JWT" };
+    // The algorithm the subject's key signs (a holder key need not be P-256
+    // any more, #475): the one it was made for, otherwise its curve's.
+    var signing = vcFormats.jwsFor(vcFormats.publicJwkOf(opts.privateJwk),
+      opts.privateJwk && opts.privateJwk.alg ? [opts.privateJwk.alg] : []) ||
+      { algId: "ES256", headerAlg: "ES256" };
+    var header = { alg: signing.headerAlg, typ: "JWT" };
     if (subject.kid) header.kid = subject.kid;
     var payload = {
       iss: subject.sub,
@@ -843,7 +848,7 @@ function selfIssuedIdToken(opts) {
       if (payload[k] === undefined) payload[k] = opts.claims[k];
     });
     return jws.signJwsAsync({
-      algId: "ES256",
+      algId: signing.algId,
       protectedHeader: header,
       payload: payload,
       privateKey: { jwk: opts.privateJwk },
