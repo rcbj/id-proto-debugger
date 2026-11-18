@@ -11,6 +11,7 @@ Draft, 22 August 2026) and **CBOR-LD 1.0**, on `vc-barcodes.html`.
 | `client/src/vp_verifier.js` | `checkBitstringStatus()`: the Verifier role's Bitstring Status List reader, for the status a terse entry expands to |
 | `client/src/data_integrity.js` | the `ecdsa-xi-2023` row (its `extraInformation` option) |
 | `client/src/vc_barcodes_page.js` | the page (bundle global `vcbarcodespage`) |
+| `client/src/vc_barcodes_qr.js` | the QR encode (qrcode-generator), QR decode (jsqr) and PDF417 (pdf417.js, over bwip-js and @zxing/library) codecs, in a bundle of their own (global `vcbarcodesqr`) that the page loads ON DEMAND the first time a QR code or PDF417 symbol is drawn or read — ~300 KB that would otherwise sit in the page bundle for every visit. Reached through `codecs.pdf417` so the page uses pdf417.js's functions and constants without requiring it. Served beside the page, so a static deployment still works offline |
 | `client/src/contexts/{vc_barcodes_v1,utopia_v2,vital_records_v1rc1}.json` | the three contexts the specification's vectors are written in |
 | `tests/vc_barcodes_engine.js` | node: the spec's vectors, Digital Bazaar's library byte for byte, the ISO vector built here, status lists both ways, the PDF417 round trip |
 | `tests/vc_barcodes_browser.js` | Chrome: the page reads, verifies and issues; draws and reads PDF417 symbols; fetches and checks a status list |

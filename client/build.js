@@ -203,6 +203,9 @@ const BUNDLES = [
   ['vc_verifier', 'vcverifier'],
   ['did_tools', 'didtools'],
   ['vc_barcodes_page', 'vcbarcodespage'],
+  // The VC Barcodes page's QR encode/decode codecs, loaded on demand so the
+  // page bundle does not carry ~300 KB of qrcode-generator and jsqr.
+  ['vc_barcodes_qr', 'vcbarcodesqr'],
   ['gordian_envelope_page', 'gordianenvelopepage'],
   ['acdc_page', 'acdcpage'],
   ['vc_predicates_page', 'vcpredicatespage'],
