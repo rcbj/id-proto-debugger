@@ -188,17 +188,27 @@ function vcFlowClientAuth(formData, viaApi) {
     log.debug("Leaving vcFlowClientAuth(). The page's own auth style.");
     return Promise.resolve(none);
   }
-  if (s.method === "attest_jwt_client_auth" && viaApi) {
-    log.debug("Leaving vcFlowClientAuth(). Attestation via the api.");
-    return Promise.resolve({ params: {}, headers: {}, problem:
-      "attest_jwt_client_auth sends two HTTP headers, which the api does " +
-      "not forward: choose Front End for Initiate call from." });
-  }
+  // A Client Attestation's PoP carries the AS's challenge when it
+  // publishes a challenge_endpoint (draft -12 section 6.1), fetched here
+  // first. Through the api, its two headers ride as client_attestation and
+  // client_attestation_pop, which api/server.js turns back into headers.
+  var ready = s.method === "attest_jwt_client_auth" ?
+      vcClientAuthPane.freshChallenge().then(function () {
+        s.challenge = vcClientAuthPane.settings().challenge;
+      }) : Promise.resolve();
   log.debug("Leaving vcFlowClientAuth(). " + s.method);
-  return clientAuth.apply(s).then(function (applied) {
+  return ready.then(function () {
+    return clientAuth.apply(s);
+  }).then(function (applied) {
     var params = Object.assign({}, applied.params);
     delete params.client_id;
-    return { params: params, headers: applied.headers, problem: "" };
+    var headers = applied.headers || {};
+    if (viaApi && headers[clientAuth.HEADER_ATTESTATION]) {
+      return { params: params, headers: {}, problem: "",
+               attestation: headers[clientAuth.HEADER_ATTESTATION],
+               attestationPop: headers[clientAuth.HEADER_POP] };
+    }
+    return { params: params, headers: headers, problem: "" };
   }, function (e) {
     return { params: {}, headers: {}, problem: e.message };
   });
@@ -358,6 +368,12 @@ function tokenButtonClick() {
     if (Object.keys(vcAuth.params).length) {
       formData.customParams = $.extend({}, formData.customParams || {},
                                        vcAuth.params);
+    }
+    if (vcAuth.attestation) {
+      formData.client_attestation = vcAuth.attestation;
+      formData.client_attestation_pop = vcAuth.attestationPop;
+      // No client secret goes with an attestation, so no Basic header.
+      formData.auth_style = true;
     }
     var proxiedBody = JSON.stringify($.extend({}, formData, {
       http_trace: true }));

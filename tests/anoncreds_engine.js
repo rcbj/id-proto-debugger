@@ -26,7 +26,8 @@
 //     signature correctness proof (processing refuses it), an unmet
 //     restriction — and a predicate the request did not ask for, which
 //     anoncreds-rs 0.2.3 itself accepts (it never compares p_value), shown
-//     so that the stricter check here is deliberate.
+//     so that the stricter check here is deliberate;
+//   * the W3C form (anoncreds-2023), plain and REVOCABLE, both ways.
 //
 // Fails, naming the image, when the witness is not available.
 // ---------------------------------------------------------------------------
@@ -65,6 +66,8 @@ const paths = require("./module_paths.js");
 const ours = paths.requireSharedModule([path.join(repoRoot(), "client",
   "src", "anoncreds.js")], "client/src/anoncreds.js");
 const witness = require("./anoncreds_witness.js");
+const w3c = paths.requireSharedModule([path.join(repoRoot(), "client", "src",
+  "anoncreds_w3c.js")], "client/src/anoncreds_w3c.js");
 const rev = paths.requireSharedModule([path.join(repoRoot(), "client", "src",
   "anoncreds_revocation.js")], "client/src/anoncreds_revocation.js");
 const os = require("os");
@@ -471,11 +474,240 @@ async function revocation() {
   log.debug("Leaving revocation().");
 }
 
+// The W3C form (anoncreds-2023): anoncreds-rs issues a W3C credential to our
+// holder; we process it, present in the W3C form and anoncreds-rs verifies;
+// anoncreds-rs presents in the W3C form and we verify; our credential in
+// the W3C form reads back in anoncreds-rs to the same signature.
+async function w3cForm() {
+  log.debug("Entering w3cForm().");
+  var ac = (await witness.load()).ac;
+  var person = makeIssuer(ac, 7, ["name", "age", "Given Name"]);
+  var ls = ours.createLinkSecret();
+  var offer = ac.CredentialOffer.create({ schemaId: person.sid,
+    credentialDefinitionId: person.cid,
+    keyCorrectnessProof: person.kcp }).toJson();
+  var made = ours.createCredentialRequest({ credentialOffer: offer,
+    credentialDefinition: person.cd, linkSecret: ls, linkSecretId: "ls",
+    entropy: "w3c-holder" });
+  var raw = { name: "Alice", age: "28", "Given Name": "Al" };
+  var issued = ac.W3cCredential.create({ credentialDefinition: person.cd,
+    credentialDefinitionPrivate: person.cdp, credentialOffer: offer,
+    credentialRequest: made.credentialRequest,
+    attributeRawValues: raw }).toJson();
+  assert.ok(w3c.isW3cCredential(issued), "anoncreds-rs's W3C credential is " +
+            "recognised");
+  var mine = ours.processCredential(w3c.fromW3cCredential(issued), {
+    credentialRequestMetadata: made.credentialRequestMetadata,
+    linkSecret: ls, credentialDefinition: person.cd });
+  var theirs = ac.W3cCredential.fromJson(issued).process({
+    credentialRequestMetadata: made.credentialRequestMetadata,
+    linkSecret: ls, credentialDefinition: person.cd });
+  var back = ac.W3cCredential.fromJson(w3c.toW3cCredential(mine,
+    { issuerId: ISSUER })).toLegacy().toJson();
+  assert.strictEqual(back.signature.p_credential.v,
+                     mine.signature.p_credential.v, "our W3C credential " +
+                     "reads back in anoncreds-rs to the same signature");
+  assert.strictEqual(w3c.fromW3cCredential(theirs.toJson()).signature
+    .p_credential.v, mine.signature.p_credential.v, "and its processing " +
+    "reaches the same v as ours");
+  var schemas = {};
+  schemas[person.sid] = person.schema;
+  var cds = {};
+  cds[person.cid] = person.cd;
+  var preq = { nonce: ours.createNonce(), name: "w3c", version: "1.0",
+    requested_attributes: { n: { name: "name" },
+                            g: { name: "Given Name" } },
+    requested_predicates: { adult: { name: "age", p_type: ">=",
+                                     p_value: 18 } } };
+  var prove = [
+    { entryIndex: 0, referent: "n", isPredicate: false, reveal: true },
+    { entryIndex: 0, referent: "g", isPredicate: false, reveal: true },
+    { entryIndex: 0, referent: "adult", isPredicate: true, reveal: true }];
+  var ctx = { presentationRequest: preq, schemas: schemas,
+              credentialDefinitions: cds };
+  var legacyPres = ours.createPresentation({ presentationRequest: preq,
+    credentials: [{ credential: mine }], credentialsProve: prove,
+    selfAttest: {}, linkSecret: ls, schemas: schemas,
+    credentialDefinitions: cds });
+  var ourW3c = w3c.toW3cPresentation(legacyPres, preq,
+    { issuerIds: { [person.cid]: ISSUER } });
+  assert.ok(ac.W3cPresentation.fromJson(ourW3c).verify(ctx),
+            "anoncreds-rs verifies our W3C presentation");
+  assert.strictEqual(ourW3c.verifiableCredential[0].credentialSubject.age,
+                     true, "the predicate's attribute is shown as true, " +
+                     "not its value");
+  var theirPres = ac.W3cPresentation.create({ presentationRequest: preq,
+    credentials: [{ credential: theirs }], credentialsProve: prove,
+    linkSecret: ls, schemas: schemas, credentialDefinitions: cds }).toJson();
+  var r = ours.verifyPresentation(w3c.fromW3cPresentation(theirPres, preq),
+                                  ctx);
+  assert.ok(r.valid, "we verify anoncreds-rs's W3C presentation: " +
+            r.errors.join("; "));
+  var changed = JSON.parse(JSON.stringify(theirPres));
+  changed.verifiableCredential[0].credentialSubject.name = "Mallory";
+  assert.ok(!ours.verifyPresentation(w3c.fromW3cPresentation(changed, preq),
+                                     ctx).valid, "a changed revealed " +
+            "value in credentialSubject fails");
+  assert.throws(function () {
+    w3c.fromW3cPresentation(theirPres, Object.assign({}, preq,
+                                                     { nonce: "1" }));
+  }, /challenge/, "a presentation for another nonce is refused");
+  log.info("PASS the W3C form (anoncreds-2023): anoncreds-rs's W3C " +
+           "credential processed here; our W3C presentation verified by " +
+           "anoncreds-rs, its W3C presentation verified here; a changed " +
+           "value and another nonce refused.");
+  log.debug("Leaving w3cForm().");
+}
+
+// The W3C form WITH revocation: anoncreds-rs issues a revocable W3C
+// credential (revocationConfiguration) to our holder; we process it (the
+// r_credential read from its 128-byte points and 32-byte group-order
+// elements), present in the W3C form with a non-revocation proof and
+// anoncreds-rs verifies; anoncreds-rs presents its own W3C presentation
+// with a revocation state and timestamp and we verify; anoncreds-rs reads
+// OUR W3C credential's revocation members and presents from it; and after
+// revocation the proof fails against the later accumulator.
+async function w3cRevocation() {
+  log.debug("Entering w3cRevocation().");
+  var ac = (await witness.load()).ac;
+  var tailsDir = fs.mkdtempSync(path.join(os.tmpdir(), "ac-w3c-tails-"));
+  var I = ISSUER;
+  var sid = I + "/schema/w3c-rev";
+  var cid = I + "/creddef/w3c-rev";
+  var rid = I + "/revreg/w3c-rev";
+  var schema = ac.Schema.create({ name: "w3c-rev", version: "1.0",
+    issuerId: I, attributeNames: ["name", "age"] });
+  var made = ac.CredentialDefinition.create({ schemaId: sid, issuerId: I,
+    schema: schema, signatureType: "CL", tag: "w3c-rev",
+    supportRevocation: true });
+  var cdO = made.credentialDefinition;
+  var cd = cdO.toJson();
+  var reg = ac.RevocationRegistryDefinition.create({
+    credentialDefinition: cdO, credentialDefinitionId: cid, tag: "w3c-rev",
+    issuerId: I, revocationRegistryType: "CL_ACCUM",
+    maximumCredentialNumber: 8, tailsDirectoryPath: tailsDir });
+  var rrdO = reg.revocationRegistryDefinition;
+  var rrdp = reg.revocationRegistryDefinitionPrivate;
+  var rrd = rrdO.toJson();
+  var t0 = 1700000000;
+  var slO = ac.RevocationStatusList.create({ credentialDefinition: cdO,
+    revocationRegistryDefinitionId: rid, revocationRegistryDefinition: rrdO,
+    revocationRegistryDefinitionPrivate: rrdp, issuerId: I,
+    issuanceByDefault: true, timestamp: t0 });
+  var offer = ac.CredentialOffer.create({ schemaId: sid,
+    credentialDefinitionId: cid,
+    keyCorrectnessProof: made.keyCorrectnessProof }).toJson();
+  var ls = ours.createLinkSecret();
+  var req = ours.createCredentialRequest({ credentialOffer: offer,
+    credentialDefinition: cd, linkSecret: ls, linkSecretId: "ls",
+    entropy: "w3c-rev" });
+  var issued = ac.W3cCredential.create({ credentialDefinition: cdO,
+    credentialDefinitionPrivate: made.credentialDefinitionPrivate,
+    credentialOffer: offer, credentialRequest: req.credentialRequest,
+    attributeRawValues: { name: "Bob", age: "40" },
+    revocationConfiguration: new ac.CredentialRevocationConfig({
+      registryDefinition: rrdO, registryDefinitionPrivate: rrdp,
+      statusList: slO, registryIndex: 3 }) }).toJson();
+  var legacy = w3c.fromW3cCredential(issued);
+  assert.strictEqual(legacy.rev_reg_id, rid, "the W3C credential names its " +
+                     "revocation registry");
+  assert.ok(legacy.signature.r_credential && legacy.witness &&
+            legacy.rev_reg, "and carries r_credential, rev_reg and witness");
+  var mine = ours.processCredential(legacy, { credentialRequestMetadata:
+    req.credentialRequestMetadata, linkSecret: ls, credentialDefinition: cd,
+    revocationRegistryDefinition: rrd });
+  var tails = new Uint8Array(fs.readFileSync(rrdO.getTailsLocation()));
+  var sl = Object.assign({ revRegDefId: rid }, slO.toJson());
+  var state = rev.revocationState({ credential: mine,
+    credentialDefinition: cd, revocationRegistryDefinition: rrd,
+    revocationStatusList: sl, tailsBytes: tails });
+  var preq = { nonce: ours.createNonce(), name: "w3c-rev", version: "1.0",
+    requested_attributes: { n: { name: "name" } },
+    requested_predicates: { adult: { name: "age", p_type: ">=",
+                                     p_value: 18 } },
+    non_revoked: { from: t0, to: t0 } };
+  var schemas = {};
+  schemas[sid] = schema.toJson();
+  var cds = {};
+  cds[cid] = cd;
+  var prove = [
+    { entryIndex: 0, referent: "n", isPredicate: false, reveal: true },
+    { entryIndex: 0, referent: "adult", isPredicate: true, reveal: true }];
+  var lp = ours.createPresentation({ presentationRequest: preq,
+    credentials: [{ credential: mine, timestamp: t0,
+                    revocationState: state }],
+    credentialsProve: prove, selfAttest: {}, linkSecret: ls,
+    schemas: schemas, credentialDefinitions: cds });
+  var ourW3c = w3c.toW3cPresentation(lp, preq,
+    { issuerIds: { [cid]: I } });
+  var rrdsO = {};
+  rrdsO[rid] = rrdO;
+  var theirCtx = { presentationRequest: preq, schemas: schemas,
+    credentialDefinitions: cds, revocationRegistryDefinitions: rrdsO,
+    revocationStatusLists: [slO] };
+  assert.strictEqual(ac.W3cPresentation.fromJson(ourW3c).verify(theirCtx),
+    true, "anoncreds-rs verifies our revocable W3C presentation");
+  var rrds = {};
+  rrds[rid] = rrd;
+  var ctx = { presentationRequest: preq, schemas: schemas,
+              credentialDefinitions: cds,
+              revocationRegistryDefinitions: rrds,
+              revocationStatusLists: [sl] };
+  var theirCred = ac.W3cCredential.fromJson(issued).process({
+    credentialRequestMetadata: req.credentialRequestMetadata,
+    linkSecret: ls, credentialDefinition: cdO,
+    revocationRegistryDefinition: rrdO });
+  var theirState = ac.CredentialRevocationState.create({
+    revocationRegistryDefinition: rrdO, revocationStatusList: slO,
+    revocationRegistryIndex: 3, tailsPath: rrdO.getTailsLocation() });
+  var theirPres = ac.W3cPresentation.create({ presentationRequest: preq,
+    credentials: [{ credential: theirCred, timestamp: t0,
+                    revocationState: theirState }],
+    credentialsProve: prove, linkSecret: ls, schemas: schemas,
+    credentialDefinitions: cds }).toJson();
+  var back = w3c.fromW3cPresentation(theirPres, preq);
+  assert.strictEqual(back.identifiers[0].timestamp, t0, "its timestamp " +
+                     "reads back");
+  assert.ok(back.proof.proofs[0].non_revoc_proof, "and its non-revocation " +
+            "proof");
+  var v = ours.verifyPresentation(back, ctx);
+  assert.ok(v.valid, "we verify anoncreds-rs's revocable W3C presentation: " +
+            v.errors.join("; "));
+  // anoncreds-rs reads OUR W3C credential's revocation members.
+  var ourCred = ac.W3cCredential.fromJson(w3c.toW3cCredential(mine,
+    { issuerId: I }));
+  var fromOurs = ac.W3cPresentation.create({ presentationRequest: preq,
+    credentials: [{ credential: ourCred, timestamp: t0,
+                    revocationState: theirState }],
+    credentialsProve: prove, linkSecret: ls, schemas: schemas,
+    credentialDefinitions: cds }).toJson();
+  assert.strictEqual(ac.W3cPresentation.fromJson(fromOurs).verify(theirCtx),
+    true, "anoncreds-rs presents from our revocable W3C credential and " +
+    "verifies");
+  slO.update({ credentialDefinition: cdO, revocationRegistryDefinition:
+    rrdO, revocationRegistryDefinitionPrivate: rrdp, revoked: [3],
+    timestamp: t0 + 100 });
+  var later = Object.assign({}, sl, { currentAccumulator:
+    slO.toJson().currentAccumulator });
+  assert.ok(!ours.verifyPresentation(w3c.fromW3cPresentation(ourW3c, preq),
+    Object.assign({}, ctx, { revocationStatusLists: [later] })).valid,
+    "after revocation the W3C proof fails against the later accumulator");
+  fs.rmSync(tailsDir, { recursive: true, force: true });
+  log.info("PASS the W3C form with revocation: anoncreds-rs's revocable " +
+           "W3C credential processed here, our W3C presentation with a " +
+           "non-revocation proof verified by anoncreds-rs, its verified " +
+           "here, our W3C credential's revocation members read by it, and " +
+           "the proof refused after revocation.");
+  log.debug("Leaving w3cRevocation().");
+}
+
 async function main() {
   log.debug("Entering main().");
   vectors();
   await interop();
   await revocation();
+  await w3cForm();
+  await w3cRevocation();
   log.info("anoncreds_engine: all checks passed.");
   log.debug("Leaving main().");
 }

@@ -49,7 +49,10 @@ bytes.
   CBOR label 10, which JWP already gives `hpa`. Appendix A.2 instead puts
   `claims` at 6, which is JWP's `aud`. JWP's CBOR tags are still `xxx` and
   `yyy`. This tree reads an Issuer Header's 6 as `claims`, as the example
-  does. It reads CPTs but does not issue them.
+  does, and issues CPTs in that same reading: `claims` at 6, `iek` and
+  `hpk` as COSE_Keys, `hpa` as a fully specified COSE algorithm (A.2's
+  `-9`), payloads as inline CBOR values, untagged. That is the example's
+  reading, not a settled format, and a later draft may change it.
 - **`MAC-K25519` and `MAC-K448` are refused by name.** The draft names KMAC
   over SHAKE but fixes neither its output length nor its customization
   string, so any choice here would be invented.

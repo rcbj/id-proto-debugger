@@ -631,13 +631,19 @@ function recheckAnoncreds() {
     var b = anoncredsWallet.parseBundle(held);
     var names = Object.keys(anoncredsWallet.revealedClaims(pres, null));
     var revocation = anoncredsWallet.revocationOf(b);
-    var request = anoncredsWallet.presentationRequestFor(names, sent.nonce,
-      revocation ? revocation.list.timestamp : null);
+    // The request the presentation answered, as step 2 recorded it (it
+    // carries the predicates); else the mapping rebuilt from what it
+    // reveals, as before predicates existed.
+    var request = sent.anoncredsRequest ||
+      anoncredsWallet.presentationRequestFor(names, sent.nonce,
+        revocation ? revocation.list.timestamp : null);
     var schemas = {};
     schemas[b.schemaId] = b.schema;
     var cds = {};
     cds[b.credDefId] = b.credentialDefinition;
-    var r = anoncreds.verifyPresentation(pres, { presentationRequest: request,
+    var r = anoncreds.verifyPresentation(
+      anoncredsWallet.legacyPresentation(pres, request), {
+      presentationRequest: request,
       schemas: schemas, credentialDefinitions: cds,
       revocationRegistryDefinitions: revocation ? revocation.definitions : {},
       revocationStatusLists: revocation ? [revocation.list] : [] });
@@ -650,6 +656,13 @@ function recheckAnoncreds() {
         r.errors.join(" ") });
     (r.warnings || []).forEach(function (w) {
       checks.push({ name: "Note", ok: true, detail: w });
+    });
+    anoncredsWallet.provenPredicates(pres, request).forEach(function (p) {
+      checks.push({ name: "Predicate " + p.name + " " + p.p_type + " " +
+        p.p_value, ok: p.answered && r.valid, detail: p.answered ?
+        "proven in zero knowledge by sub-proof " + p.subProofIndex +
+        "; the value of " + p.name + " was not revealed." :
+        "the presentation does not answer predicate " + p.referent + "." });
     });
   } catch (e) {
     checks.push({ name: "AnonCreds presentation (CL)", ok: false,

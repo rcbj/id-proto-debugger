@@ -205,6 +205,7 @@ const BUNDLES = [
   ['vc_barcodes_page', 'vcbarcodespage'],
   ['gordian_envelope_page', 'gordianenvelopepage'],
   ['acdc_page', 'acdcpage'],
+  ['vc_predicates_page', 'vcpredicatespage'],
   ['webauthn_lab', 'webauthnlab'],
   ['webauthn_analyzer', 'webauthnanalyzer'],
   ['smartcard', 'smartcard'],

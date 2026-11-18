@@ -327,6 +327,60 @@ function coseKeyToJwk(key) {
   return out;
 }
 
+// A JWK as a COSE_Key (RFC 9053 section 7): EC2 or OKP, public members.
+function jwkToCoseKey(jwk) {
+  log.debug("Entering jwkToCoseKey().");
+  var crv = Number(Object.keys(COSE_CRV).filter(function (k) {
+    return COSE_CRV[k] === jwk.crv;
+  })[0]);
+  if (!crv) {
+    log.debug("Leaving jwkToCoseKey(). Curve.");
+    throw new Error("no COSE curve for " + jwk.crv + ".");
+  }
+  var m = new Map();
+  m.set(1, jwk.kty === "OKP" ? 1 : 2);
+  m.set(-1, crv);
+  m.set(-2, unb64u(jwk.x));
+  if (jwk.kty !== "OKP") m.set(-3, unb64u(jwk.y));
+  log.debug("Leaving jwkToCoseKey().");
+  return m;
+}
+
+// The Issuer Header of a CPT, in the reading this file PARSES with —
+// Appendix A.2's: alg as its JPA number, claims at 6, iek/hpk as COSE_Keys,
+// hpa as a fully specified COSE algorithm. JWP leaves these labels
+// unsettled (see the header and docs/jwp-sd-cwt.md), so a CPT issued here
+// is the A.2 reading, not a settled format.
+function cborIssuerHeader(header) {
+  log.debug("Entering cborIssuerHeader().");
+  var labelOf = {};
+  Object.keys(ISSUER_LABELS).forEach(function (k) {
+    labelOf[ISSUER_LABELS[k]] = Number(k);
+  });
+  var hpaNumber = { ES256: -9, ES384: -51, ES512: -52, ES256K: -47,
+                    Ed25519: -19, Ed448: -53, EdDSA: -8 };
+  var m = new Map();
+  Object.keys(header).forEach(function (name) {
+    var label = labelOf[name];
+    if (label === undefined) {
+      throw new Error("Issuer Header parameter " + JSON.stringify(name) +
+                      " has no CBOR label.");
+    }
+    var v = header[name];
+    if (name === "alg") v = algOf(v).cbor;
+    if (name === "iek" || name === "hpk") v = jwkToCoseKey(v);
+    if (name === "hpa") {
+      if (hpaNumber[v] === undefined) {
+        throw new Error("hpa " + v + " has no COSE algorithm here.");
+      }
+      v = hpaNumber[v];
+    }
+    m.set(label, v);
+  });
+  log.debug("Leaving cborIssuerHeader().");
+  return mdoc.encode(m);
+}
+
 function cborHeaderValue(map, labels) {
   log.debug("Entering cborHeaderValue().");
   var out = {};
@@ -339,7 +393,16 @@ function cborHeaderValue(map, labels) {
         return ALGS[a].cbor === v;
       })[0] || String(v);
     } else if (name === "nonce" && v instanceof Uint8Array) {
-      out.nonce = b64u(v);
+      // A CBOR nonce is a byte string. This page writes the UTF-8 of the
+      // nonce it was given (present()), so it reads back as that text when
+      // it is valid UTF-8, and as base64url when it is not (the A.2
+      // example's random bytes).
+      try {
+        out.nonce = new TextDecoder("utf-8", { fatal: true }).decode(v);
+        if (/[\u0000-\u001f]/.test(out.nonce)) throw new Error("control");
+      } catch (e) {
+        out.nonce = b64u(v);
+      }
     } else {
       out[name] = v;
     }
@@ -503,21 +566,32 @@ function sortedJson(value) {
 //   claims), payloads ([Uint8Array]), issuerKey (private JWK), holderKey
 //   (public JWK; SU and MAC), hpa (defaults from the holder key),
 //   ephemeralKey (SU; generated when absent), sharedSecret (MAC; random
-//   when absent), serialization ("compact" | "cbor"; compact by default).
-// Returns the serialized JWP.
+//   when absent), serialization ("compact" | "cbor"; compact by default),
+//   values (a CPT's payloads as JS values, encoded as inline CBOR).
+// Returns the serialized JWP: text, or bytes for a CPT.
 // ---------------------------------------------------------------------------
 function issue(opts) {
   log.debug("Entering issue(). " + opts.alg);
   var a = algOf(opts.alg);
-  if (opts.serialization === "cbor") {
-    log.debug("Leaving issue(). CBOR issuance not offered.");
-    throw new Error("issuing in the CBOR serialization is not offered: its " +
-                    "header labels and tags are not settled in " + DRAFT +
-                    " (see docs/jwp-sd-cwt.md).");
-  }
-  var payloads = opts.payloads.map(function (p) {
+  var isCbor = opts.serialization === "cbor";
+  // A CPT's payloads are CBOR values carried inline, so each payload's
+  // octets are its CBOR encoding: given as values (opts.values) or as
+  // octets that must decode.
+  var payloads = isCbor && opts.values ? opts.values.map(function (v) {
+    return mdoc.encode(v);
+  }) : opts.payloads.map(function (p) {
     return p instanceof Uint8Array ? p : utf8(String(p));
   });
+  if (isCbor && !opts.values) {
+    payloads.forEach(function (p, i) {
+      try {
+        cbor.decode(p);
+      } catch (e) {
+        throw new Error("CPT payload " + i + " is not a CBOR value (" +
+                        e.message + "); pass values instead.");
+      }
+    });
+  }
   var header = Object.assign({}, opts.header || {}, { alg: opts.alg });
   var ephemeral = null;
   if (a.kind === "su") {
@@ -534,7 +608,7 @@ function issue(opts) {
     header.hpk = publicJwk(opts.holderKey);
     header.hpa = opts.hpa || defaultHpa(opts.holderKey);
   }
-  var ih = utf8(sortedJson(header));
+  var ih = isCbor ? cborIssuerHeader(header) : utf8(sortedJson(header));
   var proof;
   if (a.kind === "su") {
     var issuer = importJwk(opts.issuerKey, true);
@@ -554,11 +628,11 @@ function issue(opts) {
     var k = bbsKeys(opts.issuerKey);
     proof = [bbs.sign(k.sk, k.pk, ih, payloads)];
   }
-  var jwp = { serialization: "compact", form: "issued",
+  var jwp = { serialization: isCbor ? "cbor" : "compact", form: "issued",
               issuerHeader: { bytes: ih, value: header },
               payloads: payloads, proof: proof };
   log.debug("Leaving issue().");
-  return serializeCompact(jwp);
+  return isCbor ? serializeCbor(jwp) : serializeCompact(jwp);
 }
 
 // ---------------------------------------------------------------------------

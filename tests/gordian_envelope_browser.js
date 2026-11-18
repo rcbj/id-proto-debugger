@@ -15,7 +15,18 @@
 //      checked again in node, by gordian_envelope.js, outside the page.
 //   3. Another issuer's key does not verify it.
 //   4. Issue with salted claims on Ed25519; it verifies.
-//   5. Nothing is stored.
+//   5. Encrypt the credential to a recipient made on the page and under a
+//      password: the digest is unchanged, the issuer's signature still
+//      verifies on the ENCRYPTED credential, the recipient's keys and the
+//      password each decrypt it (in the page, and in node), and a wrong
+//      password does not.
+//   6. Compress it: the same digest, and it decompresses.
+//   7. Split it into SSKR shares (2-of-3 and 2-of-3, both groups needed):
+//      three shares from one group do not join, two from each do.
+//   8. Send it as a multi-part UR and join it from the fountain parts
+//      without part 1; the first pane reads the parts directly.
+//   9. Issue with ML-DSA-44 and SSH Ed25519; each verifies.
+//  10. Nothing is stored, and the panes collapse.
 //
 // Needs only the client. Byte-level conformance is
 // tests/gordian_envelope_engine.js.
@@ -60,6 +71,23 @@ async function text(driver, id) {
   return driver.executeScript("var e=document.getElementById(arguments[0]);" +
     "return e ? (e.value !== undefined && e.tagName !== 'DIV' && " +
     "e.tagName !== 'PRE' ? e.value : e.textContent) : '';", id);
+}
+
+async function setField(driver, id, value) {
+  log.debug("Entering setField(). " + id);
+  await driver.executeScript("document.getElementById(arguments[0])" +
+                             ".value = arguments[1];", id, value);
+  log.debug("Leaving setField().");
+}
+
+async function clickLegend(driver, paneId) {
+  log.debug("Entering clickLegend(). " + paneId);
+  var legend = await driver.wait(until.elementLocated(By.css("#" + paneId +
+                                                             " legend")),
+                                 stepWait);
+  await driver.executeScript("arguments[0].scrollIntoView({block:" +
+                             "'center'}); arguments[0].click();", legend);
+  log.debug("Leaving clickLegend().");
 }
 
 async function verified(driver, label, pattern) {
@@ -164,7 +192,183 @@ async function test() {
     assert.ok(/salted/.test(claimsText), "the claims are shown as salted");
     log.info("PASS issued with salted claims on Ed25519; it verifies.");
 
-    // 5. Nothing stored.
+    // 5. Encryption.
+    var gc = paths.requireSharedModule([path.join(__dirname, "..", "client",
+      "src", "gordian_envelope_crypto.js")],
+    "client/src/gordian_envelope_crypto.js");
+    await click(driver, "ge_example_link");
+    await click(driver, "ge_issue_button");
+    await waitForStatus(driver, "ge_issue_status", function (s) {
+      return /^(Issued|Not issued)/.test(s);
+    }, "Issue (again) should finish", stepWait);
+    credential = await text(driver, "ge_issue_output");
+    aliceKey = await text(driver, "ge_issuer_public_key");
+    await clickLegend(driver, "pane_ge_encrypt");
+    await setField(driver, "ge_enc_input", credential);
+    await setField(driver, "ge_kp_seed", "");
+    await click(driver, "ge_kp_button");
+    await waitForStatus(driver, "ge_enc_status", function (s) {
+      return /recipient|No keys/.test(s);
+    }, "Make Keys should finish", stepWait);
+    var prvkeys = await text(driver, "ge_enc_private_keys");
+    assert.ok(/^ur:crypto-prvkeys\//.test(prvkeys), prvkeys.slice(0, 30));
+    await driver.executeScript("document.getElementById('ge_enc_wrap')" +
+                               ".checked = false;");
+    await setField(driver, "ge_enc_key", "");
+    await setField(driver, "ge_enc_password", "Tr0ub4dor&3");
+    await driver.executeScript("document.getElementById('ge_enc_kdf')" +
+                               ".value = 'pbkdf2';");
+    await click(driver, "ge_encrypt_button");
+    await waitForStatus(driver, "ge_enc_status", function (s) {
+      return /^(Encrypted|Not encrypted)/.test(s);
+    }, "Encrypt should finish", stepWait);
+    var encSaid = await text(driver, "ge_enc_status");
+    assert.ok(/1 recipient/.test(encSaid) && /pbkdf2/.test(encSaid) &&
+              /unchanged/.test(encSaid), encSaid);
+    var encrypted = await text(driver, "ge_enc_output");
+    var encNotation = await text(driver, "ge_enc_notation");
+    assert.ok(/^ENCRYPTED \[/.test(encNotation) &&
+              /'hasRecipient': SealedMessage/.test(encNotation) &&
+              /'hasSecret': EncryptedKey/.test(encNotation), encNotation);
+    var encEnv = ge.read(encrypted);
+    assert.ok(ge.verifySignatures(encEnv, ge.readPublicKey(aliceKey)).valid,
+              "the issuer's signature verifies on the encrypted credential");
+    assert.strictEqual(ge.toUr(ge.subjectOf(gc.decryptSubjectToRecipient(
+      encEnv, gc.readPrivateKeys(prvkeys)))),
+    ge.toUr(ge.subjectOf(ge.read(credential))), "in node, the page's " +
+      "recipient keys open it");
+    await setField(driver, "ge_enc_input", encrypted);
+    await click(driver, "ge_decrypt_button");
+    await waitForStatus(driver, "ge_enc_status", function (s) {
+      return /^(Decrypted|Not decrypted)/.test(s);
+    }, "Decrypt (password) should finish", stepWait);
+    var decSaid = await text(driver, "ge_enc_status");
+    assert.ok(/with the password/.test(decSaid), decSaid);
+    var opened = await text(driver, "ge_enc_output");
+    assert.strictEqual(ge.toUr(ge.subjectOf(ge.read(opened))),
+                       ge.toUr(ge.subjectOf(ge.read(credential))),
+                       "the password opens it");
+    await setField(driver, "ge_enc_password", "wrong");
+    await click(driver, "ge_decrypt_button");
+    await waitForStatus(driver, "ge_enc_status", function (s) {
+      return /^(Decrypted|Not decrypted)/.test(s);
+    }, "Decrypt (wrong password) should finish", stepWait);
+    assert.ok(/^Not decrypted/.test(await text(driver, "ge_enc_status")),
+              "a wrong password does not");
+    await setField(driver, "ge_enc_password", "");
+    await click(driver, "ge_decrypt_button");
+    await waitForStatus(driver, "ge_enc_status", function (s) {
+      return /^(Decrypted|Not decrypted)/.test(s);
+    }, "Decrypt (recipient) should finish", stepWait);
+    assert.ok(/as a recipient/.test(await text(driver, "ge_enc_status")));
+    log.info("PASS encrypted the credential to a page-made recipient and " +
+             "a PBKDF2 password: same digest, the signature still valid, " +
+             "opened by the keys and the password, not by a wrong one.");
+
+    // 6. Compression.
+    await clickLegend(driver, "pane_ge_compress");
+    await setField(driver, "ge_comp_input", credential);
+    await click(driver, "ge_compress_button");
+    await waitForStatus(driver, "ge_comp_status", function (s) {
+      return /^(Compressed|Not compressed)/.test(s);
+    }, "Compress should finish", stepWait);
+    var compSaid = await text(driver, "ge_comp_status");
+    assert.ok(/^Compressed/.test(compSaid) && /unchanged/.test(compSaid),
+              compSaid);
+    var compressed = await text(driver, "ge_comp_output");
+    assert.strictEqual(ge.read(compressed).kind, "compressed");
+    await setField(driver, "ge_comp_input", compressed);
+    await click(driver, "ge_decompress_button");
+    await waitForStatus(driver, "ge_comp_status", function (s) {
+      return /^(Decompressed|Not decompressed)/.test(s);
+    }, "Decompress should finish", stepWait);
+    assert.strictEqual(await text(driver, "ge_comp_output"), credential,
+                       "it decompresses to the credential");
+    log.info("PASS compressed and decompressed it at the same digest.");
+
+    // 7. SSKR.
+    await clickLegend(driver, "pane_ge_sskr");
+    await setField(driver, "ge_sskr_input", credential);
+    await setField(driver, "ge_sskr_groups", "2-of-3, 2-of-3");
+    await setField(driver, "ge_sskr_threshold", "2");
+    await click(driver, "ge_sskr_split_button");
+    await waitForStatus(driver, "ge_sskr_status", function (s) {
+      return /^(Split|Not split)/.test(s);
+    }, "Split should finish", stepWait);
+    var shares = (await text(driver, "ge_sskr_shares")).split("\n");
+    assert.strictEqual(shares.length, 6, "six shares");
+    await setField(driver, "ge_sskr_shares", shares.slice(0, 3).join("\n"));
+    await click(driver, "ge_sskr_join_button");
+    await waitForStatus(driver, "ge_sskr_status", function (s) {
+      return /^(Joined|Not joined)/.test(s);
+    }, "Join (one group) should finish", stepWait);
+    assert.ok(/^Not joined/.test(await text(driver, "ge_sskr_status")),
+              "one group's shares are not enough");
+    await setField(driver, "ge_sskr_shares", [shares[0], shares[2],
+                                              shares[3], shares[5]]
+      .join("\n"));
+    await click(driver, "ge_sskr_join_button");
+    await waitForStatus(driver, "ge_sskr_status", function (s) {
+      return /^(Joined|Not joined)/.test(s);
+    }, "Join should finish", stepWait);
+    assert.strictEqual(await text(driver, "ge_sskr_output"), credential,
+                       "two shares of each group rejoin the credential");
+    log.info("PASS split it 2-of-3 + 2-of-3: one group refused, two of " +
+             "each rejoin it.");
+
+    // 8. Multi-part UR.
+    await clickLegend(driver, "pane_ge_parts");
+    await setField(driver, "ge_parts_input", credential);
+    await setField(driver, "ge_parts_max", "60");
+    await setField(driver, "ge_parts_extra", "12");
+    await click(driver, "ge_parts_encode_button");
+    await waitForStatus(driver, "ge_parts_status", function (s) {
+      return /fragment|No parts/.test(s);
+    }, "Make Parts should finish", stepWait);
+    var parts = (await text(driver, "ge_parts_list")).split("\n");
+    assert.ok(parts.length > 13 && /^ur:envelope\/1-\d+\//.test(parts[0]),
+              parts[0]);
+    var subset = parts.slice(1).reverse().join("\n");
+    await setField(driver, "ge_parts_list", subset);
+    await click(driver, "ge_parts_decode_button");
+    await waitForStatus(driver, "ge_parts_status", function (s) {
+      return /^(Rebuilt|Not rebuilt)/.test(s);
+    }, "Join Parts should finish", stepWait);
+    var partsSaid = await text(driver, "ge_parts_status");
+    assert.strictEqual(await text(driver, "ge_parts_output"), credential,
+                       "rebuilt without part 1: " + partsSaid);
+    await setField(driver, "ge_input", subset);
+    await click(driver, "ge_read_button");
+    await waitForStatus(driver, "ge_read_status", function (s) {
+      return /^(Read|Not read)/.test(s);
+    }, "Read (parts) should finish", stepWait);
+    assert.ok(/multi-part/.test(await text(driver, "ge_read_status")),
+              "the first pane reads the parts");
+    log.info("PASS sent it as " + parts.length + " parts and rebuilt it " +
+             "from the fountain parts without part 1.");
+
+    // 9. ML-DSA-44 and SSH Ed25519.
+    var schemes = [["mldsa44", /^VALID .*mldsa44/],
+                   ["ssh-ed25519", /^VALID .*ssh-ed25519/]];
+    for (var si = 0; si < schemes.length; si++) {
+      await driver.executeScript("document.getElementById('ge_scheme')" +
+        ".value = arguments[0]; gordianenvelopepage.showIssuerKey();",
+      schemes[si][0]);
+      await click(driver, "ge_issue_button");
+      await waitForStatus(driver, "ge_issue_status", function (s) {
+        return /^(Issued|Not issued)/.test(s);
+      }, "Issue (" + schemes[si][0] + ") should finish", stepWait);
+      await click(driver, "ge_read_issued_button");
+      await verified(driver, schemes[si][0], schemes[si][1]);
+    }
+    log.info("PASS issued with ML-DSA-44 and with SSH Ed25519; each " +
+             "verifies.");
+
+    // 10. Nothing stored; a pane collapses.
+    await clickLegend(driver, "pane_ge_parts");
+    var hidden = await driver.executeScript("return getComputedStyle(" +
+      "document.getElementById('ge_parts_fieldset')).display;");
+    assert.strictEqual(hidden, "none", "the legend collapses the pane");
     var stored = await driver.executeScript("return localStorage.length + " +
                                             "sessionStorage.length;");
     assert.strictEqual(stored, 0, "the page stores nothing");

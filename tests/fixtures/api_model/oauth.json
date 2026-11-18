@@ -353,6 +353,64 @@
       }
     },
     {
+      "name": "token: a Client Attestation without its PoP",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "client_credentials",
+        "client_id": "dummy-client",
+        "auth_style": "post",
+        "client_attestation": "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJkdW1teSJ9.c2ln"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "invalid_request",
+          "error_description": "client_attestation and client_attestation_pop go together (draft-ietf-oauth-attestation-based-client-auth section 5)."
+        }
+      }
+    },
+    {
+      "name": "token: a Client Attestation that is not a compact JWS (it would be written into a header)",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "client_credentials",
+        "client_id": "dummy-client",
+        "auth_style": "post",
+        "client_attestation": "not a jws\r\nX-Injected: 1",
+        "client_attestation_pop": "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJkdW1teSJ9.c2ln"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "invalid_request",
+          "error_description": "client_attestation and client_attestation_pop are each a compact JWS (three base64url parts)."
+        }
+      }
+    },
+    {
+      "name": "token: a Client Attestation and its PoP, carried as headers (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "client_credentials",
+        "client_id": "dummy-client",
+        "auth_style": "post",
+        "client_attestation": "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJkdW1teSJ9.c2ln",
+        "client_attestation_pop": "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJkdW1teSJ9.c2ln"
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
       "name": "introspection: an empty body",
       "method": "POST",
       "path": "/introspection",

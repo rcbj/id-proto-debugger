@@ -35,25 +35,28 @@
 
 <p class="vc-intro"><a href="https://trustoverip.github.io/kswg-acdc-specification/" target="_blank" rel="noopener noreferrer">Authentic
 Chained Data Containers</a> (Trust over IP KERI Suite specification) carry <strong>no signature</strong>: a credential's
-SAID &mdash; the digest of its own bytes &mdash; is sealed by an <code>iss</code> event in the issuer's registry, and that event
+SAID &mdash; the digest of its own bytes &mdash; is sealed by an issuance event in the issuer's registry, and that event
 is anchored by a seal in an event of the issuer's <a href="https://trustoverip.github.io/kswg-keri-specification/" target="_blank" rel="noopener noreferrer">KERI</a>
 key event log, which <em>is</em> signed. Verifying one walks that chain, all of it in a
-<a href="https://trustoverip.github.io/kswg-cesr-specification/" target="_blank" rel="noopener noreferrer">CESR</a> stream.
-This reads the version 1 generation the released libraries issue credentials in (signify-ts, the KERIA client vLEI uses);
-CESR version 2 messages are refused by name. <strong>Nothing on this page is stored.</strong></p>
+<a href="https://trustoverip.github.io/kswg-cesr-specification/" target="_blank" rel="noopener noreferrer">CESR</a> stream:
+the KELs (weighted thresholds, witness receipts, delegation), the registry (version 1 <code>vcp</code>/<code>iss</code>/<code>rev</code>,
+backer registries, version 2 <code>rip</code>/<code>upd</code>/<code>bup</code>), the credential (version 1, or version 2 and its
+most compact form), its schema (JSON Schema), its aggregate (selective disclosure), and the credentials its edges chain to.
+Both CESR versions are read and issued. <strong>Nothing on this page is stored.</strong></p>
 
 <div class="step0 dbg-pane" id="pane_acdc_verify">
   <legend class="dbg-legend" onclick="return acdcpage.togglePane('acdc_verify_fieldset');">Verify a Presentation</legend>
   <fieldset name="acdc_verify_fieldset" id="acdc_verify_fieldset" style="display: block;">
     <table border="0"><tbody>
-      <tr><td><div class="tooltip"><label for="acdc_stream">CESR stream: </label><span class="tooltiptext">The issuer's KEL, the registry inception (vcp), the credential's iss (and rev), and the ACDC with its -I seal source triple, concatenated as KERIA or keri-ts sends them.</span></div></td>
+      <tr><td><div class="tooltip"><label for="acdc_stream">CESR stream: </label><span class="tooltiptext">The issuer's KEL (and its delegator's, and the KELs of chained credentials' issuers), the registry events, the credential with its attachments, any credentials its edges point to, and optionally an IPEX grant (an exn) &mdash; concatenated as KERIA, keri-ts or this page sends them. Version 1 and version 2 messages may be mixed.</span></div></td>
         <td><textarea id="acdc_stream" name="acdc_stream" rows="8" class="acdc-wide"></textarea></td></tr>
-      <tr><td><div class="tooltip"><label for="acdc_schema">Schema: </label><span class="tooltiptext">Optional: the JSON Schema the credential's s names. Its $id is checked to be its own SAID.</span></div></td>
+      <tr><td><div class="tooltip"><label for="acdc_schema">Schemas: </label><span class="tooltiptext">Optional: the JSON Schema the credential's s names, or a JSON list of schemas (one per credential in a chain). Each $id is checked to be its own SAID, and the credential, as presented, is validated against it (draft-07, or 2020-12 when its $schema says so).</span></div></td>
         <td><textarea id="acdc_schema" name="acdc_schema" rows="3" class="acdc-wide"></textarea></td></tr>
-      <tr><td><input class="btn2" id="acdc_verify_button" type="button" value="Verify" onclick="return acdcpage.verifyStream();" /></td>
-        <td><div class="vc-status" id="acdc_verify_status">&nbsp;</div></td></tr>
-      <tr><td><label>Checks: </label></td><td><div id="acdc_checks"></div></td></tr>
-      <tr><td><label>Credential: </label></td><td><pre class="acdc-pre" id="acdc_credential"></pre></td></tr>
+      <tr><td><input class="btn2" id="acdc_verify_button" type="button" value="Verify Credential" onclick="return acdcpage.verifyStream();" /></td>
+        <td><div class="tooltip"><input class="btn2" id="acdc_verify_grant_button" type="button" value="Verify IPEX Grant" onclick="return acdcpage.verifyGrant();" /><span class="tooltiptext">Verify the last IPEX grant (an exn with route /ipex/grant) in the stream: its SAID, the sender's signature against the sender's KEL, its embeds' SAIDs, and the credential it carries.</span></div>
+          <div class="vc-status" id="acdc_verify_status">&nbsp;</div></td></tr>
+      <tr><td><div class="tooltip"><label>Checks: </label><span class="tooltiptext">Every check the verification ran, in order, with what it found.</span></div></td><td><div id="acdc_checks"></div></td></tr>
+      <tr><td><div class="tooltip"><label>Credential: </label><span class="tooltiptext">The credential verified, as received.</span></div></td><td><pre class="acdc-pre" id="acdc_credential"></pre></td></tr>
     </tbody></table>
   </fieldset>
 </div>
@@ -61,20 +64,55 @@ CESR version 2 messages are refused by name. <strong>Nothing on this page is sto
 <div class="step0 dbg-pane" id="pane_acdc_issue">
   <legend class="dbg-legend" onclick="return acdcpage.togglePane('acdc_issue_fieldset');">Issue a Credential</legend>
   <fieldset name="acdc_issue_fieldset" id="acdc_issue_fieldset" style="display: block;">
-    <p class="vc-note">A fresh issuer each time: an Ed25519 inception, a no-backer registry, the credential and its issuance, each anchored by its own interaction event (exactly one seal each, which keri-ts requires).</p>
+    <p class="vc-note">A fresh issuer each time: its inception, a registry, the credential and its issuance, each anchored by its own interaction event (exactly one seal each, which keri-ts requires). The page also runs the issuer's witnesses, backers and delegator, so it can sign their receipts and approvals.</p>
     <table border="0"><tbody>
-      <tr><td><label for="acdc_attributes">Attributes: </label></td>
+      <tr><td><div class="tooltip"><label for="acdc_version">CESR version: </label><span class="tooltiptext">Version 1 is what signify-ts and KERIA issue (ACDC10JSON, vcp/iss/rev). Version 2 is the current specification: KERICAACAAJSON events with the version 2 counter table, and an acm ACDC whose SAID is over its most compact form, in a rip/upd registry.</span></div></td>
+        <td><select id="acdc_version" name="acdc_version"><option value="1" selected>1 (signify-ts, KERIA)</option><option value="2">2 (keri-ts, the specification)</option></select></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_attributes">Attributes: </label><span class="tooltiptext">The credential's attributes, a JSON object. dt is added. With "Aggregate" each attribute becomes its own blinded block.</span></div></td>
         <td><textarea id="acdc_attributes" name="acdc_attributes" rows="3" class="acdc-wide">{"name": "Sunspot College", "level": "gold"}</textarea></td></tr>
-      <tr><td><div class="tooltip"><label for="acdc_recipient">Issuee AID: </label><span class="tooltiptext">Optional: a.i, making the credential targeted.</span></div></td>
+      <tr><td><div class="tooltip"><label for="acdc_recipient">Issuee AID: </label><span class="tooltiptext">Optional: a.i, making the credential targeted. An IPEX grant goes to it.</span></div></td>
         <td><input type="text" id="acdc_recipient" name="acdc_recipient" class="acdc-wide" /></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_signers">Signing keys: </label><span class="tooltiptext">How many keys the issuer's establishment events list (k), each signing.</span></div></td>
+        <td><input type="number" id="acdc_signers" name="acdc_signers" min="1" max="9" value="1" /></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_kt">Signing threshold (kt, nt): </label><span class="tooltiptext">Empty for the default (a majority). A hex number ("2"), a weighted list (["1/2","1/2","1/2"]), or a list of clauses that must all reach 1 ([["1/2","1/2"],["1"]]). One weight per key. Used for both the current and the next threshold.</span></div></td>
+        <td><input type="text" id="acdc_kt" name="acdc_kt" class="acdc-wide" /></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_witnesses">Witnesses: </label><span class="tooltiptext">How many witnesses (non-transferable B&hellip; identifiers) the issuer names in b; each event carries their receipts (indexed witness signatures).</span></div></td>
+        <td><input type="number" id="acdc_witnesses" name="acdc_witnesses" min="0" max="9" value="0" /></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_toad">Witness threshold (bt): </label><span class="tooltiptext">How many witness receipts make an event fully witnessed; empty for all of them. A verifier refuses an event short of it.</span></div></td>
+        <td><input type="number" id="acdc_toad" name="acdc_toad" min="0" max="9" /></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_delegated">Delegated issuer: </label><span class="tooltiptext">The issuer is a delegated identifier (dip): a delegator's KEL comes first in the stream, and one of its interaction events anchors (approves) the issuer's inception.</span></div></td>
+        <td><input type="checkbox" id="acdc_delegated" name="acdc_delegated" /></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_backers">Registry backers: </label><span class="tooltiptext">Version 1 only. 0 for a no-backer (NB) registry with iss/rev; more for a backer registry with bis/brv, every registry event receipted by its backers.</span></div></td>
+        <td><input type="number" id="acdc_backers" name="acdc_backers" min="0" max="9" value="0" /></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_aggregate">Aggregate: </label><span class="tooltiptext">Put the attributes in an aggregate section A instead of a: each attribute its own block with a blinding u and its SAID, the AGID over them. Blocks can then be disclosed selectively (version 2, whose SAID is over the most compact form).</span></div></td>
+        <td><input type="checkbox" id="acdc_aggregate" name="acdc_aggregate" /></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_chain">Chain to a parent: </label><span class="tooltiptext">A second issuer first issues a parent credential to this issuer; this credential's edge e.parent points to it (operator I2I: its issuer is the parent's issuee). The stream carries both, and verifying checks the parent too.</span></div></td>
+        <td><input type="checkbox" id="acdc_chain" name="acdc_chain" /></td></tr>
       <tr><td><input class="btn2" id="acdc_issue_button" type="button" value="Issue" onclick="return acdcpage.issueCredential();" /></td>
         <td><input class="btn2" id="acdc_revoke_button" type="button" value="Revoke" onclick="return acdcpage.revokeCredential();" />
+          <div class="tooltip"><input class="btn2" id="acdc_grant_button" type="button" value="IPEX Grant" onclick="return acdcpage.grantCredential();" /><span class="tooltiptext">Append an IPEX grant (/ipex/grant, version 1, as signify-ts builds it) of the credential to its issuee: an exn embedding the ACDC, its iss and the anchoring event, signed by the issuer.</span></div>
           <div class="vc-status" id="acdc_issue_status">&nbsp;</div></td></tr>
-      <tr><td><label for="acdc_issue_output">Stream: </label></td>
+      <tr><td><div class="tooltip"><label for="acdc_issue_output">Stream: </label><span class="tooltiptext">The presentation stream of the issuance (and of a revocation or grant appended to it), as a verifier receives it.</span></div></td>
         <td><textarea id="acdc_issue_output" name="acdc_issue_output" rows="6" class="acdc-wide" readonly></textarea>
           <input class="btn2" id="acdc_verify_issued_button" type="button" value="Verify It" onclick="return acdcpage.verifyIssued();" /></td></tr>
-      <tr><td><label for="acdc_issue_schema">Schema: </label></td>
+      <tr><td><div class="tooltip"><label for="acdc_issue_schema">Schemas: </label><span class="tooltiptext">The schema of each credential issued (a list when chained), its $id its SAID.</span></div></td>
         <td><textarea id="acdc_issue_schema" name="acdc_issue_schema" rows="2" class="acdc-wide" readonly></textarea></td></tr>
+    </tbody></table>
+  </fieldset>
+</div>
+
+<div class="step0 dbg-pane" id="pane_acdc_disclose">
+  <legend class="dbg-legend" onclick="return acdcpage.togglePane('acdc_disclose_fieldset');">Disclose Selectively</legend>
+  <fieldset name="acdc_disclose_fieldset" id="acdc_disclose_fieldset" style="display: block;">
+    <p class="vc-note">From a credential issued above with "Aggregate": the same credential with only some of its blocks expanded and the rest replaced by their SAIDs. Its SAID does not change in version 2, so the registry still binds it.</p>
+    <table border="0"><tbody>
+      <tr><td><div class="tooltip"><label for="acdc_disclose_indices">Blocks to disclose: </label><span class="tooltiptext">Positions in A, counting from 1 (A[0] is the AGID), separated by commas: "1,3". The others are shown only as their SAIDs.</span></div></td>
+        <td><input type="text" id="acdc_disclose_indices" name="acdc_disclose_indices" value="1" /></td></tr>
+      <tr><td><input class="btn2" id="acdc_disclose_button" type="button" value="Disclose" onclick="return acdcpage.discloseBlocks();" /></td>
+        <td><div class="vc-status" id="acdc_disclose_status">&nbsp;</div></td></tr>
+      <tr><td><div class="tooltip"><label for="acdc_disclose_output">Stream: </label><span class="tooltiptext">The issuance stream with the credential replaced by its selectively disclosed variant.</span></div></td>
+        <td><textarea id="acdc_disclose_output" name="acdc_disclose_output" rows="5" class="acdc-wide" readonly></textarea>
+          <input class="btn2" id="acdc_verify_disclosed_button" type="button" value="Verify It" onclick="return acdcpage.verifyDisclosed();" /></td></tr>
     </tbody></table>
   </fieldset>
 </div>

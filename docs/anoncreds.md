@@ -159,10 +159,50 @@ timestamp:
                 "tails": "<base64url>" }
 ```
 
+## The W3C form
+
+`client/src/anoncreds_w3c.js` reads and writes AnonCreds credentials and
+presentations as W3C VC Data Model documents with a Data Integrity proof whose
+cryptosuite is `anoncreds-2023`, in the form anoncreds-rs 0.2.3 writes. It is
+a **re-encoding**, not another signature scheme: the CL signature and proofs
+are the legacy objects `anoncreds.js` already makes and checks.
+
+- **The attribute values** go into `credentialSubject`, raw, with an integer
+  as a JSON number. A predicate's attribute appears there as `true`.
+- **Everything else** goes into the `proofValue`: `u` plus base64url of
+  MessagePack (`client/src/msgpack.js`) of `[kind, object]`. Kind `1` is a
+  credential's signature, `2` a credential's sub-proof inside a presentation,
+  and `3` the presentation's aggregated proof.
+- **Every big number** is converted from a decimal string to its big-endian
+  bytes. The ids, and `c_list` (already bytes), are left as they are.
+
+`tests/anoncreds_engine.js` checks both directions against anoncreds-rs:
+
+- its W3C credential is processed here;
+- our W3C credential reads back in anoncreds-rs to the same signature;
+- our W3C presentation is verified by it, and its W3C presentation by us;
+- **with revocation**: its revocable W3C credential (`revocationConfiguration`)
+  is processed here, our W3C presentation with a non-revocation proof is
+  verified by it and its (with a revocation state and timestamp) by us, it
+  presents from OUR revocable W3C credential, and the proof fails after
+  revocation.
+
+The revocation members (`r_credential`, `rev_reg`, `witness`, a sub-proof's
+`non_revoc_proof`) carry amcl BN254 values: amcl's text in the legacy JSON,
+bytes in the W3C form — a G1 or G2 point as 128 bytes, a group-order element
+as 32. Both point types are 128 bytes, so the type comes from the member's
+name (`REV_SCHEMA` in `anoncreds_w3c.js`), and a member it does not name is
+refused rather than guessed.
+
+**In the wallet,** a held bundle whose `credential` is in the W3C form is used
+like any other, and its presentation goes out in the W3C form too
+(`tests/anoncreds_presentation.js`, the `w3c` case).
+
 ## Not yet
 
-- **The W3C form** (`anoncredsvc-2023` / `anoncredspresvc-2023`).
-- **Predicates from DCQL,** which has no way to express them.
+- Nothing on predicates is pending here. They can be asked for over
+  OpenID4VP now: in DIF Presentation Exchange (the OpenID4VP drafts), or in
+  DCQL through this debugger's critical extension. See `docs/predicates.md`.
 
 ## Tests
 

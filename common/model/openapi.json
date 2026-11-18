@@ -10594,6 +10594,28 @@
             ],
             "description": "Parameter name to value, each appended to the form body as typed.",
             "x-passthrough": true
+          },
+          "client_attestation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "draft-ietf-oauth-attestation-based-client-auth: the Client Attestation\nJWT, sent as the OAuth-Client-Attestation header. A compact JWS; the\napi refuses anything else rather than write it into a header."
+          },
+          "client_attestation_pop": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its proof of possession, sent as OAuth-Client-Attestation-PoP."
           }
         },
         "description": "A token request (RFC 6749 section 4, RFC 7636, RFC 8628 section 3.4),\nturned into a form body by common/data.js convertToOAuth2Format()."

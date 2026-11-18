@@ -62,8 +62,8 @@ function anoncredsNonce(nonce) {
 
 // One case: anoncreds-rs issues (revocable or not) to our holder, the pages
 // present two of three attributes, anoncreds-rs verifies.
-async function oneCase(driver, ac, revocable) {
-  var label = revocable ? "revocable" : "plain";
+async function oneCase(driver, ac, revocable, w3cForm) {
+  var label = w3cForm ? "w3c" : revocable ? "revocable" : "plain";
   log.debug("Entering oneCase(). " + label);
   var sid = ISSUER + "/schema/" + label;
   var cid = ISSUER + "/creddef/" + label;
@@ -108,11 +108,20 @@ async function oneCase(driver, ac, revocable) {
       tails: fs.readFileSync(reg.revocationRegistryDefinition
         .getTailsLocation()), dir: tailsDir };
   }
-  var issued = ac.Credential.create(createOpts).toJson();
-  var cred = ours.processCredential(issued, { credentialRequestMetadata:
-    req.credentialRequestMetadata, linkSecret: ls, credentialDefinition: cd,
-    revocationRegistryDefinition: revocation ? revocation.rrdO.toJson() :
-      undefined });
+  var cred;
+  if (w3cForm) {
+    // The W3C form: anoncreds-rs issues and processes a W3C credential
+    // (anoncreds-2023) for our link secret, and the wallet holds that.
+    cred = ac.W3cCredential.create(createOpts).process({
+      credentialRequestMetadata: req.credentialRequestMetadata,
+      linkSecret: ls, credentialDefinition: cdO }).toJson();
+  } else {
+    var issued = ac.Credential.create(createOpts).toJson();
+    cred = ours.processCredential(issued, { credentialRequestMetadata:
+      req.credentialRequestMetadata, linkSecret: ls,
+      credentialDefinition: cd, revocationRegistryDefinition: revocation ?
+        revocation.rrdO.toJson() : undefined });
+  }
   var held = { format: "anoncreds", credential: cred,
     schema: schema.toJson(), schema_id: sid, credential_definition: cd,
     cred_def_id: cid };
@@ -182,12 +191,24 @@ async function oneCase(driver, ac, revocable) {
     assert.strictEqual(pres.identifiers[0].timestamp, t0, "revocable: it " +
                        "names the status list's timestamp");
   }
-  assert.ok(ac.Presentation.fromJson(pres).verify(ctx), label +
-            ": anoncreds-rs verifies the wallet's presentation");
-  var revealed = pres.proof.proofs[0].primary_proof.eq_proof.revealed_attrs;
-  assert.deepStrictEqual(Object.keys(revealed).sort(),
-                         ["givenname", "name"],
-                         label + ": name and Given Name revealed, age not");
+  if (w3cForm) {
+    assert.strictEqual(pres.proof && pres.proof.cryptosuite,
+                       "anoncreds-2023", "w3c: the wallet presents in the " +
+                       "W3C form");
+    assert.ok(ac.W3cPresentation.fromJson(pres).verify(ctx), label +
+              ": anoncreds-rs verifies the wallet's W3C presentation");
+    assert.deepStrictEqual(Object.keys(pres.verifiableCredential[0]
+      .credentialSubject).sort(), ["Given Name", "name"],
+      "w3c: name and Given Name revealed, age not");
+  } else {
+    assert.ok(ac.Presentation.fromJson(pres).verify(ctx), label +
+              ": anoncreds-rs verifies the wallet's presentation");
+    var revealed = pres.proof.proofs[0].primary_proof.eq_proof
+      .revealed_attrs;
+    assert.deepStrictEqual(Object.keys(revealed).sort(),
+                           ["givenname", "name"],
+                           label + ": name and Given Name revealed, age not");
+  }
   if (revocation) fs.rmSync(revocation.dir, { recursive: true, force: true });
   log.info("PASS AnonCreds " + label + " (anoncreds-rs issuer, our " +
            "holder): two of three attributes revealed under the OpenID4VP " +
@@ -209,6 +230,7 @@ async function test() {
   try {
     await oneCase(driver, ac, false);
     await oneCase(driver, ac, true);
+    await oneCase(driver, ac, false, true);
     log.info("anoncreds_presentation: all checks passed.");
   } finally {
     await driver.quit();
