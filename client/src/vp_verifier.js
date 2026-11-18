@@ -437,10 +437,53 @@ function buildCredentialQuery(q, index, seen) {
     }
     var claim = { path: path };
     if (isPlainObject(c) && c.id) claim.id = c.id;
-    if (isPlainObject(c) && isArray(c.values)) claim.values = c.values;
+    if (isPlainObject(c) && isArray(c.values)) {
+      // Section 6.3: values is a non-empty array of strings, integers or
+      // booleans.
+      if (!c.values.length || c.values.some(function (v) {
+        return !(typeof v === "string" || typeof v === "boolean" ||
+                 (typeof v === "number" && Math.floor(v) === v));
+      })) {
+        throw new Error(where + ": a claim's values are a non-empty " +
+                        "array of strings, integers or booleans (section " +
+                        "6.3).");
+      }
+      claim.values = c.values.slice();
+    }
+    if (isPlainObject(c) && typeof c.intentToRetain === "boolean") {
+      // Appendix B.2.4: an mdoc-only Claims Query parameter.
+      if (q.format !== FORMAT_MSO_MDOC) {
+        throw new Error(where + ": intent_to_retain is an mso_mdoc claims " +
+                        "parameter (Appendix B.2.4).");
+      }
+      claim.intent_to_retain = c.intentToRetain;
+    }
     return claim;
   });
   if (claims.length) out.claims = claims;
+  if (isArray(q.claimSets) && q.claimSets.length) {
+    // Section 6.1: claim_sets is a non-empty array of non-empty arrays of
+    // claim ids; section 6.3: every claim then needs an id.
+    var ids = claims.map(function (c) {
+      return c.id;
+    });
+    if (ids.some(function (id) {
+      return !id;
+    })) {
+      throw new Error(where + ": claim_sets needs an id on every claim " +
+                      "(section 6.3).");
+    }
+    out.claim_sets = q.claimSets.map(function (set) {
+      if (!isArray(set) || !set.length || set.some(function (id) {
+        return ids.indexOf(id) === -1;
+      })) {
+        throw new Error(where + ": each claim set is a non-empty array of " +
+                        "the claim ids above; got " + JSON.stringify(set) +
+                        ".");
+      }
+      return set.slice();
+    });
+  }
   if (q.requireBinding === false) {
     out.require_cryptographic_holder_binding = false;
   }
@@ -667,10 +710,21 @@ async function makeVerifierIdentity(opts) {
   }
   var nowMs = nowSeconds(o.now) * 1000;
   var notBefore = new Date(nowMs - 5 * 60 * 1000);
-  var desc = keyMaterial.keyAlg("ec-p256");
+  // The request key (#471, E3): P-256 by default, or P-384 or Ed25519.
+  // The root stays P-256; only the leaf, which signs Request Objects,
+  // changes.
+  var keyAlgId = o.keyAlg || "ec-p256";
+  var JOSE_ALG = { "ec-p256": "ES256", "ec-p384": "ES384",
+                   "ed25519": "EdDSA" };
+  if (!JOSE_ALG[keyAlgId]) {
+    log.debug("Leaving makeVerifierIdentity(). Unknown key: " + keyAlgId);
+    throw new Error("a request key is ec-p256, ec-p384 or ed25519, not " +
+                    keyAlgId + ".");
+  }
+  var desc = keyMaterial.keyAlg(keyAlgId);
   var root = await rootForSigning(o.root ||
                                   await makeVerifierRoot({ now: o.now }));
-  var leafKey = await keyMaterial.generateKeyPair("ec-p256");
+  var leafKey = await keyMaterial.generateKeyPair(keyAlgId);
   // The leaf's KeyUsage is read through its P-256 key (#468, M5). The
   // tls-server profile's list is RSA-shaped (digitalSignature,
   // keyEncipherment), and RFC 5480 section 3 permits an id-ecPublicKey
@@ -697,9 +751,9 @@ async function makeVerifierIdentity(opts) {
     signatureAlg: "sha256-ecdsa", notBefore: notBefore, extensions: ext
   });
   var privateJwk = await keyMaterial.privToJwk(leafKey.privatePem, desc,
-                                               "ES256");
+                                               JOSE_ALG[keyAlgId]);
   var publicJwk = await keyMaterial.pubToJwk(leafKey.publicPem, desc,
-                                             "ES256", "sig");
+                                             JOSE_ALG[keyAlgId], "sig");
   var leafDer = bytes.asBytes(leaf.der);
   log.debug("Leaving makeVerifierIdentity(). dns=" + o.dnsName);
   return {
@@ -1109,6 +1163,41 @@ function isEncryptedMode(mode) {
   return mode === "direct_post.jwt" || mode === "dc_api.jwt";
 }
 
+// verifier_info (section 5.1): a non-empty array of { format, data,
+// credential_ids? }, format a string, data an object or a string,
+// credential_ids a non-empty array naming credential queries. Throws
+// naming what is wrong; answers a copy.
+function checkedVerifierInfo(info, dcql) {
+  log.debug("Entering checkedVerifierInfo().");
+  if (!isArray(info) || !info.length) {
+    log.debug("Leaving checkedVerifierInfo(). Not a non-empty array.");
+    throw new Error("verifier_info is a non-empty array of attestations " +
+                    "(section 5.1).");
+  }
+  var ids = ((dcql && dcql.credentials) || []).map(function (q) {
+    return q.id;
+  });
+  var out = info.map(function (a, i) {
+    var where = "verifier_info[" + i + "]";
+    if (!isPlainObject(a) || typeof a.format !== "string" || !a.format) {
+      throw new Error(where + " needs a format string.");
+    }
+    if (!(typeof a.data === "string" && a.data) && !isPlainObject(a.data)) {
+      throw new Error(where + " needs data, an object or a string.");
+    }
+    if (a.credential_ids !== undefined && (!isArray(a.credential_ids) ||
+        !a.credential_ids.length || a.credential_ids.some(function (id) {
+          return ids.indexOf(id) === -1;
+        }))) {
+      throw new Error(where + ".credential_ids must be a non-empty array " +
+                      "of credential query ids (" + ids.join(", ") + ").");
+    }
+    return JSON.parse(JSON.stringify(a));
+  });
+  log.debug("Leaving checkedVerifierInfo(). " + out.length);
+  return out;
+}
+
 // The Authorization Request's parameters (the Request Object's claims when
 // it is signed).
 //
@@ -1170,7 +1259,18 @@ function requestObjectClaims(opts) {
   if (!dc) claims.response_uri = o.responseUri;
   claims.nonce = o.nonce;
   if (o.state && !dc) claims.state = o.state;
-  claims.dcql_query = o.dcql;
+  // Section 5.1: "Either a dcql_query or a scope parameter representing a
+  // DCQL Query MUST be present in the Authorization Request, but not
+  // both." A scope (section 5.5) is an alias the wallet resolves; o.dcql is
+  // then what this Verifier takes it to mean, and checks answers against.
+  if (o.scope) {
+    claims.scope = String(o.scope);
+  } else {
+    claims.dcql_query = o.dcql;
+  }
+  if (o.verifierInfo !== undefined) {
+    claims.verifier_info = checkedVerifierInfo(o.verifierInfo, o.dcql);
+  }
   if (o.walletNonce) claims.wallet_nonce = String(o.walletNonce);
   if (!unsigned) {
     claims.iat = iat;
@@ -6478,6 +6578,7 @@ module.exports = {
   signRequestObject: signRequestObject,
   signingAlgsFor: signingAlgsFor,
   planForWalletMetadata: planForWalletMetadata,
+  checkedVerifierInfo: checkedVerifierInfo,
   haipRequestProblems: haipRequestProblems,
   akiValuesFromAnchors: akiValuesFromAnchors,
   encryptRequestObject: encryptRequestObject,

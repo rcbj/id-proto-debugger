@@ -5068,6 +5068,98 @@ async function walletMetadataHonoured(env) {
   log.debug("Leaving walletMetadataHonoured().");
 }
 
+// #471 E3a: the request options OpenID4VP 1.0 defines and the page now
+// offers. Signatures over the new request keys are checked by jose.
+async function requestOptions(env) {
+  log.debug("Entering requestOptions().");
+  const jose = await import("jose");
+  const dcql = verifier.buildDcql({ queries: [{ id: "pid",
+    format: "dc+sd-jwt", vct: VCT, claims: [["given_name"]] }] });
+  for (const [keyAlg, alg] of [["ec-p384", "ES384"], ["ed25519", "EdDSA"]]) {
+    const id = await verifier.makeVerifierIdentity({
+      dnsName: "verifier.example", keyAlg: keyAlg });
+    const claims = verifier.requestObjectClaims({
+      clientId: verifier.clientIdFor("x509_hash", id, {}),
+      responseUri: "https://verifier.example/response",
+      responseMode: "direct_post", nonce: "n-k", state: "s-k", dcql: dcql });
+    const compact = await verifier.signRequestObject({ claims: claims,
+                                                       identity: id });
+    const header = JSON.parse(Buffer.from(compact.split(".")[0],
+                                          "base64url"));
+    eq(header.alg, alg, "E3: a " + keyAlg + " request key signs " + alg);
+    const leafKey = new nodeCrypto.X509Certificate(id.leafPem).publicKey;
+    const checked = await jose.compactVerify(compact, leafKey);
+    eq(JSON.parse(new TextDecoder().decode(checked.payload)).nonce, "n-k",
+       "E3: jose verifies the " + keyAlg + " Request Object against its " +
+       "certificate");
+  }
+  let refused = "";
+  try {
+    await verifier.makeVerifierIdentity({ dnsName: "v.example",
+                                          keyAlg: "rsa-2048" });
+  } catch (e) {
+    refused = e.message;
+  }
+  ok(/ec-p256, ec-p384 or ed25519/.test(refused), "E3: other keys refused");
+  // scope instead of dcql_query (section 5.1: one, never both).
+  const id = env.identity;
+  const base = { clientId: verifier.clientIdFor("x509_hash", id, {}),
+    responseUri: "https://verifier.example/response",
+    responseMode: "direct_post", nonce: "n", state: "s", dcql: dcql };
+  let claims = verifier.requestObjectClaims(Object.assign({}, base,
+    { scope: "com.example.healthCardCredential_presentation" }));
+  ok(claims.scope === "com.example.healthCardCredential_presentation" &&
+     !("dcql_query" in claims), "E3: scope replaces dcql_query");
+  // verifier_info, section 5.1's own example.
+  const info = [{ format: "jwt", data: "eyJhbGciOiJFUzI1...EF0RBtvPClL71TW" +
+    "HlIQ", credential_ids: ["pid"] }];
+  claims = verifier.requestObjectClaims(Object.assign({}, base,
+    { verifierInfo: info }));
+  eq(claims.verifier_info, info, "E3: verifier_info is carried");
+  for (const bad of [[], [{ data: "x" }], [{ format: "jwt" }],
+                     [{ format: "jwt", data: "x", credential_ids: ["no"] }]]) {
+    let why = "";
+    try {
+      verifier.requestObjectClaims(Object.assign({}, base,
+        { verifierInfo: bad }));
+    } catch (e) {
+      why = e.message;
+    }
+    ok(/verifier_info/.test(why), "E3: refused " + JSON.stringify(bad));
+  }
+  // values, claim ids and claim_sets (section 6.4.1's example shape) and
+  // intent_to_retain (Appendix B.2.4).
+  const q = verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
+    vct: VCT, claims: [{ id: "a", path: ["last_name"] },
+                       { id: "b", path: ["postal_code"],
+                         values: ["90210", "90211"] },
+                       { id: "c", path: ["address", "street_address"] }],
+    claimSets: [["a", "c"], ["b"]] }] }).credentials[0];
+  eq([q.claims[1].values, q.claim_sets], [["90210", "90211"],
+     [["a", "c"], ["b"]]], "E3: values and claim_sets");
+  for (const spec of [
+    { claims: [{ path: ["x"] }], claimSets: [["x"]] },
+    { claims: [{ id: "a", path: ["x"] }], claimSets: [["z"]] },
+    { claims: [{ id: "a", path: ["x"], values: [] }] },
+    { claims: [{ id: "a", path: ["x"], values: [1.5] }] },
+    { claims: [{ id: "a", path: ["x"], intentToRetain: true }] }]) {
+    let why = "";
+    try {
+      verifier.buildDcql({ queries: [Object.assign({ id: "pid",
+        format: "dc+sd-jwt", vct: VCT }, spec)] });
+    } catch (e) {
+      why = e.message;
+    }
+    ok(why.length > 0, "E3: refused " + JSON.stringify(spec));
+  }
+  const m = verifier.buildDcql({ queries: [{ id: "mdl", format: "mso_mdoc",
+    doctype: "org.iso.18013.5.1.mDL",
+    claims: [{ path: ["org.iso.18013.5.1", "family_name"],
+               intentToRetain: false }] }] }).credentials[0];
+  eq(m.claims[0].intent_to_retain, false, "E3: intent_to_retain on mdoc");
+  log.debug("Leaving requestOptions().");
+}
+
 async function main() {
   log.debug("Entering main().");
   randomTokens();
@@ -5099,6 +5191,7 @@ async function main() {
   await proofContexts(env);
   await requestSideFindings(env);
   await walletMetadataHonoured(env);
+  await requestOptions(env);
   log.info("vp_verifier_engine: " + assertions + " assertions, " +
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
