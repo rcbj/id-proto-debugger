@@ -409,10 +409,16 @@ Credentials API.)
    | **Verifier JWKS URL** (`vp_verifier_jwks_url`) | `https://localhost:8081/oauth2/jwks` |
    | **x509 trust anchor (PEM)** (`vp_x509_trust_anchor`) | *leave empty* |
 
-   The JWKS URL defaults to `<base>/oauth2/jwks`, so filling the base URL alone
-   is enough; it is shown here for completeness. The x509 trust anchor is needed
-   only for an `x509_hash` / HAIP verifier — this request names its client by
-   the `redirect_uri` prefix and is unsigned, so it is left empty.
+   The JWKS URL and the x509 trust anchor are **not** alternatives — they cover
+   two different ways a Verifier is authenticated: the **JWKS URL** checks the
+   signature of a request from a **pre-registered** client (no Client Identifier
+   prefix), and the **x509 trust anchor** checks the `x5c` chain of a Verifier
+   named by `x509_hash` / `x509_san_dns` (HAIP). The request iya-sts sends here
+   names its client by the **`redirect_uri` prefix** and is **unsigned**, so it
+   is authenticated by where the answer is posted, not by a signature — it needs
+   **neither**. Setting the **Verifier base URL** alone is enough (the JWKS URL
+   just auto-fills from it); the x509 anchor stays empty because this is not an
+   x509-identified Verifier.
 3. On step 1, paste the `openid4vp://` request. The wallet reads it (no fetch
    needed), and you pick the held credential and the claims to disclose.
 4. Press **Present**. The wallet posts the presentation to iya-sts's
