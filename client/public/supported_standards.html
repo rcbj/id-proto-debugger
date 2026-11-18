@@ -121,7 +121,8 @@
           <li><a href="#ws">WS-Trust, WS-Federation, WS-Security</a></li>
           <li><a href="#xmldsig">XML Signature and XML Encryption</a></li>
           <li><a href="#vc">Verifiable credentials &mdash; SD-JWT VC,
-              OID4VCI, OID4VP</a></li>
+              OID4VCI, OID4VP</a> (and <a href="#vc-formats">the credential
+              formats</a>)</li>
           <li><a href="#did">Decentralized identifiers and Data
               Integrity</a></li>
           <li><a href="#webauthn">WebAuthn</a></li>
@@ -811,6 +812,75 @@
           </tr>
         </table>
 
+        <h3 id="vc-formats">Credential formats</h3>
+        <p>Every credential format the issuance and presentation workflows
+        handle, with the identifier each goes by. The constraints each format
+        puts on algorithms, holder binding and proof types live in one table
+        (<code>client/src/vc_formats.js</code>), and every default the pages
+        choose is read from it, so a page never offers a combination the
+        format forbids. Where OpenID4VCI 1.0 and OpenID4VP 1.0 name no
+        identifier for a format, the media type&rsquo;s own name is used, and
+        the page says so. Drafts are labelled as drafts wherever they appear.
+        The proof suites an <code>ldp_vc</code> can carry are listed under
+        <a href="#did">Data Integrity</a>.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/"
+                   target="_blank" rel="noopener noreferrer">SD-JWT VC &mdash; <code>dc+sd-jwt</code></a>
+              <span class="std-where">IETF draft (draft-ietf-oauth-sd-jwt-vc); OpenID4VCI 1.0 Appendix A.3</span></td>
+            <td>Issued, held, presented with selected Disclosures and a Key Binding JWT, and verified by the Verifier role.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#appendix-A.1.1"
+                   target="_blank" rel="noopener noreferrer">W3C VC as a JWT &mdash; <code>jwt_vc_json</code></a>
+              <span class="std-where">OpenID4VCI 1.0 Appendix A.1.1; W3C VCDM 1.1</span></td>
+            <td>Issued, and presented whole inside a Verifiable Presentation JWT the holder signs; verified by the Verifier role.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#appendix-A.1.2"
+                   target="_blank" rel="noopener noreferrer">W3C VC as a JWT, JSON-LD &mdash; <code>jwt_vc_json-ld</code></a>
+              <span class="std-where">OpenID4VCI 1.0 Appendix A.1.2</span></td>
+            <td>Recognised and validated in issuer metadata only: no workflow issues or presents it separately from <code>jwt_vc_json</code>.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#appendix-A.1.3"
+                   target="_blank" rel="noopener noreferrer">W3C VC with a Data Integrity proof &mdash; <code>ldp_vc</code></a>
+              <span class="std-where">OpenID4VCI 1.0 Appendix A.1.3; W3C VCDM 1.1 and 2.0</span></td>
+            <td>Issued and verified in every suite listed under Data Integrity. A selective suite (<code>bbs-2023</code>, <code>ecdsa-sd-2023</code>, <code>BbsBlsSignatureProof2020</code>) is derived to the requested claims; any other goes whole inside a holder-signed Verifiable Presentation, in a suite the holder key signs and the Verifier accepts.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/vc-jose-cose/"
+                   target="_blank" rel="noopener noreferrer">Securing Verifiable Credentials using JOSE and COSE &mdash; <code>vc+jwt</code>, <code>vc+sd-jwt</code>, <code>vc+cose</code></a>
+              <span class="std-where">W3C Recommendation</span></td>
+            <td>The three enveloping forms of a VCDM 2.0 credential: recognised (a W3C <code>vc+sd-jwt</code> is told from a <code>dc+sd-jwt</code> by its v2 <code>@context</code> and the absence of <code>vct</code>), verified with the issuer key found by <code>kid</code> or <code>iss</code>, and presented &mdash; <code>vc+jwt</code> and <code>vc+cose</code> as an <code>EnvelopedVerifiableCredential</code> in the holder&rsquo;s <code>vp+jwt</code>, <code>vc+sd-jwt</code> as selected Disclosures with a Key Binding JWT. No OpenID4VCI identifier exists; the media type names are used.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.iso.org/standard/69084.html"
+                   target="_blank" rel="noopener noreferrer">ISO/IEC 18013-5 mobile document &mdash; <code>mso_mdoc</code></a>
+              <span class="std-where">ISO/IEC 18013-5:2021; OpenID4VCI 1.0 Appendix A.2; OpenID4VP 1.0 Appendix B.2</span></td>
+            <td>Held and presented as a DeviceResponse with the device signature over the OpenID4VP session transcript; verified by the Verifier role, Mobile Security Object digests and issuer chain included. No issuer in this stack mints one.</td>
+          </tr>
+          <tr>
+            <td><a href="https://datatracker.ietf.org/doc/draft-ietf-jose-json-web-proof/"
+                   target="_blank" rel="noopener noreferrer">JSON Web Proof, JSON Proof Algorithms and JSON Proof Token &mdash; <code>jpt</code></a>
+              <span class="std-where">IETF drafts (draft-ietf-jose-json-web-proof-15, -json-proof-algorithms-15, -json-proof-token-15)</span></td>
+            <td>Compact (JPT) and CBOR (CPT) serializations; Single Use (SU-ES256/384/512), MAC (MAC-H256/384/512, MAC-H256K) and BBS; confirmed at issuance, presented with the chosen payload slots under a Presentation Header carrying the Verifier and the nonce. MAC-K25519 and MAC-K448 are refused by name: the draft fixes neither KMAC&rsquo;s output length nor its customization string. Where the drafts&rsquo; prose and their own examples disagree, the examples&rsquo; bytes are followed.</td>
+          </tr>
+          <tr>
+            <td><a href="https://datatracker.ietf.org/doc/draft-ietf-spice-sd-cwt/"
+                   target="_blank" rel="noopener noreferrer">Selective Disclosure CBOR Web Token &mdash; <code>sd-cwt</code></a>
+              <span class="std-where">IETF draft (draft-ietf-spice-sd-cwt-09)</span></td>
+            <td>Map-key and array-element redaction, nested and with decoys; confirmed at issuance; presented in a Key Binding Token carrying only the chosen disclosures, the Verifier as <code>aud</code> and the nonce as <code>cnonce</code>; the Verifier&rsquo;s section 9 checks each reported by name. AEAD-encrypted disclosures are recognised and ignored, as a Verifier without their key does.</td>
+          </tr>
+          <tr>
+            <td><a href="https://hyperledger.github.io/anoncreds-spec/"
+                   target="_blank" rel="noopener noreferrer">AnonCreds &mdash; <code>anoncreds</code></a>
+              <span class="std-where">Hyperledger AnonCreds Specification v1.0</span></td>
+            <td>CL signatures for the holder and the Verifier: the credential request with a blinded link secret, processing the issued credential, and zero-knowledge presentations revealing chosen attributes, proving predicates (&ge;, &le;, &gt;, &lt;) and linking several credentials under one link secret. Held to anoncreds-rs in every direction. Neither OpenID4VCI nor OpenID4VP defines AnonCreds, so the mapping of an OpenID4VP request onto an AnonCreds one is this debugger&rsquo;s. Revocation (non-revocation proofs) is not yet implemented and is refused by name.</td>
+          </tr>
+        </table>
+
         <!-- ===================== DID ===================== -->
         <h2 id="did">Decentralized identifiers and Data Integrity</h2>
         <table>
@@ -839,6 +909,36 @@
               <code>credentialSubject.origin</code> required to be the origin
               it came from &mdash; and to be for <em>the DID asked
               about</em>.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/vc-data-integrity/"
+                   target="_blank" rel="noopener noreferrer">Verifiable Credential Data Integrity 1.0</a>
+              <span class="std-where">W3C Recommendation</span></td>
+            <td>Proof creation and verification for every cryptosuite below, with each check reported by name. A proof that verifies only under a non-conformant reading (a missing JCS <code>@context</code>, security vocabulary v2) is reported invalid, with a diagnosis.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/vc-di-eddsa/"
+                   target="_blank" rel="noopener noreferrer">Data Integrity EdDSA Cryptosuites &mdash; <code>eddsa-rdfc-2022</code>, <code>eddsa-jcs-2022</code></a>
+              <span class="std-where">W3C Recommendation</span></td>
+            <td>Signed and verified over RDFC-1.0 and over JCS (RFC 8785), against Digital Bazaar&rsquo;s released implementation in both directions.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/vc-di-ecdsa/"
+                   target="_blank" rel="noopener noreferrer">Data Integrity ECDSA Cryptosuites &mdash; <code>ecdsa-rdfc-2019</code>, <code>ecdsa-jcs-2019</code>, <code>ecdsa-sd-2023</code></a>
+              <span class="std-where">W3C Recommendation</span></td>
+            <td>P-256 and P-384 over RDFC-1.0 and JCS; <code>ecdsa-sd-2023</code> (P-256 only, as section 3.5.8 requires) as a base proof, a holder-derived proof and verification of both, matching the specification&rsquo;s own derived <code>proofValue</code> byte for byte.</td>
+          </tr>
+          <tr>
+            <td><a href="https://w3c-ccg.github.io/lds-ed25519-2020/"
+                   target="_blank" rel="noopener noreferrer">Legacy Linked Data proofs &mdash; <code>Ed25519Signature2018</code>, <code>Ed25519Signature2020</code>, <code>JsonWebSignature2020</code>, <code>EcdsaSecp256k1Signature2019</code></a>
+              <span class="std-where">W3C Credentials Community Group reports</span></td>
+            <td>Verified, and used as the holder&rsquo;s proof when a Verifier accepts nothing newer. <code>JsonWebSignature2020</code> is the detached JWS (<code>b64: false</code>) over every key type it allows.</td>
+          </tr>
+          <tr>
+            <td><a href="https://w3c-ccg.github.io/ldp-bbs2020/"
+                   target="_blank" rel="noopener noreferrer">BBS+ Signatures 2020 &mdash; <code>BbsBlsSignature2020</code>, <code>BbsBlsSignatureProof2020</code></a>
+              <span class="std-where">W3C Credentials Community Group report</span></td>
+            <td>The pre-CFRG BBS+ scheme MATTR shipped: verified, and derived to the requested claims by a JSON-LD frame; held to MATTR&rsquo;s released implementation in both directions.</td>
           </tr>
           <tr>
             <td><a href="https://www.w3.org/TR/vc-di-bbs/"
