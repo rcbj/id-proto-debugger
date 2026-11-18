@@ -41,16 +41,16 @@ var log = bunyan.createLogger({
 
 var PROOFS = ["httpsig", "jwsd", "jws", "mtls"];
 
-function webCrypto() {
-  log.debug("Entering webCrypto().");
-  var crypto = globalThis.crypto;
-  if (!crypto || !crypto.subtle) {
-    log.debug("Leaving webCrypto(). No subtle.");
-    throw new Error("Web Crypto is not available in this context.");
-  }
-  log.debug("Leaving webCrypto().");
-  return crypto;
-}
+// Keys, signatures, digests and randomness are crypto_provider.js's (#463):
+// pure JS, so the GNAP page signs on a plain-HTTP page as well.
+var provider = require("./crypto_provider");
+
+// The provider algorithm for each alg this client signs with.
+var PROVIDER_ALG = { ES256: "ecdsa-p256-sha256", ES384: "ecdsa-p384-sha384",
+                     RS256: "rsa-pkcs1-sha256", PS256: "rsa-pss-sha256",
+                     EdDSA: "ed25519" };
+var KEY_SPEC = { ES256: "ec-p256", ES384: "ec-p384", EdDSA: "ed25519" };
+
 
 function utf8(text) {
   log.debug("Entering utf8().");
@@ -107,8 +107,7 @@ function hex(bytes) {
 
 function randomBytes(n) {
   log.debug("Entering randomBytes().");
-  var out = new Uint8Array(n);
-  webCrypto().getRandomValues(out);
+  var out = provider.randomBytes(n);
   log.debug("Leaving randomBytes().");
   return out;
 }
@@ -116,9 +115,10 @@ function randomBytes(n) {
 async function digest(name, bytes) {
   log.debug("Entering digest(). name=" + name);
   var algo = name === "SHA-512" ? "SHA-512" : "SHA-256";
-  var hashed = await webCrypto().subtle.digest(algo, bytes);
+  var hashed = provider.digest(algo === "SHA-512" ? "sha512" : "sha256",
+                               new Uint8Array(bytes));
   log.debug("Leaving digest().");
-  return new Uint8Array(hashed);
+  return hashed;
 }
 
 // RFC 8941 section 4.1.6.
@@ -192,21 +192,6 @@ function importParams(alg) {
   return params;
 }
 
-function signParams(alg) {
-  log.debug("Entering signParams(). alg=" + alg);
-  var params;
-  if (alg === "ES256") {
-    params = { name: "ECDSA", hash: "SHA-256" };
-  } else if (alg === "ES384") {
-    params = { name: "ECDSA", hash: "SHA-384" };
-  } else if (alg === "PS256") {
-    params = { name: "RSA-PSS", hash: "SHA-256", saltLength: 32 };
-  } else {
-    params = importParams(alg);
-  }
-  log.debug("Leaving signParams().");
-  return params;
-}
 
 function publish(jwk, alg, kid) {
   log.debug("Entering publish().");
@@ -226,22 +211,11 @@ async function generateKey(alg, kid) {
   log.debug("Entering generateKey(). alg=" + alg);
   var name = alg || "ES256";
   var id = kid || ("k-" + hex(randomBytes(6)));
-  var params = importParams(name);
-  var usages = ["sign"];
+  importParams(name);
   var pair;
-  if (name === "RS256" || name === "PS256") {
-    pair = await webCrypto().subtle.generateKey({
-      name: params.name,
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256"
-    }, true, usages);
-  } else if (name === "HS256") {
-    var secret = await webCrypto().subtle.generateKey(
-      { name: "HMAC", hash: "SHA-256", length: 256 }, true, ["sign"]);
-    var secretJwk = await webCrypto().subtle.exportKey("jwk", secret);
-    secretJwk.alg = "HS256";
-    secretJwk.kid = id;
+  if (name === "HS256") {
+    var secretJwk = { kty: "oct", k: bytesToB64u(randomBytes(32)),
+                      alg: "HS256", kid: id };
     log.debug("Leaving generateKey(). HMAC.");
     return {
       alg: "HS256",
@@ -250,13 +224,18 @@ async function generateKey(alg, kid) {
       publicJwk: null,
       reference: id
     };
-  } else {
-    pair = await webCrypto().subtle.generateKey(params, true, usages);
   }
-  var privateJwk = await webCrypto().subtle.exportKey(
-    "jwk", pair.privateKey);
-  var publicJwk = await webCrypto().subtle.exportKey(
-    "jwk", pair.publicKey);
+  if (name === "RS256" || name === "PS256") {
+    // Synchronous JavaScript: give the page a turn to draw first.
+    await new Promise(function (resolve) {
+      setTimeout(resolve, 0);
+    });
+    pair = provider.generateKeyPair("rsa", { bits: 2048 });
+  } else {
+    pair = provider.generateKeyPair(KEY_SPEC[name]);
+  }
+  var privateJwk = provider.exportKey(pair, "jwk");
+  var publicJwk = provider.exportKey(provider.publicKeyOf(pair), "jwk");
   privateJwk.alg = name;
   privateJwk.kid = id;
   publicJwk = publish(publicJwk, name, id);
@@ -364,12 +343,20 @@ function keyObject(record, proof) {
 async function signRecord(record, data) {
   log.debug("Entering signRecord().");
   var alg = record.alg || algorithmOf(record.privateJwk);
-  var key = await webCrypto().subtle.importKey(
-    "jwk", record.privateJwk, importParams(alg), false, ["sign"]);
-  var signed = await webCrypto().subtle.sign(
-    signParams(alg), key, data);
+  importParams(alg);
+  var jwk = Object.assign({}, record.privateJwk);
+  delete jwk.alg;
+  delete jwk.kid;
+  delete jwk.key_ops;
+  delete jwk.ext;
+  var key = provider.importKey(jwk);
+  var bytes = new Uint8Array(data);
+  // HMAC is a MAC, not a signature; ECDSA comes back raw r || s, which is
+  // what HTTP Message Signatures (RFC 9421 section 3.3) and JWS both carry.
+  var signed = alg === "HS256" ? provider.hmac("sha256", key, bytes)
+    : provider.sign(PROVIDER_ALG[alg], key, bytes);
   log.debug("Leaving signRecord().");
-  return new Uint8Array(signed);
+  return signed;
 }
 
 function componentValue(identifier, message) {
