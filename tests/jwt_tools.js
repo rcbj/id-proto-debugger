@@ -49,7 +49,7 @@ var cryptoWait = Math.max(waitTime, 15000);
 const keyMaterial = clientModule("key_material.js");
 const x509 = clientModule("x509.js");
 const jwsLib = clientModule("jws.js");
-const cryptoBytes = clientModule("crypto_bytes.js");
+const cryptoBytes = modulePaths.requireCryptoModule("crypto_bytes.js");
 
 function decodeJWT(jwt_) {
   log.debug("Entering decodeJWT().");

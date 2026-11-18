@@ -3222,10 +3222,14 @@ async function securityFindings(env) {
   eq([r.verdict, r.ok, r.incomplete], ["incomplete", false, 1],
      "S4: an unanchored x5c is an incomplete verdict, not a pass");
   ok(/NOT anchored/.test(trustOf(r).detail) &&
-     /each certificate is signed by the next/.test(trustOf(r).detail) &&
+     /each certificate is signed by the next/.test(trustOf(r).detail),
+     "S3: the unanchored row reports the chain: " + trustOf(r).detail);
+  // The iss binding is a row of its own (SD-JWT VC -27 section 2.5).
+  ok(checkById(r, "p[0].issuer.iss").status === "pass" &&
      /bound to the end-entity certificate by the dNSName/.test(
-       trustOf(r).detail), "S3: the unanchored row reports the chain: " +
-     trustOf(r).detail);
+       checkById(r, "p[0].issuer.iss").detail),
+     "S3: a bound iss is a pass on issuer.iss: " +
+     JSON.stringify(checkById(r, "p[0].issuer.iss")));
   // The same chain, anchored at the supplied root (an RSA root over an EC
   // chain, so both signature families are checked).
   r = await sendSd(x5cJwt([leaf, inter], GOV), anchors);
@@ -3236,11 +3240,15 @@ async function securityFindings(env) {
   r = await sendSd(x5cJwt([leaf, inter, root], GOV));
   eq(trustOf(r).status, "skip", "S3: an included anchor is not trusted " +
      "because it is there");
-  ok(/INCLUDED/.test(trustOf(r).detail), "S3: the included anchor is " +
-     "reported: " + trustOf(r).detail);
+  // Reported on a row of its own, never a failure (rcbj, 2026-11-17).
+  const included = checkById(r, "p[0].issuer.anchor-included");
+  ok(included && included.status === "skip" && !included.essential &&
+     /INCLUDED in x5c.*HAIP 1\.0 section 6\.1\.1/.test(included.detail),
+     "S3: the included anchor is reported: " + JSON.stringify(included));
   r = await sendSd(x5cJwt([leaf, inter, root], GOV), anchors);
   allPass(r, "S3: an included anchor that IS a supplied anchor");
-  ok(/INCLUDED/.test(trustOf(r).detail), "S3: and it is still reported");
+  ok(checkById(r, "p[0].issuer.anchor-included").status === "skip",
+     "S3: and it is still reported");
   // A self-signed leaf.
   const selfKey = nodePemPair("ec");
   const selfLeaf = await testCert({ profile: "tls-server",
@@ -3248,7 +3256,12 @@ async function securityFindings(env) {
   ok(selfLeaf.node.verify(selfLeaf.node.publicKey), "node: self-signed");
   r = await sendSd(x5cJwt([selfLeaf], GOV, selfKey));
   eq(trustOf(r).status, "skip", "S3: a self-signed leaf, no anchors");
-  ok(/SELF-SIGNED/.test(trustOf(r).detail), trustOf(r).detail);
+  const selfRow = checkById(r, "p[0].issuer.self-signed");
+  ok(selfRow && selfRow.status === "skip" && !selfRow.essential &&
+     /SELF-SIGNED.*HAIP 1\.0 section 6\.1\.1/.test(selfRow.detail),
+     "S3: a self-signed signer is reported: " + JSON.stringify(selfRow));
+  eq(checkById(r, "p[0].issuer.signature").status, "pass",
+     "S3: and the signature itself still verifies");
   r = await sendSd(x5cJwt([selfLeaf], GOV, selfKey), anchors);
   failsOnly(r, ["p[0].issuer.trust"], "S3: a self-signed leaf against a " +
             "supplied anchor");
@@ -3276,12 +3289,33 @@ async function securityFindings(env) {
   r = await sendSd(x5cJwt([leaf, imposter], GOV));
   failsOnly(r, ["p[0].issuer.trust"], "S3: a broken link fails even " +
             "with no anchors");
-  // iss not in the end-entity certificate's SAN.
+  // iss not in the end-entity certificate's SAN. SD-JWT VC -27 section
+  // 2.5: a recipient MAY reject it, and rcbj's rule is that the debugger
+  // REPORTS it and never fails because of it: a SKIP that is not
+  // essential, saying iss is unauthenticated and the issuer is the
+  // certificate's subject. The chain itself is still trusted.
   r = await sendSd(x5cJwt([leaf, inter], "https://other.example"),
                    anchors);
-  failsOnly(r, ["p[0].issuer.trust"], "S3: iss not bound to the leaf");
-  ok(/NOT bound to the end-entity certificate/.test(trustOf(r).detail),
-     trustOf(r).detail);
+  eq(failedIds(r), [], "S3: an unbound iss fails nothing");
+  eq(trustOf(r).status, "pass", "S3: the chain is still anchored");
+  const unbound = checkById(r, "p[0].issuer.iss");
+  ok(unbound && unbound.status === "skip" && !unbound.essential &&
+     /NOT bound.*NOT authenticated.*issuer is the certificate's subject.*SHOULD NOT include an iss claim/
+       .test(unbound.detail), "S3: the unbound iss row: " +
+     JSON.stringify(unbound));
+  eq(r.verdict, "pass", "S3: an unbound iss does not change the verdict");
+  // The configured mapping section 2.5 allows: by the leaf's SHA-256, and
+  // by its common name. Each makes the binding a pass.
+  const leafHash = nodeCrypto.createHash("sha256")
+    .update(Buffer.from(leaf.b64, "base64")).digest("hex");
+  r = await sendSd(x5cJwt([leaf, inter], "https://other.example"),
+                   { session: Object.assign({}, anchors.session, {
+                     issuerBindings: [{ iss: "https://other.example",
+                                        sha256: leafHash }] }) });
+  ok(checkById(r, "p[0].issuer.iss").status === "pass" &&
+     /configured mapping/.test(checkById(r, "p[0].issuer.iss").detail),
+     "S3: a configured sha256 mapping binds iss: " +
+     JSON.stringify(checkById(r, "p[0].issuer.iss")));
   // A chain anchored at some OTHER root.
   const otherRootKey = nodePemPair("ec");
   const otherRoot = await testCert({ profile: "root-ca", cn: "Other Root",

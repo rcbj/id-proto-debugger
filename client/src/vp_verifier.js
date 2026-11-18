@@ -2034,6 +2034,111 @@ function issBinding(leaf, iss) {
              leaf.uri)) };
 }
 
+// FINDINGS ABOUT AN x5c CHAIN THAT ARE REPORTED, NEVER A FAILURE (rcbj,
+// 2026-11-17): a self-signed signer and a trust anchor included in x5c
+// (HAIP 1.0 section 6.1.1 says neither may be), each a row of its own, a
+// SKIP that is not essential, so the verdict is never FAIL because of them.
+// Present only when the finding is.
+function chainFindingRows(s, keyBase, trust, labelWhose) {
+  log.debug("Entering chainFindingRows().");
+  if (trust.selfSignedLeaf) {
+    s.add(keyBase + "self-signed", labelWhose + " signing certificate is " +
+          "not self-signed", SKIP, "reported: the end-entity certificate " +
+          "is SELF-SIGNED. HAIP 1.0 section 6.1.1: the signing " +
+          "certificate MUST NOT be self-signed. Not a failure of the " +
+          "signature, which is checked on its own row.", false);
+  }
+  if (trust.anchorIncluded) {
+    s.add(keyBase + "anchor-included", labelWhose + " x5c does not carry " +
+          "its trust anchor", SKIP, "reported: the last certificate (\"" +
+          trust.lastName + "\") is self-signed, so a trust anchor is " +
+          "INCLUDED in x5c. HAIP 1.0 section 6.1.1: it MUST NOT be. Being " +
+          "there does not make it trusted (SD-JWT VC -27 section 2.5).",
+          false);
+  }
+  log.debug("Leaving chainFindingRows().");
+}
+
+// SHA-256 of a certificate's DER, lower-case hex.
+function certSha256Hex(cert) {
+  log.debug("Entering certSha256Hex().");
+  log.debug("Leaving certSha256Hex().");
+  return bytes.bytesToHex(nobleSha256(cert.der)).toLowerCase();
+}
+
+// A configured mapping of iss to a certificate (SD-JWT VC -27 section 2.5
+// allows "a mapping ... configured"): session.issuerBindings, each
+// { iss, sha256 } (the hex SHA-256 of the end-entity certificate, a
+// certificate of its chain, or the anchor it chains to) or { iss, cn }
+// (the end-entity certificate's common name). The matching entry, or null.
+function configuredBinding(trust, iss, bindings) {
+  log.debug("Entering configuredBinding().");
+  var trimmed = String(iss).replace(/\/$/, "");
+  var mine = (isArray(bindings) ? bindings : []).filter(function (b) {
+    return b && String(b.iss || "").replace(/\/$/, "") === trimmed;
+  });
+  var certs = trust.certs || [];
+  var hashes = certs.map(certSha256Hex);
+  if (trust.anchoredBy) {
+    hashes.push(certSha256Hex(trust.anchoredBy));
+  }
+  var leafName = certs.length ? certs[0].name : "";
+  var hit = mine.filter(function (b) {
+    if (b.sha256) {
+      return hashes.indexOf(String(b.sha256).toLowerCase()
+        .replace(/[^0-9a-f]/g, "")) !== -1;
+    }
+    return !!b.cn && b.cn === leafName;
+  })[0] || null;
+  log.debug("Leaving configuredBinding(). " + !!hit);
+  return hit;
+}
+
+// The row on whether iss is bound to an x5c end-entity certificate (SD-JWT
+// VC -27 section 2.5). Bound by a URI SAN equal to iss, a dNSName of its
+// host, or a configured mapping: PASS. Unbound: REPORTED, never a failure
+// (rcbj, 2026-11-17): a SKIP that is not essential, saying iss is NOT
+// authenticated by the certificate and that the issuer is the
+// certificate's subject. The section's own words: "An iss claim, if
+// present, is not authenticated by this mechanism ...; a recipient MAY
+// reject an SD-JWT VC whose iss value is not bound to the end-entity
+// certificate according to its policy, and Issuers using this mechanism
+// SHOULD NOT include an iss claim without such a binding."
+function issBindingRow(s, key, trust, iss, session) {
+  log.debug("Entering issBindingRow().");
+  var label = "iss is bound to the issuer's x5c certificate";
+  var leaf = (trust.certs || [])[0];
+  if (!leaf) {
+    log.debug("Leaving issBindingRow(). No certificate.");
+    return;
+  }
+  var b = issBinding(leaf, iss);
+  if (b.bound) {
+    s.add(key, label, PASS, "iss " + iss + " is bound to the end-entity " +
+          "certificate by " + b.how + ".", false);
+    log.debug("Leaving issBindingRow(). Bound.");
+    return;
+  }
+  var mapped = configuredBinding(trust, iss,
+                                 session && session.issuerBindings);
+  if (mapped) {
+    s.add(key, label, PASS, "iss " + iss + " is bound to the certificate " +
+          "by this Verifier's configured mapping (" + (mapped.sha256 ?
+            "sha256 " + mapped.sha256 : "cn " + mapped.cn) + "), which " +
+          "SD-JWT VC -27 section 2.5 allows.", false);
+    log.debug("Leaving issBindingRow(). Mapped.");
+    return;
+  }
+  s.add(key, label, SKIP, "reported: iss " + iss + " is NOT bound to the " +
+        "end-entity certificate (" + b.how + "; no configured mapping " +
+        "matches). The iss claim is therefore NOT authenticated by the " +
+        "certificate: the issuer is the certificate's subject, \"" +
+        leaf.name + "\" (SD-JWT VC -27 section 2.5). Issuers \"SHOULD NOT " +
+        "include an iss claim without such a binding\". Not a failure of " +
+        "the signature, which is checked on its own row.", false);
+  log.debug("Leaving issBindingRow(). Unbound.");
+}
+
 // The verdict on a chain: { status, detail }. `chain` is the DER (or
 // base64) certificates, leaf first; opts { iss, now, anchors }.
 function x5cTrust(chain, opts) {
@@ -2057,9 +2162,10 @@ function x5cTrust(chain, opts) {
   var leaf = certs[0];
   notes.push(certs.length + " certificate(s), end-entity \"" + leaf.name +
              "\"");
-  if (selfSigned(leaf)) {
-    notes.push("the end-entity certificate is SELF-SIGNED (HAIP 1.0 " +
-               "section 6.1.1: it MUST NOT be)");
+  var selfSignedLeaf = selfSigned(leaf);
+  if (selfSignedLeaf) {
+    notes.push("the end-entity certificate is self-signed (reported on " +
+               "its own row)");
   }
   for (var i = 0; i + 1 < certs.length; i++) {
     var signed = certs[i].issuer === certs[i + 1].subject ?
@@ -2080,10 +2186,10 @@ function x5cTrust(chain, opts) {
   var last = certs[certs.length - 1];
   var included = certs.length > 1 && selfSigned(last);
   if (included) {
-    notes.push("the last certificate (\"" + last.name + "\") is " +
-               "self-signed, so a trust anchor is INCLUDED in the chain " +
-               "(HAIP 1.0 section 6.1.1: it MUST NOT be), and being " +
-               "there does not make it trusted (SD-JWT VC section 2.5)");
+    notes.push("the last certificate (\"" + last.name + "\") is a " +
+               "trust anchor included in the chain (reported on its own " +
+               "row); being there does not make it trusted (SD-JWT VC " +
+               "section 2.5)");
   }
   certs.forEach(function (c, k) {
     if (now > c.notAfter) {
@@ -2095,16 +2201,14 @@ function x5cTrust(chain, opts) {
     }
   });
   if (!fails.length) notes.push("every certificate is within its validity");
-  if (o.iss) {
-    var b = issBinding(leaf, o.iss);
-    if (b.bound) {
-      notes.push("iss " + o.iss + " is bound to the end-entity " +
-                 "certificate by " + b.how);
-    } else {
-      fails.push("iss " + o.iss + " is NOT bound to the end-entity " +
-                 "certificate (SD-JWT VC section 2.5): " + b.how);
-    }
-  } else {
+  // WHETHER iss IS BOUND TO THE CERTIFICATE IS NOT PART OF THIS ROW. SD-JWT
+  // VC -27 section 2.5: "An iss claim, if present, is not authenticated by
+  // this mechanism ...; a recipient MAY reject an SD-JWT VC whose iss value
+  // is not bound to the end-entity certificate according to its policy, and
+  // Issuers using this mechanism SHOULD NOT include an iss claim without
+  // such a binding." A MAY-reject is a policy, so the binding is reported on
+  // a row of its own by issBindingRow(), and this row is about the chain.
+  if (!o.iss) {
     notes.push("there is no iss: the issuer is the end-entity " +
                "certificate's subject");
   }
@@ -2153,7 +2257,10 @@ function x5cTrust(chain, opts) {
       "the chain (SD-JWT VC section 2.5).";
   }
   log.debug("Leaving x5cTrust(). " + status);
-  return { status: status, detail: verdict + " " + notes.join("; ") + "." };
+  return { status: status, detail: verdict + " " + notes.join("; ") + ".",
+           certs: certs, anchoredBy: anchoredBy,
+           selfSignedLeaf: selfSignedLeaf, anchorIncluded: included,
+           lastName: last.name };
 }
 
 // `opts.format` is the credential's format: jwt_vc_json's issuer key routes
@@ -2186,6 +2293,11 @@ async function checkIssuerSignature(s, key, compact, header, payload,
                                       anchors: ctx.session.trustAnchors });
     s.add(key.replace(/signature$/, "trust"), "The issuer's x5c " +
           "certificate is trusted", trust.status, trust.detail, true);
+    var base = key.replace(/signature$/, "");
+    chainFindingRows(s, base, trust, "The issuer's");
+    if (payload.iss) {
+      issBindingRow(s, base + "iss", trust, payload.iss, ctx.session);
+    }
   }
   log.debug("Leaving checkIssuerSignature(). " + v.valid);
   return v.valid;
@@ -4894,6 +5006,7 @@ async function verifyMdoc(s, query, presentation, ctx) {
                                   anchors: ctx.session.trustAnchors });
     s.add("mdoc.issuer-trust", "The document signer certificate is " +
           "trusted", trust.status, trust.detail, true);
+    chainFindingRows(s, "mdoc.issuer-", trust, "The document signer's");
   }
   var docTypeCheck = mdoc.checkDocType(read);
   s.add("mdoc.mso-doctype", docTypeCheck.name, docTypeCheck.ok ? PASS :

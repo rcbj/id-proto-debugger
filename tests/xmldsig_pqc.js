@@ -114,20 +114,20 @@ const bridge = requireSharedModule([
 ], "client/src/xmldsig_pqc.js");
 const pqc = requireSharedModule([
   path.join(__dirname, "pqc.js"),
-  path.join(__dirname, "..", "client", "src", "pqc.js"),
-], "client/src/pqc.js");
+  path.join(__dirname, "..", "common", "crypto", "pqc.js"),
+], "common/crypto/pqc.js");
 const pk = requireSharedModule([
   path.join(__dirname, "pk_encryption.js"),
-  path.join(__dirname, "..", "client", "src", "pk_encryption.js"),
-], "client/src/pk_encryption.js");
+  path.join(__dirname, "..", "common", "crypto", "pk_encryption.js"),
+], "common/crypto/pk_encryption.js");
 const frodo = requireSharedModule([
   path.join(__dirname, "frodokem.js"),
   path.join(__dirname, "..", "client", "src", "frodokem.js"),
 ], "client/src/frodokem.js");
 const hbs = requireSharedModule([
   path.join(__dirname, "hbs.js"),
-  path.join(__dirname, "..", "client", "src", "hbs.js"),
-], "client/src/hbs.js");
+  path.join(__dirname, "..", "common", "crypto", "hbs.js"),
+], "common/crypto/hbs.js");
 
 let pass = 0, fail = 0;
 function check(name, ok, detail) {

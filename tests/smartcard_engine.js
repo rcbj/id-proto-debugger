@@ -64,7 +64,8 @@ const x509 = paths.requireSharedModule(
 const keys = paths.requireSharedModule(
     [path.join(SRC, "key_material.js")], "client/src/key_material.js");
 const bytes = paths.requireSharedModule(
-    [path.join(SRC, "crypto_bytes.js")], "client/src/crypto_bytes.js");
+    [path.join(REPO, "common", "crypto", "crypto_bytes.js")],
+    "common/crypto/crypto_bytes.js");
 const otpHid = paths.requireSharedModule(
   [path.join(REPO, "api", "otp_hid.js"), path.join(__dirname, "otp_hid.js")],
   "api/otp_hid.js");

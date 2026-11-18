@@ -26,7 +26,7 @@ log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "https://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
-// Hashing is synchronous and pure JavaScript now (client/src/hash_tools.js,
+// Hashing is synchronous and pure JavaScript now (common/crypto/hash_tools.js,
 // which replaced this page's crypto.subtle calls when the FIPS 202 pane was
 // added — Web Crypto has no SHA-3 in any browser). The generous wait is kept
 // anyway: the values still arrive through a click handler on a busy CI host,
@@ -584,7 +584,7 @@ async function test() {
   // containerized runs serve the client at http://client:3000, which is not,
   // and the pane silently had no cryptography there. Adding the FIPS 202 pane
   // ended that — Web Crypto has no SHA-3 in any browser, so the whole page
-  // moved to client/src/hash_tools.js, which is pure JavaScript. Running
+  // moved to common/crypto/hash_tools.js, which is pure JavaScript. Running
   // WITHOUT the override is what holds it that way: on the containerized
   // stack this test now fails if anything on this page reaches for
   // crypto.subtle again. Do not add the flag back to fix such a failure.

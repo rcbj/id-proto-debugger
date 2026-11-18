@@ -146,7 +146,12 @@ var ECDH_KW_BYTES = { 'ECDH-ES+A128KW': 16, 'ECDH-ES+A192KW': 24,
 // The curve used when THIS side chooses: P-256. Decryption follows the epk.
 var ECDH_CURVE = 'P-256';
 var ECDH_CURVE_BITS = 256;
-var CURVE_BITS = { 'P-256': 256, 'P-384': 384, 'P-521': 521 };
+// How many bits of the shared secret Z to ask deriveBits() for. Z is the
+// WHOLE x-coordinate as an octet string (RFC 7518 section 4.6.2, SP 800-56A
+// section 5.7.1.2), so P-521's is 66 octets = 528 bits. Asking for 521 makes
+// Web Crypto zero the last seven bits of the 66th octet: the result agrees
+// with itself and with no other implementation (found with #472).
+var CURVE_BITS = { 'P-256': 256, 'P-384': 384, 'P-521': 528 };
 
 function isEcdh(alg) {
   log.debug("Entering isEcdh().");
@@ -511,17 +516,23 @@ function curveOf(key, fallback) {
 //
 //   AlgorithmID   the "enc" value for direct ECDH-ES, the full "alg" for the
 //                 +A*KW variants
-//   PartyUInfo    empty here (no apu header)
-//   PartyVInfo    empty here (no apv header)
+//   PartyUInfo    the base64url-decoded "apu" header, or empty without one
+//   PartyVInfo    the base64url-decoded "apv" header, or empty without one
 //   SuppPubInfo   the key length in BITS
+//
+// apu and apv were hard-coded empty until #472, which is self-consistent and
+// interoperates with nobody who sets them: OpenID4VP wallets routinely do, and
+// RFC 7518 section 4.6.2 makes them inputs to the derivation when present.
 // ---------------------------------------------------------------------------
-async function concatKdf(z, keyBytes, algId) {
+async function concatKdf(z, keyBytes, algId, apu, apv) {
   log.debug("Entering concatKdf(). algId=" + algId + ", keyBytes=" + keyBytes);
   var algBytes = new TextEncoder().encode(algId);
+  var uInfo = apu || new Uint8Array(0);
+  var vInfo = apv || new Uint8Array(0);
   var otherInfo = concatBytes(
     uint32be(algBytes.length), algBytes,   // AlgorithmID
-    uint32be(0),                           // PartyUInfo (empty)
-    uint32be(0),                           // PartyVInfo (empty)
+    uint32be(uInfo.length), uInfo,         // PartyUInfo (apu)
+    uint32be(vInfo.length), vInfo,         // PartyVInfo (apv)
     uint32be(keyBytes * 8)                 // SuppPubInfo = keydatalen in bits
   );                                       // SuppPrivInfo omitted
   // NIST SP 800-56A Concat KDF, and it REPEATS. One SHA-256 round yields 32
@@ -544,6 +555,33 @@ async function concatKdf(z, keyBytes, algId) {
   }
   log.debug("Leaving concatKdf(). " + rounds + " round(s).");
   return derived.slice(0, keyBytes);
+}
+
+// The PartyUInfo / PartyVInfo octets a protected header names: its "apu" or
+// "apv" member, base64url-decoded, or nothing when the member is absent. A
+// value that is not base64url is REFUSED rather than decoded leniently —
+// b64uToBytes() would quietly drop or rewrite characters, and a KDF fed
+// octets other than the ones the far end decoded fails later as nothing more
+// specific than "decryption failed".
+function partyInfo(protectedHeader, name) {
+  log.debug("Entering partyInfo(). name=" + name);
+  if (!protectedHeader ||
+      !Object.prototype.hasOwnProperty.call(protectedHeader, name) ||
+      protectedHeader[name] === undefined) {
+    log.debug("Leaving partyInfo(). Absent.");
+    return new Uint8Array(0);
+  }
+  var value = protectedHeader[name];
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]*$/.test(value) ||
+      value.length % 4 === 1) {
+    log.debug("Leaving partyInfo(). Not base64url.");
+    throw new Error('the "' + name + '" header parameter must be a ' +
+        'base64url string (RFC 7518 section 4.6.1); this one is not: ' +
+        JSON.stringify(value));
+  }
+  var out = b64uToBytes(value);
+  log.debug("Leaving partyInfo(). " + out.length + " octets.");
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -700,6 +738,10 @@ async function deriveCekBytes(alg, enc, protectedHeader, recipientPublicKey,
   }
 
   if (isEcdh(alg)) {
+    // A caller's apu/apv are already in the header; they are read, never
+    // invented, and a malformed one is refused before any key is generated.
+    var apu = partyInfo(protectedHeader, 'apu');
+    var apv = partyInfo(protectedHeader, 'apv');
     var curve = curveOf(recipientPublicKey, ECDH_CURVE);
     var recipientPub = await importKey(recipientPublicKey, 'spki',
       { name: 'ECDH', namedCurve: curve }, []);
@@ -717,13 +759,14 @@ async function deriveCekBytes(alg, enc, protectedHeader, recipientPublicKey,
       // Concat KDF AlgorithmID is the content-encryption "enc" value, and the
       // key data length is the WHOLE CEK — which for a CBC-HMAC enc is both
       // halves, exactly as RFC 7518 section 5.2.2 defines it.
-      var direct = await concatKdf(z, keyBytes, enc);
+      var direct = await concatKdf(z, keyBytes, enc, apu, apv);
       log.debug("Leaving deriveCekBytes(). ECDH-ES direct.");
       return { cekBytes: asCekBytes(direct), encryptedKey: '' };
     }
     // ECDH-ES+A*KW: derive a key-wrapping key (AlgorithmID is the full "alg",
     // keydatalen is the AES-KW size), then wrap a fresh random CEK with it.
-    var kekBytes = await concatKdf(z, ECDH_KW_BYTES[alg], alg);
+    var kekBytes = await concatKdf(z, ECDH_KW_BYTES[alg], alg, apu,
+        apv);
     var random = randomCekBytes(keyBytes);
     log.debug("Leaving deriveCekBytes(). " + alg + ".");
     return { cekBytes: random,
@@ -909,6 +952,8 @@ async function unwrapCekBytes(alg, enc, protectedHeader, encryptedKey,
   if (isEcdh(alg)) {
     if (!protectedHeader.epk) throw new Error('an ECDH-ES JWE must carry an ' +
         '"epk" header.');
+    var apu = partyInfo(protectedHeader, 'apu');
+    var apv = partyInfo(protectedHeader, 'apv');
     var curve = protectedHeader.epk.crv || ECDH_CURVE;
     var recipientPriv = await importKey(recipientPrivateKey, 'pkcs8',
       { name: 'ECDH', namedCurve: curve }, ['deriveBits']);
@@ -918,11 +963,12 @@ async function unwrapCekBytes(alg, enc, protectedHeader, encryptedKey,
         recipientPriv,
       CURVE_BITS[curve] || ECDH_CURVE_BITS);
     if (alg === 'ECDH-ES') {
-      var direct = await concatKdf(z, keyBytes, enc);
+      var direct = await concatKdf(z, keyBytes, enc, apu, apv);
       log.debug("Leaving unwrapCekBytes(). ECDH-ES direct.");
       return asCekBytes(direct);
     }
-    var kekBytes = await concatKdf(z, ECDH_KW_BYTES[alg], alg);
+    var kekBytes = await concatKdf(z, ECDH_KW_BYTES[alg], alg, apu,
+        apv);
     log.debug("Leaving unwrapCekBytes(). " + alg + ".");
     return unwrapRawBytes(b64uToBytes(encryptedKey), kekBytes);
   }

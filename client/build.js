@@ -458,6 +458,33 @@ const stagedSpiffe = (needsSpiffe && fs.existsSync(SPIFFE_DIR))
       return dest;
     })
   : [];
+// And common/crypto/ — the central crypto module of #463: the pure-JS
+// engines (crypto_bytes, hash_tools, symmetric_crypto, pk_encryption, pqc,
+// hbs, and the facade beside them) that lived in client/src until they moved
+// out so that the browser, the api and tests/ can all reach ONE copy. The
+// bundles still `require("./pqc")` and friends, so the directory is staged
+// flat into src/ exactly as common/krb5 and common/spiffe are — every .js
+// file in it, so a module added there is carried without an edit here.
+//
+// UNCONDITIONALLY, unlike the three lists above, and deliberately: jws.js,
+// jose_jwe.js and key_material.js require these engines, and between them
+// they are reached from nearly every bundle this build makes. A per-bundle
+// list would be a transcription of a require closure that changes whenever
+// a page gains an algorithm, and the cost of getting it wrong is a build
+// that fails on "Cannot find module './pqc'" naming a file that exists.
+// Staging a few files for a build that happens not to need them costs
+// nothing; the `finally` below removes them either way. client/.gitignore
+// names them too, so a build killed before its `finally` cannot leave a copy
+// that `git add` would pick up.
+const CRYPTO_DIR = path.join(CLIENT_DIR, '..', 'common', 'crypto');
+const stagedCrypto = fs.existsSync(CRYPTO_DIR)
+  ? fs.readdirSync(CRYPTO_DIR).filter((f) => f.endsWith('.js')).map((f) => {
+      const dest = path.join(SRC, f);
+      log.info('staging common/crypto/' + f + ' -> src/' + f);
+      fs.copyFileSync(path.join(CRYPTO_DIR, f), dest);
+      return dest;
+    })
+  : [];
 try {
   for (const [name, standalone] of BUILT_BUNDLES) {
     const out = path.join(DIST, 'js', name + '.js');
@@ -484,6 +511,7 @@ try {
   stagedKrb5.forEach((f) => fs.rmSync(f, { force: true }));
   stagedSpiffe.forEach((f) => fs.rmSync(f, { force: true }));
   stagedXmldsig.forEach((f) => fs.rmSync(f, { force: true }));
+  stagedCrypto.forEach((f) => fs.rmSync(f, { force: true }));
 }
 
 // 3a. EMBEDDED ONLY: the mock STS's placeholder survived minification.

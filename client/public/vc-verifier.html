@@ -189,6 +189,18 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
               so the box is off there.</span></td>
         </tr>
         <tr>
+          <td><label for="vpv_issuer_bindings">Issuer bindings (optional)</label></td>
+          <td><textarea id="vpv_issuer_bindings" class="vc-mono" rows="3" cols="80"
+                        placeholder="https://issuer.example = sha256:3f2a...&#10;https://issuer.example = cn:Example Issuer"
+                        onchange="return vcverifier.settingsChanged();"></textarea>
+              <span class="vc-note">One per line: an iss, then the certificate it is bound to, by the SHA-256 of
+              the signing certificate, a certificate of its chain or the anchor it chains to
+              (<code>sha256:&lt;hex&gt;</code>), or by the signing certificate's common name
+              (<code>cn:&lt;name&gt;</code>). SD-JWT VC section 2.5 lets a Verifier configure such a mapping;
+              without one, an iss that no subjectAltName names is reported as not authenticated by the
+              certificate, and never fails the signature.</span></td>
+        </tr>
+        <tr>
           <td><label for="vpv_redirect_uri">Send the wallet's browser to (optional)</label></td>
           <td><input type="text" id="vpv_redirect_uri" size="60"
                      placeholder="https://verifier.example/done"

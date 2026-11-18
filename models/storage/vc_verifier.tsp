@@ -85,4 +85,7 @@ model VcVerifierKeys {
   @storageKey(#{ area: "local", class: "keypair",
                  optOut: "vpv_save_identity" })
   vpv_identity: unknown;
+
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_issuer_bindings: unknown;
 }

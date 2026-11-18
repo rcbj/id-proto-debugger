@@ -1,7 +1,7 @@
 # Hashing — the Encoding / Hashing Tools page
 
 Covers `client/public/encoding_tools.html`, `client/src/encoding_tools.js`,
-`client/src/hash_tools.js`, `client/public/css/encoding_tools.css`,
+`common/crypto/hash_tools.js`, `client/public/css/encoding_tools.css`,
 `tests/encoding_tools.js` (the page) and `tests/hash_engine.js` (the bytes).
 
 The page has six panes. Three are old and dull — Base64, percent-encoding and

@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 // STATEFUL HASH-BASED SIGNATURES — LMS/HSS (RFC 8554, RFC 9858) and
 // XMSS/XMSS^MT (RFC 8391, SP 800-208) — driven in NODE with no browser,
-// because client/src/hbs.js has no DOM.
+// because common/crypto/hbs.js has no DOM.
 //
 // WHY THIS FILE MATTERS MORE THAN MOST. Every other signature scheme in this
 // application is somebody else's implementation with a thin layer over it:
@@ -79,16 +79,18 @@ var log = bunyan.createLogger({ name: 'hbs_signatures',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 
-// The module under test is read from the client TREE rather than from a flat
-// copy beside this script — `COPY client/src /usr/src/client/src` in
-// tests/Dockerfile puts it there — through module_paths.js, so that its own
+// The module under test is read from the repository TREE rather than from a
+// flat copy beside this script — common/crypto/ since #463, which
+// `COPY common/crypto/ /usr/src/common/crypto/` in tests/Dockerfile puts
+// there — through module_paths.js, so that its own
 // `require("@noble/hashes/sha256")` resolves against tests/node_modules.
 const REPO = path.resolve(__dirname, "..");
 const SRC = path.join(REPO, "client", "src");
+const CRYPTO = path.join(REPO, "common", "crypto");
 const PUBLIC = path.join(REPO, "client", "public");
 const paths = require("./module_paths.js");
-const hbs = paths.requireSharedModule([path.join(SRC, "hbs.js")],
-                                      "client/src/hbs.js");
+const hbs = paths.requireSharedModule([path.join(CRYPTO, "hbs.js")],
+                                      "common/crypto/hbs.js");
 
 const VECTORS = JSON.parse(
     fs.readFileSync(path.join(__dirname, "hbs_vectors.json"), "utf8"));
@@ -942,7 +944,7 @@ var MUTANTS = [
 
 function loadMutant(index, mutant) {
   log.debug("Entering loadMutant(). index=" + index);
-  var source = fs.readFileSync(path.join(SRC, "hbs.js"), "utf8");
+  var source = fs.readFileSync(path.join(CRYPTO, "hbs.js"), "utf8");
   assert.ok(source.indexOf(mutant.from) >= 0,
       "The mutation \"" + mutant.why + "\" no longer matches hbs.js. It " +
       "has to be re-aimed: a mutation that does not apply makes the check " +
@@ -952,7 +954,8 @@ function loadMutant(index, mutant) {
   // The one relative require, made absolute so the copy can live outside
   // client/src — see the note above about never writing into that directory.
   mutated = mutated.replace('require("./crypto_bytes")',
-      JSON.stringify(path.join(SRC, "crypto_bytes.js")).replace(/^/, "require(")
+      JSON.stringify(path.join(CRYPTO, "crypto_bytes.js"))
+          .replace(/^/, "require(")
           .replace(/$/, ")"));
   var file = path.join(os.tmpdir(),
       "hbs-mutant-" + process.pid + "-" + index + ".js");
@@ -1058,7 +1061,7 @@ function everyRuleIsLoadBearing() {
 // ===========================================================================
 function theEngineReachesNoDom() {
   log.debug("Entering theEngineReachesNoDom().");
-  var source = fs.readFileSync(path.join(SRC, "hbs.js"), "utf8");
+  var source = fs.readFileSync(path.join(CRYPTO, "hbs.js"), "utf8");
   var code = source.replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n").filter(function (line) {
         return !/^\s*\/\//.test(line);
@@ -1066,7 +1069,7 @@ function theEngineReachesNoDom() {
   var forbidden = ["document", "window", "localStorage", "crypto.subtle"];
   for (var i = 0; i < forbidden.length; i++) {
     assert.ok(code.indexOf(forbidden[i]) < 0,
-        "client/src/hbs.js reaches " + forbidden[i] + " — this whole job " +
+        "common/crypto/hbs.js reaches " + forbidden[i] + " — this whole job " +
         "exists because it does not.");
   }
   // The hot-path rule from the repo-root CLAUDE.md, enforced rather than
