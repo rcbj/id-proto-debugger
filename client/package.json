@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@noble/curves": "1.4.0",
+    "@noble/curves-v1.9": "npm:@noble/curves@1.9.7",
     "@noble/hashes": "1.4.0",
     "@noble/post-quantum": "^0.4.1",
     "@xmldom/xmldom": "0.9.12",

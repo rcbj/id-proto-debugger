@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Barcodes</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+    <style>
+      .vcb-result th { text-align: left; vertical-align: top; padding: 4px 12px 4px 0; white-space: nowrap; }
+      .vcb-result td { vertical-align: top; padding: 4px 0; word-break: break-all; }
+      .vcb-result pre { white-space: pre-wrap; word-break: break-all; margin: 0; max-height: 360px; overflow: auto; }
+      .vcb-protect { display: inline-block; width: 70px; font-family: monospace; }
+      .vcb-wide { width: 95%; font-family: monospace; }
+      #vcb_qr svg { width: 260px; height: 260px; background: #fff; }
+    </style>
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/vc_barcodes_page.js">
+</script>
+
+<p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="vc-title">VC Barcodes &mdash; a credential printed on a physical document</h3>
+
+<p class="vc-intro"><a href="https://www.w3.org/TR/vc-barcodes/" target="_blank" rel="noopener noreferrer">Verifiable
+Credential Barcodes v1.0</a> (W3C <strong>Working Draft</strong>, 22 August 2026) puts a signed credential in a
+barcode on an ID card, a passport or a driver's licence, and signs it over what the document <em>already prints</em> in
+machine-readable form &mdash; the MRZ, or the licence's own AAMVA PDF417 fields &mdash; so the same barcode copied
+onto a forged document does not verify. The proof is <code>ecdsa-xi-2023</code>: <code>ecdsa-rdfc-2019</code> with a
+hash of that optical data appended. The credential is
+<a href="https://www.w3.org/TR/cbor-ld/" target="_blank" rel="noopener noreferrer">CBOR-LD 1.0</a> (registry entry 100),
+small enough for a QR code.</p>
+
+<p class="vc-intro">Where the published barcodes and the draft's prose disagree, this page follows the barcodes, which
+every implementation produces: base45 is <a href="https://www.rfc-editor.org/rfc/rfc9285" target="_blank" rel="noopener noreferrer">RFC 9285</a>,
+the CBOR-LD tag is 51997, and <code>ecdsa-xi-2023</code> hashes with SHA-256 on P-384 too. <strong>Nothing on this
+page is stored</strong>, the issuer's key included.</p>
+
+<!-- ============ Pane 1: read and verify ============ -->
+<div class="step0 dbg-pane" id="pane_vcb_read">
+  <legend class="dbg-legend" id="vcb_read_expand" onclick="return vcbarcodespage.togglePane('vcb_read_fieldset');">Read and Verify a Barcode</legend>
+  <fieldset name="vcb_read_fieldset" id="vcb_read_fieldset" style="display: block;">
+    <p class="vc-note">Paste what a scanner reads: the QR text (<code>VC1-R…</code>), the whole AAMVA PDF417 text
+    (the credential is read from subfile <code>ZZ</code>, element <code>ZZA</code>), the PDF417 field alone, or the
+    CBOR-LD as hex. Control characters in PDF417 text are shown as <code>\x1e</code> and <code>\r</code>.
+    <a href="#" id="vcb_example_ead" onclick="return vcbarcodespage.loadExample('ead');">Load the QR + MRZ example</a> &middot;
+    <a href="#" id="vcb_example_dl" onclick="return vcbarcodespage.loadExample('dl');">Load the driver's licence example</a></p>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label for="vcb_barcode">Barcode: </label><span class="tooltiptext">The barcode's text. A QR code can also be read from a picture of it with Scan Image.</span></div></td>
+          <td><textarea id="vcb_barcode" name="vcb_barcode" rows="5" class="vcb-wide"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcb_image">QR image: </label><span class="tooltiptext">Read a QR code from an image file, in this page (no network). PDF417 symbols are not decoded from images here: paste what a scanner reads.</span></div></td>
+          <td><input type="file" id="vcb_image" name="vcb_image" accept="image/*" onchange="return vcbarcodespage.onImage(event);" /></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcb_mrz">MRZ: </label><span class="tooltiptext">The Machine Readable Zone printed on the document, one line per line. The signature covers every line, so for a MachineReadableZone credential this must be what the document prints.</span></div></td>
+          <td><textarea id="vcb_mrz" name="vcb_mrz" rows="3" class="vcb-wide" placeholder="IAUTO0000007010SRC0000000701&lt;&lt;"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcb_aamva">AAMVA data: </label><span class="tooltiptext">The licence's PDF417 text, when the barcode above is only the credential field. Not needed when the barcode is the whole PDF417: its fields are read from it.</span></div></td>
+          <td><textarea id="vcb_aamva" name="vcb_aamva" rows="3" class="vcb-wide"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcb_list_length">Status list length: </label><span class="tooltiptext">How a TerseBitstringStatusListEntry expands. The draft says 2^26 MUST (67108864); its own example works only with 2^17 (131072).</span></div></td>
+          <td><input type="text" id="vcb_list_length" name="vcb_list_length" value="67108864" size="12" />
+            <label for="vcb_status_purpose">purpose</label>
+            <select id="vcb_status_purpose" name="vcb_status_purpose"><option>revocation</option><option>suspension</option></select></td>
+        </tr>
+        <tr>
+          <td><input class="btn2" id="vcb_verify_button" type="button" value="Verify" onclick="vcbarcodespage.verifyBarcode(); return false;" /></td>
+          <td><div class="vc-status" id="vcb_read_status">&nbsp;</div></td>
+        </tr>
+      </tbody>
+    </table>
+    <div id="vcb_read_result"></div>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 2: issue ============ -->
+<div class="step0 dbg-pane" id="pane_vcb_issue">
+  <legend class="dbg-legend" id="vcb_issue_expand" onclick="return vcbarcodespage.togglePane('vcb_issue_fieldset');">Issue a Barcode</legend>
+  <fieldset name="vcb_issue_fieldset" id="vcb_issue_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label for="vcb_subject_type">Document: </label><span class="tooltiptext">MachineReadableZone: an ID card or travel document, the credential in a QR code. AamvaDriversLicenseScannableInformation: a driver's licence, the credential inside its PDF417.</span></div></td>
+          <td><select id="vcb_subject_type" name="vcb_subject_type" onchange="return vcbarcodespage.onSubjectType();">
+            <option value="MachineReadableZone">ID card / travel document (MRZ, QR code)</option>
+            <option value="AamvaDriversLicenseScannableInformation">Driver's licence (AAMVA PDF417)</option>
+          </select></td>
+        </tr>
+        <tr id="vcb_issue_mrz_row">
+          <td><label for="vcb_issue_mrz">MRZ: </label></td>
+          <td><textarea id="vcb_issue_mrz" name="vcb_issue_mrz" rows="3" class="vcb-wide"></textarea></td>
+        </tr>
+        <tr id="vcb_issue_aamva_row">
+          <td><div class="tooltip"><label for="vcb_issue_aamva">AAMVA PDF417: </label><span class="tooltiptext">The licence's PDF417 text without a credential. The issued credential is added to it as subfile ZZ, element ZZA.</span></div></td>
+          <td><textarea id="vcb_issue_aamva" name="vcb_issue_aamva" rows="5" class="vcb-wide"></textarea></td>
+        </tr>
+        <tr id="vcb_protect_row">
+          <td><div class="tooltip"><label>Protect: </label><span class="tooltiptext">The mandatory AAMVA fields the signature covers (protectedComponentIndex). A field left out can change without the barcode noticing.</span></div></td>
+          <td><div id="vcb_protect_boxes"></div></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcb_curve">Issuer key: </label><span class="tooltiptext">ecdsa-xi-2023 signs with P-256 or P-384. The key stays in this page; download it to keep it.</span></div></td>
+          <td><select id="vcb_curve" name="vcb_curve"><option>P-256</option><option>P-384</option></select>
+            <input class="btn2" id="vcb_generate_button" type="button" value="Generate" onclick="return vcbarcodespage.generateKey();" />
+            <input class="btn2" id="vcb_download_button" type="button" value="Download Key" onclick="return vcbarcodespage.downloadKey();" /></td>
+        </tr>
+        <tr>
+          <td><label for="vcb_private_jwk">Private JWK: </label></td>
+          <td><textarea id="vcb_private_jwk" name="vcb_private_jwk" rows="4" class="vcb-wide"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcb_issuer">Issuer: </label><span class="tooltiptext">The credential's issuer. Generate fills in the key's did:key; the verification method defaults to did:key:z…#z….</span></div></td>
+          <td><input type="text" id="vcb_issuer" name="vcb_issuer" size="70" />
+            <input type="text" id="vcb_issuer_vm" name="vcb_issuer_vm" size="30" placeholder="verificationMethod (optional)" /></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label for="vcb_status_base">Status: </label><span class="tooltiptext">Optional. A TerseBitstringStatusListEntry: the status lists' base URL and this credential's 32-bit index.</span></div></td>
+          <td><input type="text" id="vcb_status_base" name="vcb_status_base" size="50" placeholder="https://status.example/lists (optional)" />
+            <input type="text" id="vcb_status_index" name="vcb_status_index" size="12" placeholder="index" /></td>
+        </tr>
+        <tr>
+          <td><input class="btn2" id="vcb_issue_button" type="button" value="Issue" onclick="vcbarcodespage.issueBarcode(); return false;" /></td>
+          <td><div class="vc-status" id="vcb_issue_status">&nbsp;</div></td>
+        </tr>
+        <tr>
+          <td><label for="vcb_issue_output">Barcode: </label></td>
+          <td><textarea id="vcb_issue_output" name="vcb_issue_output" rows="5" class="vcb-wide" readonly></textarea>
+            <input class="btn2" id="vcb_read_issued_button" type="button" value="Verify It" onclick="vcbarcodespage.readIssued(); return false;" /></td>
+        </tr>
+      </tbody>
+    </table>
+    <div id="vcb_qr"></div>
+    <div id="vcb_issue_result"></div>
+  </fieldset>
+</div>
+
+<!--#include file="/partials/vc_tools.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

@@ -20,11 +20,20 @@
             </div>
           </td>
           <td>
-            <span class="vc-note">Resolve a <strong>Decentralized Identifier</strong>
-            (<code>did:jwk</code>, <code>did:key</code>, <code>did:web</code>) to its document, verify that a
-            key it publishes signed the credential in this browser, and verify a domain linkage
-            (<a href="https://identity.foundation/well-known-did-configuration/resources/did-configuration/" target="_blank" rel="noopener noreferrer">DIF
-            Well Known DID Configuration</a>). Opens in this tab; the workflow's state is untouched.</span>
+            <span class="vc-note">Resolve a <strong>DID</strong> (<code>did:jwk</code>, <code>did:key</code>,
+            <code>did:web</code>), check that its key signed the credential in this browser, and verify a
+            <a href="https://identity.foundation/well-known-did-configuration/resources/did-configuration/" target="_blank" rel="noopener noreferrer">domain linkage</a>.</span>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label><a id="vc_tools_barcodes_link" href="/vc-barcodes.html">VC Barcodes</a></label>
+              <span class="tooltiptext">Read, verify and issue a credential printed in a barcode on an ID card or driver's licence, signed over the document's MRZ or AAMVA fields.</span>
+            </div>
+          </td>
+          <td>
+            <span class="vc-note">Read, verify and issue a <strong>VC barcode</strong> (W3C, Working Draft): a
+            credential on an ID card or licence, signed over its MRZ or AAMVA fields.</span>
           </td>
         </tr>
         <tr>
@@ -37,9 +46,8 @@
             <!-- Kept to roughly the length of the DID description above: this
                  table's row is as tall as its longest cell, and step 0 is
                  measured against a viewport. See css/sd_jwt_vc.css. -->
-            <span class="vc-note">Build a <strong>certificate authority</strong> — Root, Intermediate and Issuing — and issue TLS server, TLS
-            client, code-signing and S/MIME certificates with full <strong>X.509v3</strong> extension control. Useful when the issuer or verifier is
-            behind TLS you control. Opens in this tab; the workflow's state is untouched.</span>
+            <span class="vc-note">Build a <strong>certificate authority</strong> and issue certificates with full
+            <strong>X.509v3</strong> extension control. Each tool opens in this tab.</span>
           </td>
         </tr>
       </tbody>
