@@ -3969,8 +3969,10 @@ function buildJobs() {
 
   // Gordian Envelope (#480, IETF drafts): dCBOR, the digest tree, UR, and
   // Schnorr / ECDSA / Ed25519, reproducing bc-envelope 0.43.0's and dcbor
-  // 0.25.2's own test vectors byte for byte, signatures included. No
-  // services.
+  // 0.25.2's own test vectors byte for byte, signatures included; then the
+  // obscuring cases (encryption, recipients, password locks, compression,
+  // SSKR), multi-part URs, ML-DSA and SSH signatures, against the crates'
+  // vectors and bc-envelope-cli 0.35.0 both ways. No services.
   jobs.push({
     name: "Gordian Envelope (the Rust crates' vectors, and Blockchain " +
         "Commons' bc-envelope-cli both ways, in node)",
@@ -4234,10 +4236,13 @@ function buildJobs() {
     });
     // The Gordian Envelope page (#480): issue bc-envelope's example,
     // present four claims (the root digest unchanged, verified in the page
-    // and in node), another key refused, salted Ed25519. Needs only the
-    // client.
+    // and in node), another key refused, salted Ed25519; encrypt to a
+    // recipient and a password, compress, split into SSKR shares, send as
+    // multi-part URs, and issue with ML-DSA-44 and SSH Ed25519. Needs only
+    // the client.
     jobs.push({
-      name: "Gordian Envelope page — issue, verify and present by elision",
+      name: "Gordian Envelope page — issue, verify, present, encrypt, " +
+          "compress, SSKR and multi-part URs",
       script: "gordian_envelope_browser.js",
       env: {},
     });

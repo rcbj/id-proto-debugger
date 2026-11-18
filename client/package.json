@@ -23,6 +23,7 @@
     "dompurify": "^3.4.17",
     "express": "^5.2.1",
     "express-logging": "latest",
+    "fflate": "0.8.2",
     "jquery": "latest",
     "jsonld": "^9.0.0",
     "jsqr": "1.4.0",
