@@ -59,6 +59,8 @@ var bytes = require("./crypto_bytes");
 // JPT and SD-CWT presentations (#478).
 var jwpLib = require("./jwp");
 var sdCwt = require("./sd_cwt");
+// AnonCreds presentations (#479).
+var anoncredsWallet = require("./anoncreds_wallet");
 
 var KEYS = {
   // Which way the presentation is being started (see USE_CASES).
@@ -812,6 +814,10 @@ function buildPresentationFor(opts) {
     log.debug("Leaving buildPresentationFor(). sd-cwt.");
     return presentSdCwt(opts);
   }
+  if (format === sdJwtVc.FORMAT_ANONCREDS) {
+    log.debug("Leaving buildPresentationFor(). anoncreds.");
+    return presentAnoncreds(opts);
+  }
   // A W3C vc+sd-jwt is an SD-JWT on the wire: selected Disclosures and a
   // Key Binding JWT, exactly as a dc+sd-jwt.
   if (format !== sdJwtVc.FORMAT_JWT_VC_JSON) {
@@ -898,6 +904,25 @@ function presentSdCwt(opts) {
   }
 }
 
+// An AnonCreds presentation (#479): the selected attributes revealed, under
+// this debugger's mapping of the OpenID4VP request (anoncreds_wallet.js),
+// with the link secret held as the holder key. Sent as the presentation's
+// JSON text.
+function presentAnoncreds(opts) {
+  log.debug("Entering presentAnoncreds().");
+  try {
+    var made = anoncredsWallet.present(opts.credential, opts.selected || [],
+                                       opts.holderPrivateJwk, opts.nonce);
+    log.debug("Leaving presentAnoncreds().");
+    return Promise.resolve({ presentation: JSON.stringify(made.presentation),
+      prefix: "", sdHash: "", kb: null, vp: null,
+      anoncredsRequest: made.request, format: sdJwtVc.FORMAT_ANONCREDS });
+  } catch (e) {
+    log.debug("Leaving presentAnoncreds(). " + e.message);
+    return Promise.reject(e);
+  }
+}
+
 // The vp_token: a JSON object keyed by the DCQL credential query id, each value
 // an array of presentations (OID4VP section 8.1).
 function vpToken(credentialQueryId, presentation) {
@@ -931,6 +956,15 @@ function presentedClaims(presentation) {
     log.debug("Leaving presentedClaims(). jwt_vc_json, " +
               Object.keys(inner.claims).length + " claim(s).");
     return { parsed: inner, claims: inner.claims, outer: outer };
+  }
+  // An AnonCreds presentation: the raw values it reveals.
+  if (anoncredsWallet.looksLikePresentation(presentation)) {
+    var ap = JSON.parse(presentation);
+    var aclaims = anoncredsWallet.revealedClaims(ap, null);
+    log.debug("Leaving presentedClaims(). anoncreds.");
+    return { parsed: { format: sdJwtVc.FORMAT_ANONCREDS,
+                       disclosures: Object.keys(aclaims) },
+             claims: aclaims, anoncreds: ap };
   }
   // A presented JPT: the claims of the disclosed slots.
   if (jwpLib.looksLikeJwp(presentation)) {

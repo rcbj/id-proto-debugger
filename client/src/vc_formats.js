@@ -191,6 +191,18 @@ var FORMATS = {
     holderBinding: "a Key Binding Token by the cnf key", selective: true,
     typeMember: null
   },
+  // AnonCreds 1.0 (#479): CL signatures. Neither OpenID4VCI 1.0 nor
+  // OpenID4VP 1.0 defines it; the wallet holds it as a bundle with its
+  // schema and credential definition (anoncreds_wallet.js).
+  "anoncreds": {
+    name: "AnonCreds 1.0 (CL signatures)",
+    spec: "AnonCreds Specification v1.0 (Hyperledger)",
+    signingAlgs: ["CL"], defaultSigningAlgs: ["CL"],
+    bindingMethods: ["link_secret"], defaultBinding: "link_secret",
+    proofTypes: [],
+    holderBinding: "a zero-knowledge proof under the holder's link secret",
+    selective: true, typeMember: null
+  },
   "mso_mdoc": {
     name: "ISO/IEC 18013-5 mdoc", spec: "OpenID4VCI 1.0 Appendix A.2",
     signingAlgs: COSE_ALGS, defaultSigningAlgs: [-7],

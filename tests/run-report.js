@@ -3935,6 +3935,16 @@ function buildJobs() {
     env: {},
   });
 
+  // AnonCreds (#479): the holder and verifier of client/src/anoncreds.js
+  // against anoncreds-rs v0.2.3 (tests/anoncreds_witness.js, from the
+  // private mirror's anoncreds-witness image) in every direction, and what
+  // must fail. No services. Fails, naming the image, without the witness.
+  jobs.push({
+    name: "AnonCreds (CL holder and verifier against anoncreds-rs, in node)",
+    script: "anoncreds_engine.js",
+    env: {},
+  });
+
   // SD-CWT (draft-ietf-spice-sd-cwt-09; #478): the working group's encoded
   // examples (issued, nested, decoys, both KBTs), our issuance and KBTs
   // checked by @auth0/cose and node's SHA-256, and what must fail.
@@ -4144,6 +4154,14 @@ function buildJobs() {
       name: "VC Presentation — ldp_vc presented whole (eddsa, ecdsa) and " +
           "BbsBlsSignature2020 derived, verified by Digital Bazaar and MATTR",
       script: "ldp_vc_whole_presentation.js",
+      env: {},
+    });
+    // AnonCreds through the presentation pages (#479): anoncreds-rs issues
+    // to our holder, the wallet reveals two of three attributes, and
+    // anoncreds-rs verifies. Needs the client and the anoncreds witness.
+    jobs.push({
+      name: "VC Presentation — AnonCreds (anoncreds-rs issuer and verifier)",
+      script: "anoncreds_presentation.js",
       env: {},
     });
     // JPT and SD-CWT through the presentation pages (#478, drafts): the

@@ -48,6 +48,9 @@ var vcJoseCose = require("./vc_jose_cose");
 // JSON Web Proofs and SD-CWT, both drafts (#478).
 var jwpLib = require("./jwp");
 var sdCwt = require("./sd_cwt");
+// AnonCreds, held as a bundle with its schema and credential definition
+// (#479).
+var anoncredsWallet = require("./anoncreds_wallet");
 
 var KEYS = {
   // "active" while the workflow is driving oauth2_oidc_1.html /
@@ -1477,6 +1480,8 @@ var JOSE_COSE_FORMATS = [FORMAT_VC_JWT, FORMAT_VC_SD_JWT, FORMAT_VC_COSE];
 // name neither, so they go by their media types' names here.
 var FORMAT_JPT = "jpt";
 var FORMAT_SD_CWT = "sd-cwt";
+// AnonCreds (#479): no OpenID4VCI / OpenID4VP identifier exists either.
+var FORMAT_ANONCREDS = anoncredsWallet.FORMAT;
 
 function isJoseCose(format) {
   log.debug("Entering isJoseCose().");
@@ -1511,6 +1516,10 @@ function credentialFormat(serialized) {
   if (joseCose && joseCose.kind === "vc") {
     log.debug("Leaving credentialFormat(). " + joseCose.format);
     return joseCose.format;
+  }
+  if (anoncredsWallet.looksLikeBundle(raw)) {
+    log.debug("Leaving credentialFormat(). anoncreds.");
+    return FORMAT_ANONCREDS;
   }
   if (raw.charAt(0) === "{") {
     try {
@@ -1661,6 +1670,30 @@ function parseSdCwtCredential(serialized) {
   };
 }
 
+// An AnonCreds credential as held (a bundle): one row per attribute, named
+// as the credential spells it, its value the raw one the issuer signed the
+// encoding of.
+function parseAnoncreds(serialized) {
+  log.debug("Entering parseAnoncreds().");
+  var b = anoncredsWallet.parseBundle(serialized);
+  var values = b.credential.values || {};
+  var flat = {};
+  Object.keys(values).forEach(function (k) {
+    flat[k] = values[k].raw;
+  });
+  log.debug("Leaving parseAnoncreds().");
+  return {
+    serialized: String(serialized).trim(), anoncreds: b,
+    header: { alg: "CL", schema_id: b.schemaId, cred_def_id: b.credDefId },
+    payload: { iss: (b.credentialDefinition || {}).issuerId || "" },
+    signature: "", credentialSubject: {}, claimsFlat: flat,
+    disclosures: Object.keys(values).map(function (k) {
+      return { encoded: k, name: k, value: values[k].raw };
+    }),
+    kbJwt: ""
+  };
+}
+
 function parseMdoc(serialized) {
   log.debug("Entering parseMdoc().");
   var parsed = mdoc.parseIssuerSigned(serialized);
@@ -1764,7 +1797,8 @@ function parseCredential(serialized) {
   var format = credentialFormat(serialized);
   if (!format) throw new Error("This does not look like an SD-JWT VC, a " +
       "jwt_vc_json, an ldp_vc or an ISO mdoc credential.");
-  var parsed = format === FORMAT_JPT ? parseJpt(serialized)
+  var parsed = format === FORMAT_ANONCREDS ? parseAnoncreds(serialized)
+             : format === FORMAT_JPT ? parseJpt(serialized)
              : format === FORMAT_SD_CWT ? parseSdCwtCredential(serialized)
              : isJoseCose(format) ? vcJoseCose.parse(serialized)
              : format === FORMAT_LDP_VC ? parseLdpVc(serialized)
@@ -1779,6 +1813,7 @@ function parseCredential(serialized) {
   // credential is derived from, an eddsa-rdfc-2022 one is presented whole.
   parsed.selectivelyDisclosable = format === FORMAT_SD_JWT ||
       format === FORMAT_VC_SD_JWT || format === FORMAT_JPT ||
+      format === FORMAT_ANONCREDS ||
       format === FORMAT_SD_CWT ||
       (format === FORMAT_LDP_VC && parsed.ldpSelective) ||
       format === FORMAT_MSO_MDOC;
@@ -2232,6 +2267,7 @@ module.exports = {
   FORMAT_VC_COSE: FORMAT_VC_COSE,
   FORMAT_JPT: FORMAT_JPT,
   FORMAT_SD_CWT: FORMAT_SD_CWT,
+  FORMAT_ANONCREDS: FORMAT_ANONCREDS,
   isJoseCose: isJoseCose,
   FORMAT_MSO_MDOC: FORMAT_MSO_MDOC,
   parseLdpVc: parseLdpVc,
