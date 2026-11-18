@@ -189,9 +189,133 @@ async function digest(alg, data, opts) {
   return { digest: provider.digest(alg, data), engine: "js" };
 }
 
+// HMAC: hmac(hash, key, data, opts) -> Promise<{ mac, engine }>, and
+// hmacVerify(...) -> Promise<{ valid, engine }>. `hash` is the provider's
+// name ("sha256"); `key` is the secret's bytes.
+async function hmac(hash, key, data, opts) {
+  log.debug("Entering hmac(). hash=" + hash);
+  var subtle = subtleFor(opts);
+  var name = DIGESTS[String(hash).toLowerCase()];
+  if (subtle && name) {
+    try {
+      var k = await subtle.importKey("raw", new Uint8Array(key),
+                                     { name: "HMAC", hash: name }, false,
+                                     ["sign"]);
+      var mac = new Uint8Array(await subtle.sign("HMAC", k,
+                                                 new Uint8Array(data)));
+      log.debug("Leaving hmac(). Web Crypto.");
+      return { mac: mac, engine: "webcrypto" };
+    } catch (e) {
+      log.debug("hmac(): Web Crypto refused (" + e.message + "); js.");
+    }
+  }
+  log.debug("Leaving hmac(). js.");
+  return { mac: provider.hmac(hash, key, data), engine: "js" };
+}
+
+async function hmacVerify(hash, key, data, mac, opts) {
+  log.debug("Entering hmacVerify(). hash=" + hash);
+  var subtle = subtleFor(opts);
+  var name = DIGESTS[String(hash).toLowerCase()];
+  if (subtle && name) {
+    try {
+      var k = await subtle.importKey("raw", new Uint8Array(key),
+                                     { name: "HMAC", hash: name }, false,
+                                     ["verify"]);
+      var ok = await subtle.verify("HMAC", k, new Uint8Array(mac),
+                                   new Uint8Array(data));
+      log.debug("Leaving hmacVerify(). Web Crypto " + ok);
+      return { valid: !!ok, engine: "webcrypto" };
+    } catch (e) {
+      log.debug("hmacVerify(): Web Crypto refused (" + e.message + "); js.");
+    }
+  }
+  var valid = provider.hmacVerify(hash, key, data, mac);
+  log.debug("Leaving hmacVerify(). js " + valid);
+  return { valid: valid, engine: "js" };
+}
+
+// A CRYPTOKEY the caller already holds, typically a non-extractable one a
+// page generated. Only Web Crypto can use it, so there is nothing to fall
+// back to; without crypto.subtle no CryptoKey can exist in the first place.
+// `alg` is a provider signature name or "hmac-<hash>". ECDSA is raw r || s.
+function cryptoKeyOp(alg) {
+  log.debug("Entering cryptoKeyOp(). alg=" + alg);
+  var m = /^hmac-(\w+)$/.exec(String(alg));
+  if (m) {
+    log.debug("Leaving cryptoKeyOp(). HMAC.");
+    return { name: "HMAC" };
+  }
+  var p = paramsFor(alg);
+  if (!p) {
+    log.debug("Leaving cryptoKeyOp(). Not in Web Crypto.");
+    throw new Error("A CryptoKey cannot sign " + alg + ": Web Crypto has " +
+                    "no such algorithm.");
+  }
+  log.debug("Leaving cryptoKeyOp().");
+  return p.op;
+}
+
+function isCryptoKey(value) {
+  log.debug("Entering isCryptoKey().");
+  var yes = typeof CryptoKey !== "undefined" && value instanceof CryptoKey;
+  log.debug("Leaving isCryptoKey(). " + yes);
+  return yes;
+}
+
+function realSubtle() {
+  log.debug("Entering realSubtle().");
+  var g = typeof globalThis !== "undefined" ? globalThis : {};
+  if (!(g.crypto && g.crypto.subtle)) {
+    log.debug("Leaving realSubtle(). None.");
+    throw new Error("A CryptoKey needs Web Crypto, and this page has none.");
+  }
+  log.debug("Leaving realSubtle().");
+  return g.crypto.subtle;
+}
+
+async function signWithCryptoKey(alg, cryptoKey, data) {
+  log.debug("Entering signWithCryptoKey(). alg=" + alg);
+  var sig = await realSubtle().sign(cryptoKeyOp(alg), cryptoKey,
+                                    new Uint8Array(data));
+  log.debug("Leaving signWithCryptoKey().");
+  return { signature: new Uint8Array(sig), engine: "webcrypto" };
+}
+
+async function verifyWithCryptoKey(alg, cryptoKey, data, signature) {
+  log.debug("Entering verifyWithCryptoKey(). alg=" + alg);
+  var ok = await realSubtle().verify(cryptoKeyOp(alg), cryptoKey,
+                                     new Uint8Array(signature),
+                                     new Uint8Array(data));
+  log.debug("Leaving verifyWithCryptoKey(). " + ok);
+  return { valid: !!ok, engine: "webcrypto" };
+}
+
+// A caller's CryptoKey as a JWK, for the pure-JS code that needs its bytes.
+// It must be extractable; a non-extractable one is refused by name.
+async function exportCryptoKeyJwk(cryptoKey) {
+  log.debug("Entering exportCryptoKeyJwk().");
+  try {
+    var jwk = await realSubtle().exportKey("jwk", cryptoKey);
+    log.debug("Leaving exportCryptoKeyJwk().");
+    return jwk;
+  } catch (e) {
+    log.debug("Leaving exportCryptoKeyJwk(). Not extractable.");
+    throw new Error("This operation runs in JavaScript and needs the key's " +
+        "bytes; the CryptoKey given is not extractable. Pass a JWK or PEM, " +
+        "or an extractable key.");
+  }
+}
+
 module.exports = {
+  exportCryptoKeyJwk: exportCryptoKeyJwk,
   sign: sign,
   verify: verify,
   digest: digest,
+  hmac: hmac,
+  hmacVerify: hmacVerify,
+  isCryptoKey: isCryptoKey,
+  signWithCryptoKey: signWithCryptoKey,
+  verifyWithCryptoKey: verifyWithCryptoKey,
   paramsFor: paramsFor
 };
