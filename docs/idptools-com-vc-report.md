@@ -180,7 +180,7 @@ protocol workflows (Kerberos, LDAP, SPIFFE and more).
 
 ---
 
-## Appendix — a reference setup with iya-sts
+## Appendix A: IdP Setup
 
 > **iya-sts is one example, not a requirement.** idptools.com works with
 > **any** OpenID4VCI issuer and OpenID4VP verifier. iya-sts is the open
@@ -344,9 +344,26 @@ POST /admin-api/applications/create
   `profile` and `email` scopes. The credential scopes are the ones in the
   issuer metadata's `credential_configurations_supported`.
 
-### 6. Run the two workflows on idptools.com
+### Clean up — remove it again
 
-**Load a credential (VC Issuance)** — generate the offer in the iya-sts **User
+```text
+POST /admin-api/users/delete         { "user": "demo-holder" }
+POST /admin-api/applications/forget  { "application": "idptools-wallet" }
+POST /admin-api/config/reset         { "key": "global.corsOrigins" }
+POST /admin-api/config/reset         { "key": "global.publicBaseUrl" }
+```
+
+And, to put the realm's security back to its out-of-the-box defaults:
+
+```text
+POST /admin-api/policies/reset-authn-policy  { }
+POST /admin-api/config/reset   { "key": "authn.allowOptionalSecondFactor" }
+POST /admin-api/config/reset   { "key": "risk.assessSignIns" }
+```
+
+## Appendix B: VC Issuance
+
+The wallet receives a credential — generate the offer in the iya-sts **User
 Portal**, then redeem it in the wallet. This is the pre-authorized flow, which
 is how the default iya-sts issues.
 
@@ -402,7 +419,9 @@ is how the default iya-sts issues.
 
    ![Step 3: the issued SD-JWT VC, verified and held in the wallet](idptools-com-images/issue-8-credential.png)
 
-**Present it (VC Presentation)** — to **iya-sts's own OpenID4VP verifier**. (The
+## Appendix C: VC Presentation
+
+The wallet presents to **iya-sts's own OpenID4VP verifier**. (The
 debugger's *own* Verifier page needs the self-hosted build, as it would store
 the answer server-side; on the hosted site use iya-sts or the browser's Digital
 Credentials API.)
@@ -440,29 +459,12 @@ Credentials API.)
 
    ![Step 1: the pasted request read, with the claims the Verifier asks for](idptools-com-images/present-3-request.png)
 4. Press **Present**. The wallet posts the presentation to iya-sts's
-   `response_uri` (allowed by the CORS origin set in step 3).
+   `response_uri` (allowed by the CORS origin configured in Appendix A).
 
    ![Step 2: the assembled answer, ready to present](idptools-com-images/present-4-present.png)
 5. The admin console shows the presentation **received and verified**.
 
    ![Step 3: iya-sts answered HTTP 200 and accepted the presentation](idptools-com-images/present-5-verified.png)
-
-### 7. Remove it again
-
-```text
-POST /admin-api/users/delete         { "user": "demo-holder" }
-POST /admin-api/applications/forget  { "application": "idptools-wallet" }
-POST /admin-api/config/reset         { "key": "global.corsOrigins" }
-POST /admin-api/config/reset         { "key": "global.publicBaseUrl" }
-```
-
-And, to put the realm's security back to its out-of-the-box defaults:
-
-```text
-POST /admin-api/policies/reset-authn-policy  { }
-POST /admin-api/config/reset   { "key": "authn.allowOptionalSecondFactor" }
-POST /admin-api/config/reset   { "key": "risk.assessSignIns" }
-```
 
 ---
 
