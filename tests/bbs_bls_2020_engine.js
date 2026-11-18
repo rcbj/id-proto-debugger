@@ -71,6 +71,11 @@ const bbsLd = load("bbs_bls_2020.js");
 const contexts = load("jsonld_contexts.js");
 const didLib = load("did.js");
 
+// MATTR's WASM build, always: tests/package.json overrides its optional
+// native module (@mattrglobal/node-bbs-signatures, whose install script
+// downloads a prebuilt binary from a GitHub repository that no longer
+// exists) with the WASM package itself, so native mode must never be tried.
+process.env.BBS_SIGNATURES_MODE = "wasm";
 const mattrBbs = require("@mattrglobal/bbs-signatures");
 const mattrLd = require("@mattrglobal/jsonld-signatures-bbs");
 // The jsonld-signatures release MATTR's suite is written against (7.0.0),

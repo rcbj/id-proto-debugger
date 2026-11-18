@@ -58,6 +58,8 @@
   "overrides": {
     "brace-expansion@1": "^1.1.17",
     "brace-expansion@2": "^2.1.3",
-    "glob@10": "^14.0.3"
+    "glob@10": "^14.0.3",
+    "node-forge": "$node-forge",
+    "@mattrglobal/node-bbs-signatures": "npm:@mattrglobal/bbs-signatures@1.2.0"
   }
 }

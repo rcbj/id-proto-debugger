@@ -32,6 +32,11 @@
 // Needs only the client: nothing is posted to anybody.
 // ---------------------------------------------------------------------------
 
+// MATTR's WASM build, always: tests/package.json overrides its optional
+// native module (@mattrglobal/node-bbs-signatures, whose install script
+// downloads a prebuilt binary from a GitHub repository that no longer
+// exists) with the WASM package itself, so native mode must never be tried.
+process.env.BBS_SIGNATURES_MODE = "wasm";
 const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
