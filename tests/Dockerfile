@@ -56,6 +56,43 @@
 # ---------------------------------------------------------------------------
 # Staging stage 1 of 3. Not shipped: the final stage copies /usr/src out of it.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# THE NATIVE OID4VC WALLET (#364): rcbj/oid4vc-wallet, a Linux wallet whose
+# command line (`accept`, `present --approve|--refuse`, `credential`) redeems
+# an offer and answers an OpenID4VP request with no window, no session bus and
+# no desktop key ring. tests/vc_verifier_oid4vc_wallet.js runs it as a child
+# against the Verifier page. Built the way iya-sts's own tests image builds
+# it (its #694): the source archive at a pinned commit of `main`, checked by
+# sha256, so a bump is the commit and the archive's sha256 and nothing else.
+#   * libudev-dev and libpcsclite-dev are for the security-key code, linked
+#     whether or not a key is ever used; the final stage needs only libudev1
+#     and libpcsclite1.
+#   * rust-toolchain.toml says `stable`, which rustup would download over the
+#     1.97 this image carries, so it is removed before the build.
+#   * GIT_COMMIT and BUILD_NUMBER are what build.rs stamps into `--version`
+#     (an archive has no .git to read them from).
+# ---------------------------------------------------------------------------
+FROM rust:1.97-bookworm AS oid4vc-wallet
+ENV OID4VC_WALLET_COMMIT=7cf061a63e2c1f9814b404b0415e65765f1b979a
+ENV OID4VC_WALLET_SHA256=377c1c266d65492f084d04e37e98181c6840a6ca95d0ac971225ead9756b2c57
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends \
+      libudev-dev libpcsclite-dev pkg-config \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL --retry 5 --retry-all-errors -o /tmp/oid4vc-wallet.tgz \
+        https://github.com/rcbj/oid4vc-wallet/archive/${OID4VC_WALLET_COMMIT}.tar.gz \
+ && echo "${OID4VC_WALLET_SHA256}  /tmp/oid4vc-wallet.tgz" | sha256sum -c - \
+ && mkdir -p /usr/src && tar xzf /tmp/oid4vc-wallet.tgz -C /usr/src \
+ && cd /usr/src/oid4vc-wallet-${OID4VC_WALLET_COMMIT} \
+ && rm -f rust-toolchain.toml \
+ && GIT_COMMIT=${OID4VC_WALLET_COMMIT} BUILD_NUMBER=${OID4VC_WALLET_COMMIT} \
+      cargo build --release --locked --bin oid4vc-wallet \
+ && mkdir -p /out/licenses \
+ && cp target/release/oid4vc-wallet /out/ \
+ && cp LICENSE /out/licenses/oid4vc-wallet.LICENSE \
+ && echo "${OID4VC_WALLET_COMMIT}" > /out/COMMIT \
+ && /out/oid4vc-wallet --version
+
 FROM ubuntu:latest AS files1
 # Create app directory
 WORKDIR /usr/src/app
@@ -396,6 +433,9 @@ COPY tests/vp_verifier_engine.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./
+# And the same Verifier page against rcbj/oid4vc-wallet, whose binary is
+# copied in at the end of this file.
+COPY tests/vc_verifier_oid4vc_wallet.js ./
 COPY tests/vc_presentation_polaris.js ./
 # ISO mdoc: the engine test and the test issuer it and
 # vc_presentation_protocols.js require (a shared module, scheduled by nothing).
@@ -411,24 +451,32 @@ COPY tests/cors_proxy_engine.js tests/cors-proxy/cors-proxy.js ./
 # The deferred and QR-image pre-authorized offers through the wallet pages
 # (#365); it collects with wallet_issuance.js above.
 COPY tests/vci_offer_modes.js ./
-# The Encryption / Decryption page's cryptography, loaded directly by
-# tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
-# browser. All three, because the closure matters: symmetric_crypto.js requires
-# ./crypto_bytes and pk_encryption.js requires both — and an uncopied one is a
-# MODULE_NOT_FOUND at require rather than a silently smaller run.
+# common/crypto/ — the central crypto module of #463: crypto_bytes,
+# hash_tools, symmetric_crypto, pk_encryption, pqc, hbs and the facade beside
+# them. The WHOLE directory, twice, and both copies are load-bearing:
 #
-# Note the NAMES. tests/crypto_engines.js is called that, rather than
-# encryption.js or crypto_bytes.js, precisely because these land FLAT beside
-# the test scripts: a test sharing a name with a module here means whichever
-# COPY ran last wins, silently. Same trap as jwk_pem.js above.
-COPY client/src/crypto_bytes.js client/src/symmetric_crypto.js ./
-COPY client/src/pk_encryption.js ./
-# The post-quantum registry, loaded directly by tests/pqc_engines.js and
-# required by client/src/jws.js for the thirteen PQ `alg` values. Note the
-# name trap called out above applies here too: the TEST is pqc_engines.js and
-# the MODULE is pqc.js, deliberately different, because these land flat beside
-# each other and whichever COPY ran last would win silently.
-COPY client/src/pqc.js ./
+#  * FLAT, beside the test scripts, because the flat client modules copied
+#    elsewhere in this file (jws.js, jose_jwe.js, key_material.js, dpop.js,
+#    mdoc.js, ...) require('./pqc') and friends, and so do the engines
+#    themselves (pk_encryption.js requires ./crypto_bytes, ./pqc and
+#    ./symmetric_crypto). This is the image's equivalent of the staging
+#    client/build.js and client/Dockerfile do.
+#  * At /usr/src/common/crypto, where ../common/crypto from /usr/src/app
+#    points, exactly as in a checkout. tests/hash_engine.js and
+#    tests/hbs_signatures.js load their subject from there by path, and
+#    common/crypto_resolve.js (installed by tests/module_paths.js) sends a
+#    failed `./pqc` from the /usr/src/client/src tree there too.
+#
+# Note the NAMES. tests/crypto_engines.js, pqc_engines.js, hash_engine.js and
+# hbs_signatures.js are called that, rather than crypto_bytes.js, pqc.js,
+# hash_tools.js or hbs.js, precisely because the modules land FLAT beside the
+# test scripts: a test sharing a name with a module here means whichever COPY
+# ran last wins, silently. Same trap as jwk_pem.js above.
+COPY common/crypto/ ./
+COPY common/crypto/ /usr/src/common/crypto/
+COPY common/crypto_resolve.js /usr/src/common/crypto_resolve.js
+# The facade, common/crypto/crypto_provider.js, against node's own crypto.
+COPY tests/crypto_provider_engine.js ./
 # DPoP (RFC 9449), loaded directly by tests/dpop_vectors.js so the thumbprint, htu, ath and
 # proof can be checked against the RFCs' own published vectors without a browser.
 # Omit this COPY and that test vanishes from the image rather than failing, which is
@@ -661,8 +709,8 @@ COPY tests/api_ldap.js tests/ldap_page.js ./
 # and say so rather than skipping if it is absent.
 COPY client/src/x509.js client/src/key_material.js client/src/pki_store.js ./
 # The post-quantum X.509 layer, which key_material.js and x509.js both require
-# now. `client/src/pqc.js` is ALREADY copied further up for tests/pqc_engines.js
-# — it lands flat as `pqc.js` and this module requires `./pqc`, so it resolves —
+# now. `common/crypto/pqc.js` is ALREADY copied further up, flat as `pqc.js`,
+# and this module requires `./pqc`, so it resolves —
 # and this file adds nothing but the PKIX binding of it. The name trap called
 # out around pqc.js applies here too: the TEST is pki_pqc_x509.js and the MODULE
 # is pqc_x509.js, deliberately different, because both land flat in this
@@ -812,12 +860,12 @@ COPY client/server.js /usr/src/client/server.js
 # The Hashing / Encoding Tools page's hashing, in node against OpenSSL, NIST's
 # own sample values and `openssl mac`'s KMAC. It needs NO flat copy of its
 # subject and that is why it sits here rather than in the list of client
-# modules above: it loads client/src/hash_tools.js and reads
-# client/public/encoding_tools.html out of the TREE the three COPY lines above
-# have just staged, exactly as rfc9700_client.js does. Adding a flat copy would
-# be worse than useless — hash_tools.js would then exist twice in this image,
-# and which one the test loaded would depend on the resolution order rather
-# than on the change under test.
+# modules above: it loads /usr/src/common/crypto/hash_tools.js and reads
+# client/public/encoding_tools.html out of the TREES staged above, exactly as
+# rfc9700_client.js does. There IS a flat hash_tools.js too (the whole of
+# common/crypto/ is copied flat, for the modules that require it as a
+# sibling), which is why the test names the tree copy by its full path
+# rather than leaving the choice to the resolution order.
 COPY tests/hash_engine.js ./
 # The XACML editor and decision test, in node. Same shape as the
 # hashing job above: the subject is the client source tree this image
@@ -859,22 +907,25 @@ COPY tests/smartcard_engine.js tests/smartcard_page.js \
 # from the client/src tree staged above.
 COPY api/otp_verify.js api/smartcard_reader.js api/otp_hid.js ./
 # The stateful hash-based signature job and its vendored vectors. Like
-# hash_engine.js it needs no flat copy of its subject — it loads
-# client/src/hbs.js out of the tree the three COPY lines above stage — but the
+# hash_engine.js it loads its subject by full path —
+# /usr/src/common/crypto/hbs.js, copied with the rest of common/crypto/ —
+# but the
 # VECTORS are data beside the test and have to be here, and their absence
 # would not fail the build: the job would fail at load with ENOENT naming a
 # JSON file, in a tenth of a second, on every containerized run while passing
 # on every host one.
 COPY tests/hbs_signatures.js tests/hbs_vectors.json ./
 # Post-quantum and HPKE JWE (#312). Like the job above it loads its
-# subjects (hpke.js, jwe_kem.js, jose_jwe.js, pqc.js) from the client tree
-# `COPY client/src` stages; the three vector files are data beside the test.
+# subjects (hpke.js, jwe_kem.js, jose_jwe.js) from the client tree
+# `COPY client/src` stages and pqc.js from common/crypto/; the three vector
+# files are data beside the test.
 COPY tests/hpke_jwe_engine.js tests/hpke_pq_vectors.json \
      tests/hybrid_kem_vectors.json tests/jose_hpke_vectors.json ./
 # POST-QUANTUM XML SIGNATURE. Like the two above it needs no flat copy of its
 # subjects: `common/xmldsig.js` is already flat as `xmldsig.js`,
-# `client/src/pqc.js` is already flat as `pqc.js`, and `client/src/hbs.js` and
-# `client/src/xmldsig_pqc.js` are both in the tree `COPY client/src` stages.
+# `common/crypto/pqc.js` and `common/crypto/hbs.js` are already flat as
+# `pqc.js` and `hbs.js`, and `client/src/xmldsig_pqc.js` is in the tree
+# `COPY client/src` stages.
 #
 # THE TEST AND THE BRIDGE SHARE A BASENAME AND THAT IS HANDLED RATHER THAN
 # RISKED. This directory is flat and the last COPY wins, so a flat copy of
@@ -1208,7 +1259,16 @@ RUN apt-get update \
         unzip \
         util-linux \
         bsdextrautils \
-        krb5-user
+        krb5-user \
+        libudev1 \
+        libpcsclite1
+
+# rcbj/oid4vc-wallet's command line (#364), built in the oid4vc-wallet stage
+# above. libudev1 and libpcsclite1 are the two libraries it needs at run
+# time; the window's X11 and GL are opened only by `--ui`, which no job
+# passes.
+COPY --from=oid4vc-wallet /out/ /opt/oid4vc-wallet/
+ENV OID4VC_WALLET_BIN=/opt/oid4vc-wallet/oid4vc-wallet
  
 # Create app directory
 WORKDIR /usr/src/app

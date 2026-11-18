@@ -152,11 +152,14 @@ var DOMAINS = [
 
 // Where a flat name in each domain may have come from, most specific first.
 // Order decides collisions exactly as the COPY order in the Dockerfiles does.
+// common/crypto (#463) is staged flat into the client image's src/ and into
+// the tests image beside the scripts, so a frontend `src/pqc.js` and a node
+// `pqc.js` both have to be found there.
 var SEARCH_ROOTS = {
-  frontend: ["client/src", "common", "client"],
+  frontend: ["client/src", "common", "common/crypto", "client"],
   api: ["api", "common", "common/spiffe", "client"],
-  node: ["client/src", "common", "common/krb5", "common/spiffe", "api",
-         "infra/edge", "client", "tests"]
+  node: ["client/src", "common", "common/crypto", "common/krb5",
+         "common/spiffe", "api", "infra/edge", "client", "tests"]
 };
 
 // Directory hints, applied before any search. A recorded path that already has

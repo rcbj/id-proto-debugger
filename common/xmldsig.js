@@ -774,7 +774,7 @@ function encapsulateXml(xml, opts, ctx) {
         'file holds the identifiers and the key derivation, not the lattice ' +
         '(the same split it makes for post-quantum signatures). Pass ' +
         'opts.kem, which client/src/xmldsig_pqc.js builds from ' +
-        'client/src/pk_encryption.js.');
+        'common/crypto/pk_encryption.js.');
   }
   var recipient = opts.kemPublicKey;
   if (!recipient || !recipient.length) {
@@ -2176,7 +2176,7 @@ var PQ_SIGS = [
 // material to forge a third message. Nothing else in this table is like that,
 // and nothing in XML Signature expresses it — the URI says HSS/LMS and says
 // nothing about which leaf was spent, so a document signed with a reused index
-// verifies perfectly and is worthless. `client/src/hbs.js` is the
+// verifies perfectly and is worthless. `common/crypto/hbs.js` is the
 // implementation and its pane keeps the index in the key; this registry exists
 // so that a SignatureMethod can name it, not so that this file can manage that
 // state.
@@ -2880,8 +2880,9 @@ function defaultSign(octets, spec, opts) {
         ' SignatureMethod needs a signer — this module implements RSA only, ' +
         'on purpose (see the section header). Pass opts.signer.' +
         (spec.postQuantum ? ' The post-quantum engines are ' +
-          'client/src/pqc.js (ML-DSA and SLH-DSA) and client/src/hbs.js ' +
-          '(HSS/LMS); this file holds the identifiers and not the lattice.'
+          'common/crypto/pqc.js (ML-DSA and SLH-DSA) and ' +
+          'common/crypto/hbs.js (HSS/LMS); this file holds the ' +
+          'identifiers and not the lattice.'
         : ''));
   }
   if (!opts.privateKeyPem) {
@@ -2898,8 +2899,9 @@ function defaultVerify(octets, signature, spec, publicKey) {
         ' SignatureMethod needs a verifier — this module implements RSA ' +
         'only, on purpose. Pass opts.verifier.' +
         (spec.postQuantum ? ' The post-quantum engines are ' +
-          'client/src/pqc.js (ML-DSA and SLH-DSA) and client/src/hbs.js ' +
-          '(HSS/LMS); this file holds the identifiers and not the lattice.'
+          'common/crypto/pqc.js (ML-DSA and SLH-DSA) and ' +
+          'common/crypto/hbs.js (HSS/LMS); this file holds the ' +
+          'identifiers and not the lattice.'
         : ''));
   }
   if (!publicKey) throw new Error('No RSA public key to verify with.');

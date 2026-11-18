@@ -5,7 +5,7 @@
 //
 // ---------------------------------------------------------------------------
 // The Hashing / Encoding Tools page's HASHING, driven in NODE with no browser
-// — because the module it is built on, client/src/hash_tools.js, has no DOM.
+// — because the module it is built on, common/crypto/hash_tools.js, has no DOM.
 //
 // This is the half of that page's testing a Selenium job cannot do well.
 // tests/encoding_tools.js drives the page: it presses the buttons, reads the
@@ -66,21 +66,22 @@ var log = bunyan.createLogger({ name: 'hash_engine',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 
-// The module under test is read from the client TREE rather than from a flat
-// copy beside this script — `COPY client/src /usr/src/client/src` in
-// tests/Dockerfile is what puts it there, and __dirname/.. is /usr/src in the
-// image and the repository root in a checkout. Through module_paths.js rather
-// than a bare require(), for the reason tests/CLAUDE.md gives: node resolves a
-// module's own requires from where THAT module lives, so hash_tools.js's
-// `require("bunyan")` and `require("@noble/hashes/sha3")` would be looked for
-// under client/node_modules, which neither the image nor a tests-only install
-// has.
+// The module under test is read from the repository TREE rather than from a
+// flat copy beside this script — common/crypto/ since #463, which
+// `COPY common/crypto/ /usr/src/common/crypto/` in tests/Dockerfile puts
+// there, and __dirname/.. is /usr/src in the image and the repository root
+// in a checkout. Through module_paths.js rather than a bare require(), for
+// the reason tests/CLAUDE.md gives: node resolves a module's own requires
+// from where THAT module lives, so hash_tools.js's `require("bunyan")` and
+// `require("@noble/hashes/sha3")` would be looked for under
+// common/node_modules, which does not exist anywhere.
 const REPO = path.resolve(__dirname, "..");
 const SRC = path.join(REPO, "client", "src");
+const CRYPTO = path.join(REPO, "common", "crypto");
 const PUBLIC = path.join(REPO, "client", "public");
 const paths = require("./module_paths.js");
 const hashes = paths.requireSharedModule(
-    [path.join(SRC, "hash_tools.js")], "client/src/hash_tools.js");
+    [path.join(CRYPTO, "hash_tools.js")], "common/crypto/hash_tools.js");
 const noble = require("@noble/hashes/sha3-addons");
 const nobleSha3 = require("@noble/hashes/sha3");
 
@@ -777,7 +778,7 @@ function notesSayTheRightThings() {
 // ===========================================================================
 function theEngineReachesNoDomAndNoWebCrypto() {
   log.debug("Entering theEngineReachesNoDomAndNoWebCrypto().");
-  var source = fs.readFileSync(path.join(SRC, "hash_tools.js"), "utf8");
+  var source = fs.readFileSync(path.join(CRYPTO, "hash_tools.js"), "utf8");
   // Comments discuss all of these at length — that is where the reasoning
   // lives — so only real code lines count.
   var code = source.replace(/\/\*[\s\S]*?\*\//g, "")
@@ -788,9 +789,9 @@ function theEngineReachesNoDomAndNoWebCrypto() {
                    "crypto.subtle"];
   for (var i = 0; i < forbidden.length; i++) {
     assert.ok(code.indexOf(forbidden[i]) < 0,
-        "client/src/hash_tools.js reaches " + forbidden[i] + " — this whole " +
-        "job exists because it does not, so the reference has to go or this " +
-        "check does.");
+        "common/crypto/hash_tools.js reaches " + forbidden[i] +
+        " — this whole job exists because it does not, so the reference " +
+        "has to go or this check does.");
   }
   log.info("OK — the engine has no DOM, no storage and no Web Crypto.");
   log.debug("Leaving theEngineReachesNoDomAndNoWebCrypto().");

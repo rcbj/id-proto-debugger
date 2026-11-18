@@ -46,8 +46,31 @@ var VERIFIER_KEYS = [
   "vpv_query_id", "vpv_format", "vpv_type", "vpv_claims", "vpv_binding",
   "vpv_dcql", "vpv_client_prefix", "vpv_response_mode", "vpv_delivery",
   "vpv_scheme", "vpv_redirect_uri", "vpv_client_id_typed", "vpv_dc_signed",
-  "vpv_trust_anchors"
+  "vpv_trust_anchors", "vpv_issuer_bindings"
 ];
+
+// The configured iss-to-certificate mapping typed into pane 2 (SD-JWT VC
+// -27 section 2.5): "<iss> = sha256:<hex>" or "<iss> = cn:<name>", one per
+// line. Lines that are neither are ignored.
+function issuerBindingsFromPage() {
+  log.debug("Entering issuerBindingsFromPage().");
+  var out = [];
+  val("vpv_issuer_bindings").split(/\n/).forEach(function (line) {
+    var m = /^\s*(\S+)\s*=\s*(sha256|cn):\s*(.+?)\s*$/i.exec(line);
+    if (!m) {
+      return;
+    }
+    var entry = { iss: m[1] };
+    if (m[2].toLowerCase() === "sha256") {
+      entry.sha256 = m[3];
+    } else {
+      entry.cn = m[3];
+    }
+    out.push(entry);
+  });
+  log.debug("Leaving issuerBindingsFromPage(). " + out.length);
+  return out;
+}
 
 // The trust anchors typed into pane 2, one string per PEM certificate.
 // Public certificates, so they are remembered like the other settings.
@@ -999,7 +1022,8 @@ async function checkFields(fields, contentType) {
     var result = await verifier.verifyResponse({
       fields: fields,
       session: Object.assign({}, current.session,
-                             { trustAnchors: trustAnchorsFromPage() }),
+                             { trustAnchors: trustAnchorsFromPage(),
+                               issuerBindings: issuerBindingsFromPage() }),
       fetchJson: fetchJson, fetchText: fetchText, contentType: contentType,
       now: Math.floor(Date.now() / 1000) });
     renderChecks(result);

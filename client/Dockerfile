@@ -104,6 +104,13 @@ COPY common/krb5/ /usr/src/app/src/
 # grammar that disagrees with itself. client/build.js does the equivalent
 # staging for the static deployments; BOTH have to be kept in step.
 COPY common/spiffe/ /usr/src/app/src/
+# The central crypto module of #463 — crypto_bytes, hash_tools,
+# symmetric_crypto, pk_encryption, pqc, hbs and the facade beside them —
+# staged flat into src/ the same way: the bundles still require('./pqc') and
+# friends. The whole directory, because nearly every bundle reaches it through
+# jws.js, jose_jwe.js or key_material.js. client/build.js stages the same
+# directory for the static and embedded builds; BOTH have to be kept in step.
+COPY common/crypto/ /usr/src/app/src/
 RUN browserify src/jwks.js -o public/js/jwks.js --debug --standalone jwks -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/oauth2_oidc_1.js -o public/js/oauth2_oidc_1.js --debug --standalone oauth2_oidc_1 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/token_detail.js -o public/js/token_detail.js --debug --standalone token_detail -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]

@@ -143,6 +143,9 @@ const KNOWN_FETCHES = [
   ["infra/Dockerfile", AWSCLI],
   ["infra/Dockerfile", "https://releases.hashicorp.com/terraform/"],
   ["deploy/Dockerfile", AWSCLI],
+  // rcbj/oid4vc-wallet's source at a pinned commit, checked by sha256 (#364),
+  // as iya-sts's own tests image builds it.
+  ["tests/Dockerfile", "https://github.com/rcbj/oid4vc-wallet/archive/"],
 ];
 
 const MIRROR_PREFIX = "${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/";
