@@ -151,9 +151,62 @@ var FORMATS = {
 };
 
 // The key proof a wallet signs a Credential Request with: the JOSE algs it
-// can generate a holder key for, best first.
-var HOLDER_KEY_ALGS = ["ES256", "EdDSA", "Ed25519", "ES384", "ES256K",
-                       "ES512", "PS256", "RS256"];
+// can generate a holder key for, best first. The fully-specified "Ed25519"
+// (RFC 9864) is not among them yet because jws.js does not sign under that
+// name until M7 of #468 lands; an Ed25519 key is made for, and signs as,
+// "EdDSA", which is the same key and the same signature bytes.
+var HOLDER_KEY_ALGS = ["ES256", "EdDSA", "ES384", "ES256K", "ES512",
+                       "PS256", "RS256"];
+
+// The crypto_provider key spec behind each of them.
+var HOLDER_KEY_SPECS = {
+  "ES256": "ec-p256", "ES384": "ec-p384", "ES512": "ec-p521",
+  "ES256K": "ec-secp256k1", "EdDSA": "ed25519", "Ed25519": "ed25519",
+  "PS256": "rsa-2048", "RS256": "rsa-2048"
+};
+
+// The holder keys each format can USE once issued. An mdoc's holder key is
+// its MSO device key, and this wallet's DeviceAuth signature (mdoc.js) is
+// ES256 only, so an mdoc gets a P-256 key whatever the issuer would accept.
+var FORMAT_HOLDER_ALGS = {
+  "mso_mdoc": ["ES256"]
+};
+
+// The JWS a holder JWK signs with: jws.js's algorithm id and the `alg` the
+// header names. The curve decides, except that an RSA key signs the first
+// RS/PS algorithm the other side accepts. `accepted` is that side's list,
+// or nothing for no constraint.
+function jwsFor(jwk, accepted) {
+  log.debug("Entering jwsFor().");
+  var k = jwk || {};
+  var ok = [].concat(accepted || []).map(String);
+  var takes = function (alg) {
+    log.debug("Entering takes(). " + alg);
+    log.debug("Leaving takes().");
+    return !ok.length || ok.indexOf(alg) !== -1;
+  };
+  var out;
+  if (k.kty === "EC") {
+    var ec = { "P-256": "ES256", "P-384": "ES384", "P-521": "ES512",
+               "secp256k1": "ES256K" }[k.crv];
+    out = ec ? { algId: ec, headerAlg: ec } : null;
+  } else if (k.kty === "OKP" && k.crv === "Ed25519") {
+    // "EdDSA" until jws.js signs under the fully-specified "Ed25519" (M7 of
+    // #468); see HOLDER_KEY_ALGS.
+    out = { algId: "EdDSA-Ed25519", headerAlg: "EdDSA" };
+  } else if (k.kty === "RSA") {
+    var rsa = ["PS256", "RS256", "PS384", "RS384", "PS512", "RS512"]
+      .filter(takes)[0] || "RS256";
+    out = { algId: rsa, headerAlg: rsa };
+  } else {
+    out = null;
+  }
+  if (out) {
+    out.accepted = takes(out.headerAlg);
+  }
+  log.debug("Leaving jwsFor(). " + (out ? out.headerAlg : "none"));
+  return out;
+}
 
 function format(id) {
   log.debug("Entering format(). " + id);
@@ -271,18 +324,60 @@ function holderSuiteFor(jwk, accepts) {
 // The holder key algorithm a wallet should generate for an issuer that
 // accepts `issuerAlgs` on its key proof (proof_signing_alg_values_supported).
 // With no list, ES256, which every issuer here and most in the wild accept.
-function holderKeyAlgFor(issuerAlgs) {
-  log.debug("Entering holderKeyAlgFor().");
-  var offered = [].concat(issuerAlgs || []).map(String);
+// `issuerAlgs` may be an array or the comma-separated text of step 1's
+// field; `formatId` narrows it to what the format can use afterwards.
+function holderKeyAlgFor(issuerAlgs, formatId) {
+  log.debug("Entering holderKeyAlgFor(). " + (formatId || ""));
+  var offered = (typeof issuerAlgs === "string" ?
+      issuerAlgs.split(",") : [].concat(issuerAlgs || []))
+    .map(function (a) {
+      return String(a).trim();
+    }).filter(Boolean);
+  var usable = FORMAT_HOLDER_ALGS[formatId] || HOLDER_KEY_ALGS;
   if (!offered.length) {
     log.debug("Leaving holderKeyAlgFor(). Default.");
-    return "ES256";
+    return usable[0];
   }
-  var alg = HOLDER_KEY_ALGS.filter(function (x) {
+  var alg = usable.filter(function (x) {
     return offered.indexOf(x) !== -1;
   })[0] || "";
   log.debug("Leaving holderKeyAlgFor(). " + (alg || "none"));
   return alg;
+}
+
+// The public half of a private JWK: its identifying members only, which is
+// what a cnf claim or a proof header carries.
+function publicJwkOf(jwk) {
+  log.debug("Entering publicJwkOf().");
+  var k = jwk || {};
+  var members = { EC: ["kty", "crv", "x", "y"], OKP: ["kty", "crv", "x"],
+                  RSA: ["kty", "n", "e"] }[k.kty];
+  if (!members) {
+    log.debug("Leaving publicJwkOf(). Unknown kty.");
+    return null;
+  }
+  var out = {};
+  members.forEach(function (m) {
+    if (k[m] !== undefined) out[m] = k[m];
+  });
+  log.debug("Leaving publicJwkOf().");
+  return out;
+}
+
+// Whether a holder key already held can prove possession to an issuer that
+// accepts `issuerAlgs`, for a credential in `formatId`.
+function holderKeyFits(jwk, issuerAlgs, formatId) {
+  log.debug("Entering holderKeyFits().");
+  var offered = (typeof issuerAlgs === "string" ?
+      issuerAlgs.split(",") : [].concat(issuerAlgs || []))
+    .map(function (a) {
+      return String(a).trim();
+    }).filter(Boolean);
+  var usable = FORMAT_HOLDER_ALGS[formatId] || HOLDER_KEY_ALGS;
+  var j = jwsFor(jwk, offered);
+  var fits = !!j && j.accepted && usable.indexOf(j.headerAlg) !== -1;
+  log.debug("Leaving holderKeyFits(). " + fits);
+  return fits;
 }
 
 // vp_formats_supported, as a Verifier states it (OpenID4VP 1.0 section
@@ -315,6 +410,11 @@ module.exports = {
   LDP_SUITES: LDP_SUITES,
   LDP_HOLDER_SUITES: LDP_HOLDER_SUITES,
   HOLDER_KEY_ALGS: HOLDER_KEY_ALGS,
+  HOLDER_KEY_SPECS: HOLDER_KEY_SPECS,
+  FORMAT_HOLDER_ALGS: FORMAT_HOLDER_ALGS,
+  jwsFor: jwsFor,
+  publicJwkOf: publicJwkOf,
+  holderKeyFits: holderKeyFits,
   format: format,
   formatIds: formatIds,
   isSigningAlgFor: isSigningAlgFor,

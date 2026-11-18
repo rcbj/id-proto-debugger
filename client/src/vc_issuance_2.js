@@ -31,6 +31,8 @@ var sdJwtVc = require("./sd_jwt_vc");
 // and reading the response — shared with step 4, which makes the same call to
 // refresh the credential (OID4VCI section 14.5).
 var vciWallet = require("./vci_wallet");
+// What each format and key allows: the holder key's algorithm (#475).
+var vcFormats = require("./vc_formats");
 // Which claims the wallet asked for, chosen on step 1. Shared with that page so
 // the two cannot disagree about what a full selection sends.
 var vciClaims = require("./vci_claims");
@@ -98,12 +100,31 @@ function status(id, text, cls) {
 }
 
 // --- the holder key ---------------------------------------------------------
-// ES256, because it is what OID4VCI wallets use and what the mock issuer
-// advertises in proof_signing_alg_values_supported.
+// The kind of key the ISSUER accepts on its key proof
+// (proof_signing_alg_values_supported) that the credential's format can use
+// afterwards — vc_formats.holderKeyAlgFor() decides, so nobody has to pick a
+// valid pair (#475). ES256 when the issuer says nothing.
+function holderKeyAlg() {
+  log.debug("Entering holderKeyAlg().");
+  var cfg = sdJwtVc.storedRequestConfig();
+  var alg = vcFormats.holderKeyAlgFor(cfg.proofAlgs, cfg.format);
+  log.debug("Leaving holderKeyAlg(). " + (alg || "none"));
+  return { alg: alg, cfg: cfg };
+}
+
 function generateHolderKey() {
   log.debug("Entering generateHolderKey().");
-  log.debug("Leaving generateHolderKey().");
-  return vciWallet.generateHolderKeyPair()
+  var want = holderKeyAlg();
+  if (!want.alg) {
+    log.debug("Leaving generateHolderKey(). No usable algorithm.");
+    return Promise.reject(new Error("the issuer's " +
+      "proof_signing_alg_values_supported (" + want.cfg.proofAlgs + ") " +
+      "names no algorithm this wallet can make a holder key for" +
+      (want.cfg.format === "mso_mdoc" ? " that an mdoc can use (ES256)" :
+       " (" + vcFormats.HOLDER_KEY_ALGS.join(", ") + ")") + "."));
+  }
+  log.debug("Leaving generateHolderKey(). " + want.alg);
+  return vciWallet.generateHolderKeyPair(want.alg)
     .then(function (pair) {
       request.holderPublicJwk = pair.publicJwk;
       request.holderPrivateJwk = pair.privateJwk;
@@ -117,6 +138,15 @@ function loadOrGenerateHolderKey() {
   log.debug("Entering loadOrGenerateHolderKey().");
   var pub = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_JWK);
   var priv = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK);
+  var cfg = sdJwtVc.storedRequestConfig();
+  // A stored key this issuer would refuse is not reused: the request it
+  // signed would fail, naming the algorithm rather than the key.
+  if (pub && priv && !vcFormats.holderKeyFits(pub, cfg.proofAlgs,
+                                              cfg.format)) {
+    log.debug("loadOrGenerateHolderKey(): the stored " + pub.kty + " " +
+              (pub.crv || "") + " key does not fit " + cfg.proofAlgs + ".");
+    pub = null;
+  }
   if (pub && priv) {
     request.holderPublicJwk = pub;
     request.holderPrivateJwk = priv;
@@ -700,7 +730,11 @@ function signProof(nonce) {
       return vciWallet.signProofs(keys, {
         clientId: sdJwtVc.get("client_id") || "",
         credentialIssuer: request.config.credentialIssuer,
-        nonce: nonce
+        nonce: nonce,
+        proofAlgs: String(request.config.proofAlgs || "").split(",")
+          .map(function (a) {
+            return a.trim();
+          }).filter(Boolean)
       });
     })
     .then(function (proofs) {

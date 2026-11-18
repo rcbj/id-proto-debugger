@@ -3945,6 +3945,16 @@ function buildJobs() {
     env: {},
   });
 
+  // The holder key follows the issuer's proof_signing_alg_values_supported
+  // and the format, and the key proof, KB-JWT, VP JWT and ldp_vc holder VP
+  // each sign in that key's algorithm, verified by OpenSSL. Needs nothing.
+  jobs.push({
+    name: "Holder key algorithms (ES256, EdDSA, ES384, ES256K, ES512, " +
+        "PS256, RS256; every wallet signature, in node)",
+    script: "holder_key_algs.js",
+    env: {},
+  });
+
   // The same engine against iya-sts's own vc_data_integrity.js, loaded in
   // process from the image the stack runs: its credentials verified here,
   // ours there, and the wallet's holder VP through its Verifier. Fails,

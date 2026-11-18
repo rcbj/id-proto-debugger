@@ -444,7 +444,7 @@ COPY tests/vp_verifier_engine.js ./
 # And tests/client_module_bindings.js: every name the browser bundles use is
 # bound (client/src and the staged common/ modules, read from
 # /usr/src/source-tree).
-COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js ./
+COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js tests/holder_key_algs.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./
