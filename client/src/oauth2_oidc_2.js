@@ -219,7 +219,9 @@ function tokenButtonClick() {
   log.debug("Entering token Submit button clicked function.");
   expandPane('#step3');
   expandPane('#step4');
-  expandPane('#step5');
+  // Not #step5 (RP-initiated Logout): there is nothing to log out of until
+  // the token endpoint has answered with a token set (#38). The success
+  // handler opens it.
   expandPane('#step6');
   expandPane('#step7');
   expandPane('#operation-history-panel');
@@ -2073,15 +2075,15 @@ function successfulInternalTokenAPICall(data, textStatus, request)
     $("#token_fieldset").hide();
     $("#token_expand_button").val("Expand");
     useRefreshTokens();
-    if(!!currentRefreshToken) {
+    if (!!data.id_token) {
       $("#logout_id_token_hint").val(data.id_token);
-      $("#logout_client_id").val($("#token_client_id").val());
-    } else {
-      $("#logout_fieldset").hide();
-      $("#logout_expand_button").val("Expand");
+    }
+    $("#logout_client_id").val($("#token_client_id").val());
+    if(!currentRefreshToken) {
       $("#refresh_fieldset").hide();
       $("#refresh_expand_button").val("Expand");
     }
+    expandLogoutPaneIfSession($("#token_grant_type").val(), data);
     expandPane('#currently-viewing-panel');
     expandPane('#refresh_endpoint_result');
     recalculateRefreshRequestDescription();
@@ -2482,11 +2484,10 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
   if (!!currentIDToken) {
     localStorage.setItem("refresh_id_token", currentIDToken);
   }
-  // Update token in logout pane.
-  if(currentRefreshToken) {
+  // Update token in logout pane. Whether the pane is open is decided by
+  // expandLogoutPaneIfSession() from the session, not from a refresh token.
+  if(currentIDToken) {
     $("#logout_id_token_hint").val(currentIDToken);
-  } else {
-    $("#logout_fieldset").hide();
   }
   recalculateRefreshRequestDescription();
   if (refreshTokenUsed) {
@@ -4109,7 +4110,9 @@ $(document).ready(function() {
     $("#logout_id_token_hint").val(localStorage.getItem("token_id_token"));
     // Tokens already exist on this path, so show the panes that operate on
     // them (logout, revocation, token exchange) and the operation history.
-    expandPane("#step5");
+    expandLogoutPaneIfSession($("#token_grant_type").val(), {
+      access_token: localStorage.getItem("token_access_token"),
+      id_token: localStorage.getItem("token_id_token") });
     expandPane("#step6");
     expandPane("#step7");
     expandPane("#operation-history-panel");
@@ -4222,7 +4225,11 @@ $(document).ready(function() {
   {
     expandPane('#step3');
     expandPane('#step4');
-    expandPane('#step5');
+    // Logout only when the identity provider actually sent a token: an
+    // error response opens no session (#38).
+    if (implicitTokenReturned()) {
+      expandLogoutPaneIfSession(authzGrantType, { access_token: "x" });
+    }
     expandPane('#step6');
     expandPane('#step7');
     expandPane('#operation-history-panel');
@@ -5776,6 +5783,27 @@ function expandPane(selector) {
   $(selector).show().removeAttr("data-pane-collapsed");
   paneFieldset(selector).css("display", "block");
   log.debug("Leaving expandPane().");
+}
+
+// The RP-initiated Logout pane (#step5) stays collapsed until there is
+// something to log out of (#38): a token set this page has retrieved for an
+// END USER, which is what leaves a session at the provider. A Client
+// Credentials grant authenticates no end user, so it opens no session and the
+// pane stays shut; the reader can still open it by hand.
+function expandLogoutPaneIfSession(grantType, tokens) {
+  log.debug("Entering expandLogoutPaneIfSession(). grantType=" + grantType);
+  if (!tokens || !(tokens.access_token || tokens.id_token)) {
+    log.debug("Leaving expandLogoutPaneIfSession(). No token set.");
+    return;
+  }
+  if (grantType === "client_credentials" ||
+      grantType === "client_credential") {
+    log.debug("Leaving expandLogoutPaneIfSession(). No end-user session.");
+    return;
+  }
+  expandPane("#step5");
+  $("#logout_expand_button").val("Collapse");
+  log.debug("Leaving expandLogoutPaneIfSession().");
 }
 
 function onClickShowFieldSet(expand_button_id, field_set_id) {
