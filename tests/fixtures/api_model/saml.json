@@ -216,10 +216,17 @@
         "xml": "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer></samlp:AuthnRequest>",
         "privateKeyPem": "not a pem"
       },
-      "expect": {
+      "changed": "#463 step 3a moved the SAML signer's key reading onto crypto_provider.js. The message now says what is wrong with the input, naming both forms a signing key may take, instead of forge's bare PEM error.",
+      "before": {
         "status": 500,
         "body": {
           "error": "sign failed: Invalid PEM formatted message."
+        }
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "sign failed: the signing key is not a PEM private key or a JWK: That text is neither a PEM key (-----BEGIN ...-----) nor a JWK (a JSON object)."
         }
       }
     },

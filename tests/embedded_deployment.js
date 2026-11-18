@@ -81,8 +81,13 @@ const EMBEDDED_BUILD_SH = locate([
 const API_DOCKERFILE = locate([
   path.join(__dirname, "..", "api", "Dockerfile"),
   path.join(SOURCE_TREE, "api", "Dockerfile")]);
-const COMMON_DIR = locate([path.join(__dirname, "..", "common"),
-                           path.join(SOURCE_TREE, "common")]);
+// The common/ that HOLDS xmldsig.js. In the tests image ../common exists
+// too (/usr/src/common, with common/crypto in it for crypto_resolve.js) but
+// has no xmldsig.js, so the directory is chosen by the file, not by itself.
+const XMLDSIG_JS = locate([
+  path.join(__dirname, "..", "common", "xmldsig.js"),
+  path.join(SOURCE_TREE, "common", "xmldsig.js")]);
+const COMMON_DIR = XMLDSIG_JS ? path.dirname(XMLDSIG_JS) : null;
 
 // api/ssrf_guard.js takes `bunyan` from api/node_modules, which exists inside
 // the tests image and on a developer's machine but NOT on a host that has only
@@ -496,7 +501,8 @@ function cryptoModuleStaged() {
   log.debug("Entering cryptoModuleStaged().");
   log.info("=== common/crypto staged beside xmldsig.js ===");
   assert.ok(EMBEDDED_BUILD_SH && API_DOCKERFILE && COMMON_DIR,
-    "embedded/build.sh, api/Dockerfile and common/ must be readable " +
+    "embedded/build.sh, api/Dockerfile and common/xmldsig.js must be " +
+    "readable " +
     "(tests/Dockerfile stages them in /usr/src/source-tree).");
   const xmldsig = fs.readFileSync(path.join(COMMON_DIR, "xmldsig.js"),
                                   "utf8");

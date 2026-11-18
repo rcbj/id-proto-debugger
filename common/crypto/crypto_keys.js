@@ -1070,7 +1070,18 @@ function jwkMember(jwk, name) {
 
 function fromJwk(input) {
   log.debug("Entering fromJwk().");
-  var jwk = typeof input === "string" ? JSON.parse(input) : input;
+  var jwk = input;
+  if (typeof input === "string") {
+    // A string that is not a PEM reaches here; say what it is not, rather
+    // than leaking JSON.parse's "Unexpected token" (#463).
+    try {
+      jwk = JSON.parse(input);
+    } catch (e) {
+      log.debug("Leaving fromJwk(). Neither PEM nor JSON.");
+      throw new Error("That text is neither a PEM key (-----BEGIN ...-----) " +
+                      "nor a JWK (a JSON object).");
+    }
+  }
   if (!jwk || !jwk.kty) {
     log.debug("Leaving fromJwk(). No kty.");
     throw new Error("That is not a JWK — it has no \"kty\" member.");
