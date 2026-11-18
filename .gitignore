@@ -24,6 +24,7 @@ tests/fixtures/*
 !tests/fixtures/vc_di_bbs_vectors.json
 # ...and the vc-di-ecdsa ecdsa-sd-2023 ones, for tests/ecdsa_sd_2023_engine.js.
 !tests/fixtures/vc_di_ecdsa_sd_vectors.json
+!tests/fixtures/jwp_jpa15_vectors.json
 sp-key.pem
 sp-cert.pem
 

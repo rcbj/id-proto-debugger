@@ -3935,6 +3935,17 @@ function buildJobs() {
     env: {},
   });
 
+  // JSON Web Proofs (draft-ietf-jose-json-web-proof-15, JPA-15, JPT-15;
+  // #478): the drafts' Appendix A byte for byte, every offered algorithm
+  // round-tripped and checked by node's crypto, BBS against Digital
+  // Bazaar's bbs-signatures, and what must fail. No services.
+  jobs.push({
+    name: "JSON Web Proofs (JPT/CPT: SU, MAC, BBS; the drafts' examples, " +
+        "node crypto and Digital Bazaar BBS, in node)",
+    script: "jwp_engine.js",
+    env: {},
+  });
+
   // W3C VC-JOSE-COSE (vc+jwt, vc+sd-jwt, vc+cose and their envelopes,
   // #477): both directions against iya-sts's own vc_jose_cose.js (loaded
   // from its image), jose, @sd-jwt/core and @auth0/cose, and the
