@@ -27,9 +27,13 @@ Before this, the workflow sent `client_id` alone, and step 4 read a
 | `private_key_jwt` | A client assertion signed by the client's private key: `iss` = `sub` = `client_id`, `aud` the AS **issuer identifier** as its sole value, plus `jti`, `iat`, `exp` and `typ` `client-authentication+jwt` (draft-ietf-oauth-rfc7523bis-11). RFC 7523's token-endpoint `aud` stays selectable. |
 | `attest_jwt_client_auth` | draft-ietf-oauth-attestation-based-client-auth-**12** (a DRAFT): the Client Attestation in `OAuth-Client-Attestation`, and a PoP by its `cnf` key in `OAuth-Client-Attestation-PoP`. The PoP carries `aud` (the issuer), `jti`, `iat`, and the server's challenge when it sent one. A `use_attestation_challenge` answer is retried once with the fresh challenge. |
 
-**The default** is the first method in the authorization server's
-`token_endpoint_auth_methods_supported` that this debugger implements, in
-the server's order. With no list, it is `none`.
+**The default is `none`** until a method is chosen on step 1. A
+credentialed method is never picked for the user: a public client made to
+authenticate with a key or secret it does not have is refused by any server
+that checks. The authorization server's
+`token_endpoint_auth_methods_supported` is shown beside the choice, as
+information. On `oauth2_oidc_2.html`, an unchosen method leaves that page's
+own settings exactly as they were.
 
 ## Where it is set, and what is kept
 

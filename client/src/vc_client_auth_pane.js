@@ -21,9 +21,12 @@
 //     that page load only; secret_storage.js lists the field id so
 //     tests/secret_storage_engine.js fails on any write of it.
 //
-// The default method is the first of the authorization server's
-// token_endpoint_auth_methods_supported this debugger implements, in the
-// server's order; none when the server says nothing.
+// The method is the one CHOSEN on step 1, and `none` until one is: a
+// credentialed method is never picked for the user, because a public
+// client (the workflow's default) made to authenticate with a key or
+// secret it does not have is refused by every server that checks. The
+// authorization server's token_endpoint_auth_methods_supported is shown
+// beside the choice and orders nothing.
 // ---------------------------------------------------------------------------
 
 var clientAuth = require("./client_auth");
@@ -147,12 +150,18 @@ function jsonField(id, storageKey) {
 }
 
 // --- the settings -----------------------------------------------------------
+// The method the user chose on step 1, or "" when none was chosen.
+function chosenMethod() {
+  log.debug("Entering chosenMethod().");
+  var stored = sdJwtVc.get(KEYS.METHOD);
+  log.debug("Leaving chosenMethod().");
+  return clientAuth.METHODS.indexOf(stored) !== -1 ? stored : "";
+}
+
 function method() {
   log.debug("Entering method().");
-  var stored = sdJwtVc.get(KEYS.METHOD);
   log.debug("Leaving method().");
-  return clientAuth.METHODS.indexOf(stored) !== -1 ? stored :
-    clientAuth.defaultMethod(supportedMethods());
+  return chosenMethod() || "none";
 }
 
 // What client_auth.apply() needs, from storage and this page's fields.
@@ -311,9 +320,11 @@ function render(containerId, mode, onChange) {
     "<select id=\"vc_client_auth_method\">" + optionList(clientAuth.METHODS,
       m, clientAuth.LABELS) + "</select>" :
     "<code id=\"vc_client_auth_method_shown\">" + esc(m) + "</code>",
-    supported.length ? "The authorization server advertises " +
+    (supported.length ? "The authorization server advertises " +
       esc(supported.join(", ")) + "." : "The authorization server's " +
-      "metadata names no token_endpoint_auth_methods_supported.");
+      "metadata names no token_endpoint_auth_methods_supported.") +
+    (chosenMethod() ? "" : " Nothing is chosen yet, so the client is " +
+      "public (none): choose a method once the client has a credential."));
   html += "<tr class=\"vc_client_secret_row\"><td><label for=\"" +
     SECRET_FIELD + "\">Client secret</label></td><td><input type=\"password\"" +
     " id=\"" + SECRET_FIELD + "\" size=\"40\" autocomplete=\"off\" />" +
@@ -485,6 +496,7 @@ module.exports = {
   KEY_MATERIAL: KEY_MATERIAL,
   SECRET_FIELD: SECRET_FIELD,
   method: method,
+  chosenMethod: chosenMethod,
   settings: settings,
   render: render,
   applyTo: applyTo,

@@ -176,8 +176,14 @@ function vcFlowClientAuth(formData, viaApi) {
   }
   s.secret = $("#token_client_secret").val() || "";
   s.clientId = formData.client_id || s.clientId;
+  // Nothing chosen on step 1 (or `none` chosen): this page's own settings
+  // stand, exactly as before the VC workflow had a choice to make.
+  if (!vcClientAuthPane.chosenMethod() || s.method === "none") {
+    log.debug("Leaving vcFlowClientAuth(). No method chosen.");
+    return Promise.resolve(none);
+  }
   if (s.method === "client_secret_basic" ||
-      s.method === "client_secret_post" || s.method === "none") {
+      s.method === "client_secret_post") {
     formData.auth_style = s.method === "client_secret_post";
     log.debug("Leaving vcFlowClientAuth(). The page's own auth style.");
     return Promise.resolve(none);
