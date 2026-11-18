@@ -74,6 +74,15 @@ const SSRF_GUARD = locate([
   path.join(__dirname, "..", "api", "ssrf_guard.js"),
   path.join(__dirname, "ssrf_guard.js")]);
 const BUILD_JS = locate([path.join(__dirname, "..", "client", "build.js")]);
+const SOURCE_TREE = "/usr/src/source-tree";
+const EMBEDDED_BUILD_SH = locate([
+  path.join(__dirname, "..", "embedded", "build.sh"),
+  path.join(SOURCE_TREE, "embedded", "build.sh")]);
+const API_DOCKERFILE = locate([
+  path.join(__dirname, "..", "api", "Dockerfile"),
+  path.join(SOURCE_TREE, "api", "Dockerfile")]);
+const COMMON_DIR = locate([path.join(__dirname, "..", "common"),
+                           path.join(SOURCE_TREE, "common")]);
 
 // api/ssrf_guard.js takes `bunyan` from api/node_modules, which exists inside
 // the tests image and on a developer's machine but NOT on a host that has only
@@ -477,12 +486,52 @@ function buildRefusesUnknownDeployment() {
   log.debug("Leaving buildRefusesUnknownDeployment().");
 }
 
+// 5. THE CENTRAL CRYPTO MODULE IN THE EMBEDDED TREE (#463 step 3). The api's
+// xmldsig.js requires ./crypto_provider, so embedded/build.sh copies every
+// common/crypto/*.js flat into the tree's api/, as api/Dockerfile does. The
+// mock STS forks that tree's api, so a later change that dropped the copy
+// would surface over there as a "Cannot find module" at the first SAML
+// signature. A static check, so it never needs a build to run.
+function cryptoModuleStaged() {
+  log.debug("Entering cryptoModuleStaged().");
+  log.info("=== common/crypto staged beside xmldsig.js ===");
+  assert.ok(EMBEDDED_BUILD_SH && API_DOCKERFILE && COMMON_DIR,
+    "embedded/build.sh, api/Dockerfile and common/ must be readable " +
+    "(tests/Dockerfile stages them in /usr/src/source-tree).");
+  const xmldsig = fs.readFileSync(path.join(COMMON_DIR, "xmldsig.js"),
+                                  "utf8");
+  assert.ok(/require\("\.\/crypto_provider"\)/.test(xmldsig),
+    "common/xmldsig.js no longer requires ./crypto_provider; if that is " +
+    "deliberate, this check and the staging below go with it.");
+  const sh = fs.readFileSync(EMBEDDED_BUILD_SH, "utf8");
+  const staged = 'cp "${WORK}/tree/common/crypto/"*.js "${WORK}/tree/api/"';
+  assert.ok(sh.indexOf(staged) !== -1, "embedded/build.sh must copy common/crypto/*.js into the " +
+    "tree's api/, beside xmldsig.js: the embedded api requires " +
+    "./crypto_provider (embedded/CLAUDE.md: the tree is iya-sts's contract).");
+  const dockerfile = fs.readFileSync(API_DOCKERFILE, "utf8");
+  assert.ok(/^COPY common\/crypto\/ \.$/m.test(dockerfile),
+    "api/Dockerfile must COPY common/crypto/ beside xmldsig.js.");
+  const files = fs.readdirSync(path.join(COMMON_DIR, "crypto"))
+    .filter(function (f) {
+      return /\.js$/.test(f);
+    });
+  assert.ok(files.indexOf("crypto_provider.js") !== -1 &&
+            files.indexOf("crypto_keys.js") !== -1,
+    "common/crypto/ must hold crypto_provider.js and crypto_keys.js; it " +
+    "holds " + files.join(", "));
+  log.info("[crypto] OK — embedded/build.sh and api/Dockerfile stage the " +
+           files.length + " files of common/crypto beside xmldsig.js, which " +
+           "requires ./crypto_provider.");
+  log.debug("Leaving cryptoModuleStaged().");
+}
+
 async function test() {
   log.debug("Entering test().");
   await socketListener();
   clientEnvironment();
   apiEnvironment();
   buildRefusesUnknownDeployment();
+  cryptoModuleStaged();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

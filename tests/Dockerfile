@@ -1195,6 +1195,11 @@ COPY api/env /usr/src/source-tree/api/env
 # The documents the generator writes a region of (models/tools/generate.mjs,
 # REGIONS), so `--check` can compare them.
 COPY embedded/CLAUDE.md /usr/src/source-tree/embedded/CLAUDE.md
+# embedded_deployment.js holds the embedded tree's staging of the central
+# crypto module (#463) to what xmldsig.js requires, in both places that
+# stage the api: the embedded build and the api image.
+COPY embedded/build.sh /usr/src/source-tree/embedded/build.sh
+COPY api/Dockerfile /usr/src/source-tree/api/Dockerfile
 
 # ---------------------------------------------------------------------------
 # The image itself. Keep this stage SHORT — it is the only one whose layers
