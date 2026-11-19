@@ -541,17 +541,26 @@ function addAttribute() {
   var row = document.createElement("div");
   row.className = "xacml-attr";
   row.innerHTML =
+    '<span class="tooltip xacml-tip">' +
     '<input name="category" size="28" ' +
     'value="urn:oasis:names:tc:xacml:1.0:subject-category:' +
-    'access-subject" title="The category URI this attribute is in: ' +
-    'access-subject, action, resource, environment or another.">' +
-    '<input name="attributeId" size="28" placeholder="AttributeId" ' +
-    'title="The AttributeId URI a policy reads this value under.">' +
-    '<input name="value" size="16" placeholder="value" ' +
-    'title="The attribute value, in the lexical form of its DataType.">' +
+    'access-subject">' +
+    '<span class="tooltiptext">The category URI this attribute is ' +
+    'in: access-subject, action, resource, environment or ' +
+    'another.</span></span>' +
+    '<span class="tooltip xacml-tip">' +
+    '<input name="attributeId" size="28" placeholder="AttributeId">' +
+    '<span class="tooltiptext">The AttributeId URI a policy reads ' +
+    'this value under.</span></span>' +
+    '<span class="tooltip xacml-tip">' +
+    '<input name="value" size="16" placeholder="value">' +
+    '<span class="tooltiptext">The attribute value, in the lexical ' +
+    'form of its DataType.</span></span>' +
+    '<span class="tooltip xacml-tip xacml-tip-left">' +
     '<input name="type" size="18" ' +
-    'value="http://www.w3.org/2001/XMLSchema#string" title="The ' +
-    'DataType URI of the value, such as XMLSchema#string or #integer.">';
+    'value="http://www.w3.org/2001/XMLSchema#string">' +
+    '<span class="tooltiptext">The DataType URI of the value, such ' +
+    'as XMLSchema#string or #integer.</span></span>';
   box.appendChild(row);
   log.debug("Leaving addAttribute().");
   return false;
