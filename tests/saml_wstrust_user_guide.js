@@ -48,6 +48,12 @@ var wstPassword = process.env.GUIDE_WST_PASSWORD || "";
 var productMode = false;
 var spRegistered = false;
 
+// The issued assertion is not an RST element. iya-sts encrypts the
+// element this expression names when wstrustEncryptResponse is true.
+const ASSERTION_XPATH = "//*[local-name()='Assertion' and " +
+  "namespace-uri()='urn:oasis:names:tc:SAML:2.0:assertion']";
+const GUIDE_APPLIES_TO = "urn:wstrust:test:rp";
+
 function pause(ms) {
   log.debug("Entering pause().");
   log.debug("Leaving pause().");
@@ -1038,49 +1044,95 @@ async function signedIssue(driver, stsUrl) {
   log.debug("Leaving signedIssue().");
 }
 
+async function setGuideAttribute(attribute, value, mode) {
+  log.debug("Entering setGuideAttribute(). " + attribute);
+  var path = mode === "add" ? "/applications/add" : "/applications/set";
+  var wrote = await registry.adminPost(stsOrigin, path, {
+    application: GUIDE_APPLIES_TO,
+    attribute: attribute,
+    value: value
+  });
+  assert.ok(wrote && wrote.ok,
+    "setting " + attribute + " on " + GUIDE_APPLIES_TO +
+    " was refused: " + JSON.stringify((wrote && wrote.errors) || wrote) +
+    ". If the message names an attribute, this iya-sts does not have " +
+    "the WS-Trust encryption maps.");
+  log.debug("Leaving setGuideAttribute().");
+}
+
+async function armAssertionEncryption(on) {
+  log.debug("Entering armAssertionEncryption(). " + on);
+  await setGuideAttribute("wstrustEncryptResponse",
+                          on ? "true" : "false", "set");
+  if (on) {
+    await setGuideAttribute("wstrustEncryptResponseElements",
+                            ASSERTION_XPATH, "add");
+  }
+  log.debug("Leaving armAssertionEncryption().");
+}
+
 async function encryptedIssue(driver, stsUrl) {
   log.debug("Entering encryptedIssue().");
-  var url = stsUrl + (stsUrl.indexOf("?") >= 0 ? "&" : "?") +
-      "encrypt=1";
-  await loadPage(driver, baseUrl + "/wstrust_tools.html", "wst_sts_url",
-                 { timeout: waitTime });
-  await setField(driver, "wst_sts_url", url);
-  await setField(driver, "wst_operation", "issue");
-  await setField(driver, "wst_cred_mode", "none");
-  await setChecked(driver, "wst_sign_request", true);
-  var key = await textOf(driver, "wst_sp_private_key");
-  if (key.indexOf("PRIVATE KEY") < 0) {
-    if (productMode) {
-      await installIssuedSigningKey(driver);
-    } else {
-      await clickValue(driver, "Generate Keys");
+  var failed = null;
+  try {
+    await armAssertionEncryption(true);
+    await loadPage(driver, baseUrl + "/wstrust_tools.html", "wst_sts_url",
+                   { timeout: waitTime });
+    await setField(driver, "wst_sts_url", stsUrl);
+    await setField(driver, "wst_operation", "issue");
+    await setField(driver, "wst_applies_to", GUIDE_APPLIES_TO);
+    await setField(driver, "wst_cred_mode", "none");
+    await setChecked(driver, "wst_sign_request", true);
+    var key = await textOf(driver, "wst_sp_private_key");
+    if (key.indexOf("PRIVATE KEY") < 0) {
+      if (productMode) {
+        await installIssuedSigningKey(driver);
+      } else {
+        await clickValue(driver, "Generate Keys");
+      }
+      await waitText(driver, "wst_sp_private_key", function (v) {
+        return v.indexOf("PRIVATE KEY") >= 0;
+      }, "no key to encrypt to.", Math.max(waitTime, 30000));
     }
-    await waitText(driver, "wst_sp_private_key", function (v) {
-      return v.indexOf("PRIVATE KEY") >= 0;
-    }, "no key to encrypt to.", Math.max(waitTime, 30000));
+    await sendWst(driver);
+    var token = await textOf(driver, "wst_token_xml");
+    assert(token.indexOf("EncryptedData") >= 0 &&
+           token.indexOf("EncryptedAssertion") < 0,
+           "expected xenc:EncryptedData:\n" + token.slice(0, 300));
+    await shot(driver, wstDir, "wst-encrypted", "01-token", [
+      "tab_token_xml"
+    ]);
+    await clickValue(driver, "Decrypt");
+    await waitText(driver, "wst_dec_status", function (v) {
+      return v.indexOf("Decrypted") >= 0 || v.indexOf("failed") >= 0;
+    }, "decrypt did not finish.", waitTime);
+    var plain = await textOf(driver, "wst_token_xml");
+    assert(plain.indexOf("Assertion") >= 0 &&
+           plain.indexOf("EncryptedData") < 0,
+           "decrypt did not yield an assertion: " +
+           (await textOf(driver, "wst_dec_status")));
+    await shot(driver, wstDir, "wst-encrypted", "02-decrypted", [
+      "tab_token_xml"
+    ]);
+    await shot(driver, wstDir, "wst-encrypted", "02b-status", [
+      "wst_dec_status"
+    ]);
+  } catch (e) {
+    log.debug("Caught in encryptedIssue(): " + ((e && e.message) || e));
+    failed = e;
   }
-  await sendWst(driver);
-  var token = await textOf(driver, "wst_token_xml");
-  assert(token.indexOf("Encrypted") >= 0,
-         "expected an encrypted token:\n" + token.slice(0, 300));
-  await shot(driver, wstDir, "wst-encrypted", "01-token", [
-    "tab_token_xml"
-  ]);
-  await clickValue(driver, "Decrypt");
-  await waitText(driver, "wst_dec_status", function (v) {
-    return v.indexOf("Decrypted") >= 0 || v.indexOf("failed") >= 0;
-  }, "decrypt did not finish.", waitTime);
-  var plain = await textOf(driver, "wst_token_xml");
-  assert(plain.indexOf("Assertion") >= 0 &&
-         plain.indexOf("EncryptedData") < 0,
-         "decrypt did not yield an assertion: " +
-         (await textOf(driver, "wst_dec_status")));
-  await shot(driver, wstDir, "wst-encrypted", "02-decrypted", [
-    "tab_token_xml"
-  ]);
-  await shot(driver, wstDir, "wst-encrypted", "02b-status", [
-    "wst_dec_status"
-  ]);
+  try {
+    await armAssertionEncryption(false);
+  } catch (e) {
+    log.debug("Caught in encryptedIssue(): " + ((e && e.message) || e));
+    if (!failed) {
+      failed = e;
+    }
+  }
+  if (failed) {
+    log.debug("Leaving encryptedIssue(). Failed.");
+    throw failed;
+  }
   log.debug("Leaving encryptedIssue().");
 }
 

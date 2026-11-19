@@ -5117,10 +5117,11 @@ function buildJobs() {
   // rather than an omission in the test.** The mock STS's Web Browser SSO
   // profile does not encrypt an assertion: there is no recipient certificate in
   // an AuthnRequest to encrypt to unless SP metadata is consumed, and that
-  // service publishes metadata and does not consume it. (Its WS-Trust endpoint
-  // does encrypt, at /sts?encrypt=1, because a WS-Security signature carries
-  // the certificate.) So there is no `sts` half to add here — adding one would
-  // be a job that could only ever fail or be skipped.
+  // service publishes metadata and does not consume it. WS-Trust encryption
+  // is that relying party's XPath map, and the element comes back as
+  // xenc:EncryptedData rather than a SAML EncryptedAssertion. So there is
+  // no `sts` half to add here — adding one would be a job that could only
+  // ever fail or be skipped.
   {
     const encJob = {
       name: "SAML 2.0 EncryptedAssertion — decrypt on Response page",
@@ -5423,9 +5424,10 @@ function buildJobs() {
     jobs.push(job);
   }
 
-  // Encrypted-token round-trip: sign the request, ask the STS to encrypt the
-  // issued assertion (?encrypt=1) to the requestor cert, then DECRYPT it on the
-  // response page and confirm a plaintext assertion (exercises decryptXml).
+  // Encrypted issued assertion. WS-Trust does not name that element in
+  // the RST. The job sets wstrustEncryptResponse and the assertion XPath
+  // on its own relying party, signs so the BinarySecurityToken is the
+  // recipient, then decrypts the EncryptedData on the response page.
   var encJob = {
     name: "WS-Trust 1.4 — Issue (encrypted token, decrypt)",
     script: "wstrust.js",
@@ -5435,12 +5437,36 @@ function buildJobs() {
       WSTRUST_SIGN: "true",
       WSTRUST_ROUTE: wstrustRoute("back"),
       WSTRUST_ENCRYPT: "true",
+      WSTRUST_APPLIES_TO: "urn:wstrust:test:rp:encrypted-assertion",
     },
   };
   if (!wstrustStsUrl) {
     encJob.skip = wstrustSkip;
   }
   jobs.push(encJob);
+
+  // Encrypted RST. WS-Security allows the client to encrypt the body.
+  // Requiring that element is not an RST field, so the job sets
+  // wstrustEncryptRequest and the RequestSecurityToken XPath.
+  // wstrustAcceptEncryptedElements stays false. The page encrypts the
+  // RST to the decryption key the job issues for that application, then
+  // the job removes the key. GET /sts/cert is the signing certificate.
+  var reqEncJob = {
+    name: "WS-Trust 1.4 — Issue (encrypted request body)",
+    script: "wstrust.js",
+    env: {
+      WSTRUST_STS_URL: wstrustStsUrl,
+      WSTRUST_OP: "issue",
+      WSTRUST_SIGN: "false",
+      WSTRUST_ROUTE: wstrustRoute("back"),
+      WSTRUST_ENCRYPT_REQUEST: "true",
+      WSTRUST_APPLIES_TO: "urn:wstrust:test:rp:encrypted-request",
+    },
+  };
+  if (!wstrustStsUrl) {
+    reqEncJob.skip = wstrustSkip;
+  }
+  jobs.push(reqEncJob);
 
   // Cycle the WS-Trust protocol version (1.0–1.4) with an Issue each, so each
   // version's trust namespace and option-gating (Bearer key type is 1.3+,

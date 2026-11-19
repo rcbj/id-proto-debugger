@@ -76,14 +76,74 @@ The signed tutorial sends no UsernameToken.
 
 ## An encrypted token
 
-Add `encrypt=1` to the STS URL (`https://localhost:8081/sts?encrypt=1`).
-iya-sts encrypts the issued SAML 2.0 assertion to the certificate on
-the request signature. The request has to be signed, with that
-certificate one the service will encrypt to. In product mode a refusal
-is a SOAP fault, and the token is not sent in the clear.
+WS-Trust's `wst:EncryptionAlgorithm` and `wst:EncryptWith` name the
+cipher and the key transport when response encryption is already on.
+They do not choose the element. The page does not send them.
 
-The response page's **Decrypt** uses the private key that signed the
-request, when **Save this key pair** was left on.
+On the relying party, set `wstrustEncryptResponse` to `true` and add
+this as one value of `wstrustEncryptResponseElements`:
+
+```
+//*[local-name()='Assertion' and namespace-uri()='urn:oasis:names:tc:SAML:2.0:assertion']
+```
+
+iya-sts then replaces that assertion with `xenc:EncryptedData`. The
+request has to be signed. The recipient is the signature's
+`BinarySecurityToken`, unless `wstrustEncryptionCertificate` or
+`wstrustResponseRecipientXPath` is set. In product mode a certificate
+with only `digitalSignature` is refused once it has been found, and
+the token is not sent in the clear. **Generate Keys** writes no
+`keyUsage`, so that certificate may be the recipient. A
+message-signing certificate from iya-sts may not. Set
+`wstrustEncryptionCertificate` to a certificate that permits
+`keyEncipherment` or `keyAgreement`, and decrypt with that key.
+
+The response page's **Decrypt** uses the private key of the recipient,
+which is the signing key when **Save this key pair** was left on and
+that key is the one the service encrypted to.
+
+Leave the STS URL as `https://localhost:8081/sts`. Turn
+`wstrustEncryptResponse` back to `false` before the next Issue, or
+that call is encrypted too.
+
+## An encrypted request
+
+**Encrypt the request body** replaces the RST with `xenc:EncryptedData`
+addressed to **Encryption Certificate**. On iya-sts paste the
+application's WS-Trust decryption certificate. Issue one with
+`POST /admin-api/applications/issue-wstrust-decryption-key`
+(`keyAlg` `rsa-3072`). The certificate comes back as
+`wstrustDecryption.certificatePem`, and the private key does not.
+Read it again from
+`GET /admin-api/applications?application=<id>`, under
+`credentials.wstrustDecryption.certificatePem`. An application with
+no key of its own takes the realm certificate instead: the first
+`KeyDescriptor use="encryption"` in `GET /saml2/metadata`.
+`GET /sts/cert` is the signing certificate. Do not encrypt to it.
+
+A request encrypted to a different application's key is refused
+(`STS-WSTRUST-0082`). A request for an application that has its own
+key, encrypted to the realm key, is refused (`STS-WSTRUST-0083`).
+Both faults are `wsse:FailedCheck`. Remove the key with
+`POST /admin-api/applications/remove-wstrust-decryption-key` when
+later requests should use the realm certificate again.
+
+To require the RST to arrive encrypted, set `wstrustEncryptRequest` to
+`true` and add this as one value of `wstrustEncryptRequestElements`:
+
+```
+//*[local-name()='RequestSecurityToken']
+```
+
+Leave `wstrustAcceptEncryptedElements` unset, or set it to `false`.
+That switch overrides `wstrust.acceptEncryptedElements`. Off, which is
+the default, ciphertext is accepted only where the request map names
+it. Ciphertext the map does not name is `STS-WSTRUST-0080`. Set the
+switch to `true` only when a request may encrypt an element no map
+names.
+
+That requirement is the application's map. It is not an element of the
+RST.
 
 ## TLS
 

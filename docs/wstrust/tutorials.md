@@ -155,17 +155,25 @@ this key. The private key is stored only while that box is checked.
 
 ## An encrypted issued token
 
-Some services encrypt the token they issue. iya-sts does when the STS
-URL carries `encrypt=1`:
+Some services encrypt an element of the token they issue. On iya-sts
+that is the relying party's response map, not a query on the STS URL
+and not `wst:EncryptWith`. For `urn:wstrust:test:rp`, set
+`wstrustEncryptResponse` to `true` and add this as one value of
+`wstrustEncryptResponseElements`:
 
-`https://localhost:8081/sts?encrypt=1`
+```
+//*[local-name()='Assertion' and namespace-uri()='urn:oasis:names:tc:SAML:2.0:assertion']
+```
 
-It encrypts the SAML 2.0 assertion to the certificate on the request's
-signature. The request has to be signed, with the key from the
-[signed walk](#sign-the-request). **Credential** stays **None**. In
-product mode a missing certificate or a certificate it will not
-encrypt to is a SOAP fault, and the assertion is not sent in the
-clear.
+The request has to be signed, with the key from the
+[signed walk](#sign-the-request). **Credential** stays **None**.
+**STS URL** stays `https://localhost:8081/sts`. iya-sts encrypts the
+SAML 2.0 assertion to the `BinarySecurityToken` on that signature, and
+the token comes back as `xenc:EncryptedData`. In product mode a
+missing certificate, or a certificate whose `keyUsage` is only
+`digitalSignature`, is a SOAP fault, and the assertion is not sent in
+the clear. **Generate Keys** writes no `keyUsage`, so that certificate
+may be the recipient.
 
 1. Press **Send Request**. **Issued Token** is an `EncryptedData`, not
    an assertion.
@@ -173,8 +181,9 @@ clear.
    ![The encrypted token](images/wst-encrypted-01-token.png)
 
 2. Press **Decrypt**. The decryption key is the private key that signed
-   the request, when that key was saved. **Token XML** becomes the
-   assertion.
+   the request, when that key was saved and it is the recipient. The
+   content key is in the response security header, and **Decrypt**
+   reads it from the response. **Token XML** becomes the assertion.
 
    ![The assertion after Decrypt](images/wst-encrypted-02-decrypted.png)
 
@@ -182,8 +191,9 @@ clear.
 
    ![Decrypt succeeded](images/wst-encrypted-02b-status.png)
 
-Set **STS URL** back to the URL without `encrypt=1` before the next
-call. The field is stored, so the query stays until you remove it.
+Set `wstrustEncryptResponse` back to `false` before the next call.
+The STS URL does not change. The field is stored, and the next Issue
+to this AppliesTo stays encrypted until the switch is off.
 
 ## OnBehalfOf and ActAs
 

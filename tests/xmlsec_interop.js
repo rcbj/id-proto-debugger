@@ -201,19 +201,19 @@ function signatureTests() {
     sigAlg: "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
     keyReference: "x509data"
   });
-  const both = xd.signWsSecurity(buildSoap(), {
-    privateKeyPem: kp.privateKeyPem, certPem: kp.certPem,
-    sigAlg: "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
-    keyReference: "both"
-  });
-  check("keyReference: 'both' carries the token, its reference AND the " +
-        "certificate inline in the KeyInfo",
-        /<wsse:BinarySecurityToken/.test(both) &&
-        new RegExp("<ds:KeyInfo><wsse:SecurityTokenReference[\\s\\S]*?" +
-          "</wsse:SecurityTokenReference><ds:X509Data><ds:X509Certificate>")
-          .test(both), both.slice(0, 400));
-  const rboth = verifyWithXmlCrypto(both, kp.certPem);
-  check("and it still verifies", rboth.ok, rboth.detail);
+  var retiredBoth = false;
+  try {
+    xd.signWsSecurity(buildSoap(), {
+      privateKeyPem: kp.privateKeyPem, certPem: kp.certPem,
+      sigAlg: "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+      keyReference: "both"
+    });
+  } catch (e) {
+    log.debug("Caught in signatureTests(): " + ((e && e.message) || e));
+    retiredBoth = /retired/.test(String(e && e.message));
+  }
+  check("keyReference: 'both' is retired", retiredBoth,
+        "signWsSecurity accepted both");
   check("keyReference: 'x509data' still produces the inline shape",
         /<ds:KeyInfo><ds:X509Data>/.test(legacy) &&
         !/BinarySecurityToken/.test(legacy), legacy.slice(0, 300));
@@ -355,7 +355,64 @@ function decryptRoundTripTests() {
   }
   check("negative control: wrong private key is REJECTED", threw,
         "decrypted with the wrong key");
+
+  // WS-Security 1.1 section 9, the shape iya-sts writes on an encrypted
+  // response: the EncryptedKey leaves the EncryptedData for wsse:Security,
+  // with a ReferenceList, and KeyInfo becomes a SecurityTokenReference.
+  let headerPlain = "";
+  try {
+    headerPlain = xd.decryptXml(securityHeaderKey(encA), {
+      privateKeyPem: kp.privateKeyPem
+    });
+  } catch (e) {
+    log.debug("Caught in decryptRoundTripTests(): " +
+              ((e && e.message) || e));
+    headerPlain = "ERR:" + e.message;
+  }
+  check("EncryptedKey in wsse:Security decrypts",
+        headerPlain === PLAINTEXT, String(headerPlain).slice(0, 80));
   log.debug("Leaving decryptRoundTripTests().");
+}
+
+// Move enc's EncryptedKey into a SOAP security header and point the
+// EncryptedData at it. enc is one EncryptedData element.
+function securityHeaderKey(enc) {
+  log.debug("Entering securityHeaderKey().");
+  const WSSE = "http://docs.oasis-open.org/wss/2004/01/" +
+      "oasis-200401-wss-wssecurity-secext-1.0.xsd";
+  const SOAP = "http://schemas.xmlsoap.org/soap/envelope/";
+  const doc = new DOMParser().parseFromString(enc, "application/xml");
+  const data = doc.documentElement;
+  data.setAttribute("Id", "iya-ed-1");
+  const infos = data.getElementsByTagNameNS(DSIG_NS, "KeyInfo");
+  const keyInfo = infos[0];
+  const key = keyInfo.getElementsByTagNameNS(XENC, "EncryptedKey")[0];
+  keyInfo.removeChild(key);
+  key.setAttribute("Id", "iya-ek-1");
+  const list = doc.createElementNS(XENC, "xenc:ReferenceList");
+  const dataRef = doc.createElementNS(XENC, "xenc:DataReference");
+  dataRef.setAttribute("URI", "#iya-ed-1");
+  list.appendChild(dataRef);
+  key.appendChild(list);
+  while (keyInfo.firstChild) {
+    keyInfo.removeChild(keyInfo.firstChild);
+  }
+  const str = doc.createElementNS(WSSE, "wsse:SecurityTokenReference");
+  const points = doc.createElementNS(WSSE, "wsse:Reference");
+  points.setAttribute("URI", "#iya-ek-1");
+  str.appendChild(points);
+  keyInfo.appendChild(str);
+  const env = new DOMParser().parseFromString(
+    '<soap:Envelope xmlns:soap="' + SOAP + '"><soap:Header>' +
+    '<wsse:Security xmlns:wsse="' + WSSE + '"></wsse:Security>' +
+    '</soap:Header><soap:Body></soap:Body></soap:Envelope>',
+    "application/xml");
+  const security = env.getElementsByTagNameNS(WSSE, "Security")[0];
+  const body = env.getElementsByTagNameNS(SOAP, "Body")[0];
+  security.appendChild(env.importNode(key, true));
+  body.appendChild(env.importNode(data, true));
+  log.debug("Leaving securityHeaderKey().");
+  return new XMLSerializer().serializeToString(env);
 }
 
 // --- 4) Enveloped assertion signatures (SAML Assertion Tool) ----------------

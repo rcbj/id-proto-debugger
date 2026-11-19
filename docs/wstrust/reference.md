@@ -72,10 +72,10 @@ the realm requires. See [setup-iya-sts.md](setup-iya-sts.md).
 | Generate Keys | | RSA pair and a self-signed certificate. | | |
 | Download | | The pair as PEM. | | |
 | Private Key | `wst_sp_private_key` | PKCS#8 PEM. | Empty | Key material, behind `wst_save_keypair` (`wstrust_wst_save_keypair`). Clearing the box removes it. |
-| Certificate | `wst_sp_cert` | Carried in the signature `KeyInfo`. | Empty | Same checkbox |
+| Certificate | `wst_sp_cert` | A `BinarySecurityToken` in the security header. `KeyInfo` references it. | Empty | Same checkbox |
 | Save this key pair in browser localStorage | `wst_save_keypair` | The response page uses the private key to decrypt an encrypted token. The STS certificate in **Encryption Certificate** is left in storage either way. | On | The preference itself is stored |
-| Encrypt the request body | `wst_encrypt_request` | XML Encryption of the body, in the browser, after the signature. Most services will not process an encrypted body. | Off | Yes |
-| Encryption Certificate | `wst_enc_cert` | STS certificate that wraps the session key. | Empty | Yes. Not covered by the save-keypair checkbox. |
+| Encrypt the request body | `wst_encrypt_request` | XML Encryption of the RST, in the browser, after the signature, to **Encryption Certificate**. On iya-sts that is the application's WS-Trust decryption certificate, or the realm's `KeyDescriptor use="encryption"` when the application has none. `GET /sts/cert` is the signing certificate. Requiring the element is the application's `wstrustEncryptRequest` map. `wstrustAcceptEncryptedElements` stays false unless ciphertext the map does not name must also be opened. | Off | Yes |
+| Encryption Certificate | `wst_enc_cert` | Certificate the session key is wrapped to. On iya-sts, the application's WS-Trust decryption certificate, or the realm `KeyDescriptor use="encryption"` when the application has none. | Empty | Yes. Not covered by the save-keypair checkbox. |
 | Encrypted Type | `wst_enc_type` | Element (the whole RST) or Content. | Element | Yes |
 | Canonicalization | `wst_enc_c14n` | | None (serialize as-is). Also exclusive and inclusive C14N 1.0. | Yes |
 | Data Encryption Algorithm | `wst_enc_data_alg` | AES-GCM and AES-CBC at 256, 192 and 128, and Triple DES CBC. | AES-256-GCM | Yes |
@@ -120,7 +120,7 @@ the realm requires. See [setup-iya-sts.md](setup-iya-sts.md).
 | Signature status | `wst_sig_status` | | Not stored |
 | Signature details | `wst_sig_details` | | Not stored |
 | Decryption Key | `wst_dec_key` | Requestor private key. Prefilled from the signing key when that key was saved. | Not stored |
-| Decrypt | | Replaces `EncryptedData` with the token. | |
+| Decrypt | | Replaces `xenc:EncryptedData` with the token. An issued assertion named by the relying party's response map arrives as that element. Its `EncryptedKey` is in the response `wsse:Security` header. | |
 | Decrypt status | `wst_dec_status` | | Not stored |
 
 ## Operations history
