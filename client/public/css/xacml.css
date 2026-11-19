@@ -140,9 +140,64 @@ h3 {
   margin: 0 0 4px;
 }
 
-.saml-field > label {
+/* Tooltips on a field label. The shared .tooltip (bootstrap.css) is
+   120px, centred and underlined: a hoverable word in a sentence. A
+   form label wants a readable column, lined up with the field, and
+   no dotted rule. pointer-events is also in common.css; it is
+   repeated here so a hidden .tooltiptext cannot sit on a control
+   and steal a click. */
+.xacml-tip {
+  border-bottom: 0;
+  position: relative;
+}
+
+.saml-field > .xacml-tip {
   flex: 0 0 170px;
   max-width: 170px;
+  display: block;
+}
+
+.saml-field > .xacml-tip > label {
+  padding-top: 3px;
+  font-size: 0.74em;
+  font-weight: 600;
+  color: #333;
+  margin: 0;
+}
+
+.xacml-tip .tooltiptext {
+  pointer-events: none;
+  width: 280px;
+  max-width: 90vw;
+  margin-left: 0;
+  left: 0;
+  bottom: 118%;
+  text-align: left;
+  white-space: normal;
+  font-size: 11px;
+  font-weight: normal;
+  line-height: 1.35;
+  padding: 6px 8px;
+  z-index: 5;
+}
+
+.xacml-tip .tooltiptext::after {
+  left: 18px;
+  margin-left: 0;
+}
+
+/* The last field of a row, and the Add column, open left so the
+   bubble stays inside the pane. */
+.xacml-tip-left .tooltiptext,
+.xacml-tree td:last-child .xacml-tip .tooltiptext {
+  left: auto;
+  right: 0;
+}
+
+.xacml-tip-left .tooltiptext::after,
+.xacml-tree td:last-child .xacml-tip .tooltiptext::after {
+  left: auto;
+  right: 18px;
 }
 
 .saml-pane button {
