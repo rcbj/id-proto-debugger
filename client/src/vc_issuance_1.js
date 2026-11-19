@@ -383,6 +383,9 @@ function attachFormatChoices() {
     vciMetadata.onFormatChange(previous);
     previous = formatInput.value;
     renderSigningAlgChoices();
+    // A built-in entry follows the format typed here, so the chooser does.
+    renderCredentialConfigurations();
+    renderDidEnabled();
   });
   log.debug("Leaving attachFormatChoices().");
 }
@@ -504,6 +507,10 @@ function restoreDefaults() {
   });
   vciMetadata.restoreDefaultFields();
   renderCredentialConfigurations();
+  // The defaults name a credential; the section is then filled from whatever
+  // entry that selects, so the two agree.
+  applyChosenConfiguration();
+  renderDidEnabled();
   saveConfiguration();
   // The credential configuration id is one of the defaults just restored, and
   // the pane's rows belong to whichever credential it now names.
@@ -531,7 +538,6 @@ function renderVciTable() {
 function renderCredentialConfigurations() {
   log.debug("Entering renderCredentialConfigurations().");
   var select = el("vci_credential_configuration_select");
-  var note = el("vci_configuration_note");
   if (!select) {
     log.debug("Leaving renderCredentialConfigurations().");
     return;
@@ -539,15 +545,15 @@ function renderCredentialConfigurations() {
   var configs = (vciInfo && vciInfo.credential_configurations_supported) || {};
   var ids = Object.keys(configs);
   var builtIns = vcFormats.builtInFormatIds();
-  var stored = val(vciMetadata.idFor("credential_configuration_id"));
-  var known = ids.indexOf(stored) !== -1 || !!vcFormats.builtInFormatOf(stored);
-  var chosen = known ? stored :
-      (ids[0] || vcFormats.BUILT_IN_PREFIX + builtIns[0]);
+  var chosen = chooserSelection(ids);
   var option = function (value, label) {
     return '<option value="' + esc(value) + '"' + (value === chosen ?
         ' selected="selected"' : '') + '>' + esc(label) + '</option>';
   };
-  var html = "";
+  // An empty section (Clear All, or Clear above) names no credential, so the
+  // chooser says so rather than showing an entry the fields do not match.
+  var html = chosen ? "" :
+      option("", "\u2014 choose a credential to request \u2014");
   if (ids.length) {
     html += '<optgroup label="Offered by this issuer">' +
       ids.map(function (id) {
@@ -565,6 +571,47 @@ function renderCredentialConfigurations() {
   describeConfigurationChoice();
   log.debug("Leaving renderCredentialConfigurations(). " + ids.length +
             " offered, " + builtIns.length + " built in.");
+}
+
+// Which entry the chooser shows, so that it always matches the section below
+// it: the credential_configuration_id the section names when that is one of
+// the issuer's or a built-in one; otherwise the issuer's first entry; with no
+// issuer document, the built-in entry for the format the section names; and
+// nothing at all when the section is empty.
+function chooserSelection(ids) {
+  log.debug("Entering chooserSelection().");
+  var stored = val(vciMetadata.idFor("credential_configuration_id"));
+  if (ids.indexOf(stored) !== -1 || vcFormats.builtInFormatOf(stored)) {
+    log.debug("Leaving chooserSelection(). The section's own.");
+    return stored;
+  }
+  if (ids.length) {
+    log.debug("Leaving chooserSelection(). The issuer's first.");
+    return ids[0];
+  }
+  var format = val(vciMetadata.idFor("format"));
+  var builtIn = vcFormats.builtInConfiguration(format);
+  log.debug("Leaving chooserSelection().");
+  return builtIn ? builtIn.id : "";
+}
+
+// Fill the Credential configuration section from whatever the chooser now
+// shows: an issuer's entry from its document, a built-in one from
+// vc_formats.js. The placeholder fills nothing.
+function applyChosenConfiguration() {
+  log.debug("Entering applyChosenConfiguration().");
+  var select = el("vci_credential_configuration_select");
+  var value = select ? select.value : "";
+  var builtIn = vcFormats.builtInFormatOf(value);
+  if (vciInfo && Object.keys(vciInfo).length && value) {
+    populateFromVciDocument();
+  } else if (builtIn) {
+    vciMetadata.populateFromBuiltIn(builtIn);
+    renderSigningAlgChoices();
+    describeConfigurationChoice();
+    updateHandoffSummary();
+  }
+  log.debug("Leaving applyChosenConfiguration(). " + value);
 }
 
 // The note beside the chooser: how many the issuer offers, and, when a
@@ -953,15 +1000,16 @@ function onCredentialConfigurationChange() {
   // Only re-populate the credential-configuration half; the issuer-level values
   // are unaffected by which credential is chosen.
   var select = el("vci_credential_configuration_select");
-  var builtIn = vcFormats.builtInFormatOf(select ? select.value : "");
-  if (vciInfo && Object.keys(vciInfo).length) {
+  if (vciInfo && Object.keys(vciInfo).length && select && select.value) {
     populateFromVci();
-  } else if (builtIn) {
-    // No issuer document: the built-in entry is all there is to apply.
-    vciMetadata.populateFromBuiltIn(builtIn);
-    renderSigningAlgChoices();
-    describeConfigurationChoice();
-    updateHandoffSummary();
+  } else {
+    // No issuer document: a built-in entry is all there is to apply.
+    applyChosenConfiguration();
+  }
+  // Once something is chosen the placeholder has nothing left to say.
+  if (select && select.value) {
+    var blank = select.querySelector('option[value=""]');
+    if (blank) blank.parentNode.removeChild(blank);
   }
   // The format may have changed, and with it whether DIDs default on.
   renderDidEnabled();

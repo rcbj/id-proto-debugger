@@ -171,6 +171,48 @@ async function test() {
       "the previous format's doctype does not linger");
     log.info("PASS a built-in entry fills a valid combination.");
 
+    // 2b. Typing a different format by hand carries the built-in entry, the
+    // type members and the chooser with it.
+    await driver.executeScript(
+      "var f = document.getElementById('vci_format');" +
+      "f.dispatchEvent(new Event('focus'));" +
+      "f.value = 'mso_mdoc';" +
+      "f.dispatchEvent(new Event('change', { bubbles: true }));");
+    await driver.wait(async function () {
+      return (await readChooser(driver)).value === "builtin:mso_mdoc";
+    }, waitTime, "the chooser should follow a typed format");
+    assert.strictEqual(await fieldValue(driver,
+      "vci_credential_configuration_id"), "builtin:mso_mdoc");
+    assert.strictEqual(await fieldValue(driver, "vci_doctype"),
+      "org.iso.18013.5.1.mDL", "a typed mso_mdoc gains its doctype");
+    assert.strictEqual(await fieldValue(driver,
+      "vci_cryptographic_binding_methods_supported"), "cose_key");
+    log.info("PASS a typed format change carries the section with it.");
+
+    // 2c. Clear All empties the section, and the chooser names nothing
+    // while still offering every format.
+    await driver.findElement(By.id("config_clear_button")).click();
+    await driver.wait(async function () {
+      return (await readChooser(driver)).value === "";
+    }, waitTime, "after Clear All the chooser should name no credential");
+    chooser = await readChooser(driver);
+    assertEveryBuiltIn(chooser, "after Clear All");
+    assert.strictEqual(await fieldValue(driver, "vci_format"), "");
+
+    // 2d. Restore Defaults: the chooser and the section agree again.
+    await driver.findElement(By.id("config_defaults_button")).click();
+    await driver.wait(async function () {
+      return (await readChooser(driver)).value === "builtin:dc+sd-jwt";
+    }, waitTime, "Restore Defaults should select the default format");
+    assert.strictEqual(await fieldValue(driver,
+      "vci_credential_configuration_id"), "builtin:dc+sd-jwt",
+      "the section names the entry the chooser shows");
+    assert.strictEqual(await fieldValue(driver, "vci_format"), "dc+sd-jwt");
+    assert.ok(await fieldValue(driver, "vci_vct"), "an SD-JWT VC has a vct");
+    assert.strictEqual(await fieldValue(driver, "vci_doctype"), "");
+    log.info("PASS Clear All and Restore Defaults keep the chooser and " +
+             "the section in agreement.");
+
     // 3. An issuer document: its entries first, the built-in ones after.
     await driver.executeScript(
       "localStorage.setItem('vci_credential_configuration_id', '');" +

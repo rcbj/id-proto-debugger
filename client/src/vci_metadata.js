@@ -261,6 +261,33 @@ function onFormatChange(previous) {
       changed.push(m.name);
     }
   });
+  // The members that IDENTIFY the credential (vct, doctype,
+  // credential_definition) and a built-in configuration id belong to one
+  // format. One still holding the previous format's built-in value, or
+  // nothing, takes the new format's, which may be nothing: an mdoc has no
+  // vct. A value typed by hand is left alone.
+  var before = vcFormats.builtInConfiguration(previous) || {};
+  var after = vcFormats.builtInConfiguration(now);
+  if (after) {
+    ["vct", "doctype", "credential_definition",
+     "credential_configuration_id"].forEach(function (name) {
+      var key = name === "credential_configuration_id" ? "id" : name;
+      var current = fieldValue(idFor(name)).trim();
+      var old = before[key] === undefined ? "" : toField(before[key]);
+      var dflt = (VCI_CONFIG_METADATA.filter(function (m) {
+        return m.name === name;
+      })[0] || {}).dflt;
+      // An empty id stays empty: the section names no credential yet.
+      if (name === "credential_configuration_id" ? current === old && old :
+          (!current || current === old || current === dflt)) {
+        var v = after[key] === undefined ? "" : toField(after[key]);
+        if (v !== current) {
+          setFieldValue(idFor(name), v);
+          changed.push(name);
+        }
+      }
+    });
+  }
   log.debug("Leaving onFormatChange(). " + changed.join(", "));
   return changed;
 }
