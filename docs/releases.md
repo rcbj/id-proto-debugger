@@ -161,6 +161,32 @@ Both live suites also run on a nightly schedule. See
 5. Merge `master` back into `develop`, so the release's merge commit is
    in `develop`'s history.
 
+### A release candidate
+
+To rehearse a release without making one, dispatch Docker Image CI on
+`develop` with **candidate** checked:
+
+```bash
+gh workflow run dockerimage.yml --ref develop -f candidate=true
+```
+
+It runs the `master` path with three differences:
+
+* the images go to both registries tagged `M.N.P.B` and
+  `M.N.P-candidate`, and `latest` is not moved;
+* the git tag is `release-M.N.P-candidate`, force-moved by each candidate
+  build (the `M.N.P.B` and floating `M.N.P` tags are made as on any
+  build);
+* **no GitHub release is created**, because a release is permanent. The
+  notes it would carry are written to the run's summary instead.
+
+The candidate input is ignored on `master`. The real release later finds
+no `release-M.N.P` tag and makes it as usual; the previous release is
+still found among the plain `release-*` tags, which a `-candidate` tag
+is not one of. Deploy the candidate to test.idptools.com with
+`gh workflow run website-deploy-test.yml --ref develop`, and run its live
+suite after it.
+
 Release 0.9.3 went through exactly these steps on 2026-11-14:
 `ab732c52`, images `0.9.3.20261114082841`,
 [Release 0.9.3](https://github.com/rcbj/id-proto-debugger/releases/tag/release-0.9.3).
