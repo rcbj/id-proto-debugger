@@ -10,9 +10,10 @@
 // SAML pictures go there; WS-Trust pictures go to WSTRUST_SCREENSHOT_DIR
 // when that is set, and otherwise to the same directory.
 //
-// This job is not in the ordinary suite. Run it when the pictures need
-// refreshing. See the "Regenerating the screenshots" section of each
-// guide.
+// An ordinary scheduled job (tests/run-report.js), whether or not pictures
+// are taken; the suite hands it fresh GUIDE_SAML_PASSWORD and
+// GUIDE_WST_PASSWORD values per run. To refresh the pictures, see the
+// "Regenerating the screenshots" section of each guide.
 
 const { Builder, By, until, logging } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");

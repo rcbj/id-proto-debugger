@@ -666,7 +666,7 @@ COPY tests/captures ./captures
 COPY tests/fixtures/vc_di_bbs_vectors.json tests/fixtures/vc_di_ecdsa_sd_vectors.json tests/fixtures/jwp_jpa15_vectors.json tests/fixtures/sd_cwt_09_vectors.json tests/fixtures/acdc_vectors.json ./fixtures/
 # The walk through docs/vc/'s tutorials. Here rather than beside
 # vci_offer_modes.js in files1, which is at this suite's layer budget.
-COPY tests/vc_user_guide.js ./
+COPY tests/vc_user_guide.js tests/saml_wstrust_user_guide.js ./
 
 # ---------------------------------------------------------------------------
 # Staging stage 2 of 3. Same rules as stage 1; see the header. It starts a

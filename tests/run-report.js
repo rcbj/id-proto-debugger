@@ -32,6 +32,7 @@
 //   node tests/run-report.js --demo   # write a SAMPLE report (no tests run)
 //
 const { spawn, execFileSync } = require("child_process");
+const nodeCrypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -438,6 +439,15 @@ function locksOf(job) {
 // Mirror of the *active* (non-commented) test invocations in
 // common/common.sh runTests(). Each job maps the suite's config vars onto the
 // generic names (AUDIENCE, CLIENT_ID, ...) each test script reads.
+// A password for an account a guide job creates on iya-sts for one run.
+// Upper, lower, digit and symbol, so a product-mode password policy takes
+// it; never logged, and passed to the job only in its environment.
+function guidePassword() {
+  log.debug("Entering guidePassword().");
+  log.debug("Leaving guidePassword().");
+  return "Gd-" + nodeCrypto.randomBytes(18).toString("base64url") + "9a!";
+}
+
 function buildJobs() {
   log.debug("Entering buildJobs().");
   const jobs = [];
@@ -4554,6 +4564,24 @@ function buildJobs() {
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
         API_URL: env.LDAP_AVAILABLE === "false" ? "" :
             (env.API_URL || "https://localhost:4000"),
+      },
+    });
+    // THE SAML AND WS-TRUST USER GUIDES' WALK (docs/saml/, docs/wstrust/),
+    // the way vc_user_guide.js walks docs/vc/: a SAML 2.0 sign-in from
+    // saml_request.html, then the WS-Trust pages' Issue, OnBehalfOf and
+    // ActAs. It creates its two accounts (guide-saml, guide-wstrust) on
+    // iya-sts with passwords made here for this run, and declares its
+    // service provider and AppliesTo applications through /admin-api. Its
+    // doc_screenshots.js calls are inert unless DOC_SCREENSHOT_DIR is set.
+    jobs.push({
+      name: "SAML and WS-Trust user guides — the walks of docs/saml/ and " +
+          "docs/wstrust/",
+      script: "saml_wstrust_user_guide.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        GUIDE_SAML_PASSWORD: env.GUIDE_SAML_PASSWORD ||
+            guidePassword(),
+        GUIDE_WST_PASSWORD: env.GUIDE_WST_PASSWORD || guidePassword(),
       },
     });
     jobs.push({
