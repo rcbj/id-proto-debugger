@@ -3779,6 +3779,11 @@
       "group": "client/src/vci_metadata.js"
     },
     {
+      "key": "vci_doctype",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
+    },
+    {
       "key": "vci_format",
       "class": "ordinary",
       "group": "client/src/vc_issuance_1.js"

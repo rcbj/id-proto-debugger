@@ -71,7 +71,9 @@ configuration.
 
 ![Configuration Parameters, populated from the issuer's metadata](images/vc-metadata-05-configuration-parameters.png)
 
-**Credential to request** lists `credential_configurations_supported`.
+**Credential to request** lists `credential_configurations_supported`
+first, then a built-in example for every other format (see the
+[reference](reference-issuance.md#configuration-parameters-pane_config)).
 Choosing one rewrites its rows: `format`, `vct` or `credential_definition`,
 `scope`, the binding methods and the signing and key-proof algorithms. A row
 the issuer leaves out keeps the default

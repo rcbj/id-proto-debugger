@@ -312,7 +312,8 @@ function metadataDefaults(formatId) {
     credential_signing_alg_values_supported:
       row.defaultSigningAlgs.join(", "),
     cryptographic_binding_methods_supported: row.defaultBinding,
-    proof_signing_alg_values_supported: "ES256"
+    proof_signing_alg_values_supported: "ES256",
+    proof_types_supported: row.proofTypes.join(", ")
   };
 }
 
@@ -448,6 +449,91 @@ function holderKeyFits(jwk, issuerAlgs, formatId) {
 
 // vp_formats_supported, as a Verifier states it (OpenID4VP 1.0 section
 // 11.1 and Appendix B): everything this debugger can verify, per format.
+// The built-in credential configurations issuance step 1 offers beside the
+// issuer's own (the "Credential to request" chooser). One per format an
+// OpenID4VCI Credential Request can name, each a VALID combination: the
+// type member that format's profile requires, a binding method, signing
+// algorithms and key proof types the row above defines. OpenID4VCI 1.0
+// section 8.2 says a request names one of the issuer's advertised
+// configurations, so a built-in one is an EXAMPLE to edit, not something an
+// issuer is expected to accept under this id.
+//
+// AnonCreds is the one format left out: a CL credential is issued against a
+// blinded link secret, which an OpenID4VCI Credential Request has no member
+// for, so no valid configuration of it exists (docs/anoncreds.md).
+var BUILT_IN_PREFIX = "builtin:";
+var W3C_V1_CONTEXT = "https://www.w3.org/2018/credentials/v1";
+var W3C_V2_CONTEXT = "https://www.w3.org/ns/credentials/v2";
+var BUILT_IN_EXTRAS = {
+  "dc+sd-jwt": { vct: "urn:idptools:sd-jwt-vc:identity" },
+  // OpenID4VCI 1.0 Appendix A.1.1: type is REQUIRED, @context is not used.
+  "jwt_vc_json": { credential_definition: {
+    type: ["VerifiableCredential", "IdentityCredential"] } },
+  // Appendices A.1.2 and A.1.3: @context and type are both REQUIRED.
+  "jwt_vc_json-ld": { credential_definition: {
+    "@context": [W3C_V1_CONTEXT],
+    type: ["VerifiableCredential", "IdentityCredential"] } },
+  "ldp_vc": { credential_definition: {
+    "@context": [W3C_V2_CONTEXT],
+    type: ["VerifiableCredential", "IdentityCredential"] } },
+  // VC-JOSE-COSE, JPT and SD-CWT have no OpenID4VCI format profile, so no
+  // configuration member identifies the credential type: none is invented.
+  "vc+jwt": {},
+  "vc+sd-jwt": {},
+  "vc+cose": {},
+  "jpt": {},
+  "sd-cwt": {},
+  // Appendix A.2: doctype is REQUIRED. ISO/IEC 18013-5's mobile driving
+  // licence.
+  "mso_mdoc": { doctype: "org.iso.18013.5.1.mDL" }
+};
+
+// The format ids that have a built-in configuration, in table order.
+function builtInFormatIds() {
+  log.debug("Entering builtInFormatIds().");
+  log.debug("Leaving builtInFormatIds().");
+  return Object.keys(FORMATS).filter(function (id) {
+    return Object.prototype.hasOwnProperty.call(BUILT_IN_EXTRAS, id);
+  });
+}
+
+// The built-in credential configuration for a format, as the members of a
+// credential_configurations_supported entry (arrays, not field strings), or
+// null for a format with none.
+function builtInConfiguration(formatId) {
+  log.debug("Entering builtInConfiguration(). " + formatId);
+  var row = FORMATS[formatId];
+  var extras = BUILT_IN_EXTRAS[formatId];
+  if (!row || !extras) {
+    log.debug("Leaving builtInConfiguration(). None.");
+    return null;
+  }
+  var cfg = {
+    id: BUILT_IN_PREFIX + formatId,
+    format: formatId,
+    scope: "",
+    cryptographic_binding_methods_supported: [row.defaultBinding],
+    credential_signing_alg_values_supported: row.defaultSigningAlgs.slice(),
+    proof_types_supported: row.proofTypes.slice(),
+    proof_signing_alg_values_supported: ["ES256"]
+  };
+  Object.keys(extras).forEach(function (k) {
+    cfg[k] = JSON.parse(JSON.stringify(extras[k]));
+  });
+  log.debug("Leaving builtInConfiguration().");
+  return cfg;
+}
+
+// The format a built-in configuration id names, or "" for any other id.
+function builtInFormatOf(configId) {
+  log.debug("Entering builtInFormatOf().");
+  var id = String(configId || "");
+  var f = id.indexOf(BUILT_IN_PREFIX) === 0 ?
+      id.slice(BUILT_IN_PREFIX.length) : "";
+  log.debug("Leaving builtInFormatOf().");
+  return builtInConfiguration(f) ? f : "";
+}
+
 function vpFormatsSupported() {
   log.debug("Entering vpFormatsSupported().");
   var ldpDi = Object.keys(LDP_SUITES).filter(function (id) {
@@ -491,6 +577,10 @@ module.exports = {
   formatIds: formatIds,
   isSigningAlgFor: isSigningAlgFor,
   metadataDefaults: metadataDefaults,
+  BUILT_IN_PREFIX: BUILT_IN_PREFIX,
+  builtInFormatIds: builtInFormatIds,
+  builtInConfiguration: builtInConfiguration,
+  builtInFormatOf: builtInFormatOf,
   ldpSuiteOf: ldpSuiteOf,
   isLdpSecured: isLdpSecured,
   isSelectiveLdpSuite: isSelectiveLdpSuite,
