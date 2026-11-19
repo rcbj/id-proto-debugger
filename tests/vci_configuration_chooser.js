@@ -64,19 +64,27 @@ async function pageBundleReady(driver) {
   log.debug("Leaving pageBundleReady().");
 }
 
-// The chooser's groups: label -> option values. Read in the page; no logger
-// there (see the root CLAUDE.md on code run by executeScript).
+// The chooser's groups: label -> option values, plus `order`, the labels as
+// the page shows them. The page returns a LIST, because an object's key
+// order does not survive the trip back through ChromeDriver. Read in the
+// page; no logger there (see the root CLAUDE.md on code run by
+// executeScript).
 async function readChooser(driver) {
   log.debug("Entering readChooser().");
-  var groups = await driver.executeScript(
+  var read = await driver.executeScript(
     "var s = document.getElementById('vci_credential_configuration_select');" +
-    "if (!s) return null; var out = {};" +
-    "Array.prototype.forEach.call(s.querySelectorAll('optgroup')," +
-    " function (g) { out[g.label] = Array.prototype.map.call(" +
-    "  g.querySelectorAll('option'), function (o) { return o.value; }); });" +
-    "return { groups: out, value: s.value };");
+    "if (!s) return null;" +
+    "var groups = Array.prototype.map.call(s.querySelectorAll('optgroup')," +
+    " function (g) { return [g.label, Array.prototype.map.call(" +
+    "  g.querySelectorAll('option'), function (o) { return o.value; })]; });" +
+    "return { groups: groups, value: s.value };");
+  var out = { groups: {}, order: [], value: read.value };
+  read.groups.forEach(function (pair) {
+    out.groups[pair[0]] = pair[1];
+    out.order.push(pair[0]);
+  });
   log.debug("Leaving readChooser().");
-  return groups;
+  return out;
 }
 
 function builtInGroup(chooser) {
@@ -227,8 +235,8 @@ async function test() {
       ["IdentityCredential", "UniversityDegree"],
       "the issuer's entries are listed");
     assertEveryBuiltIn(chooser, "beside the issuer's");
-    assert.deepStrictEqual(Object.keys(chooser.groups)[0],
-      "Offered by this issuer", "the issuer's group comes first");
+    assert.strictEqual(chooser.order[0], "Offered by this issuer",
+      "the issuer's group comes first");
     log.info("PASS the issuer's entries come first, the built-in ones " +
              "after.");
 
