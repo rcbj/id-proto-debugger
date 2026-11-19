@@ -10,9 +10,10 @@
 // SAML pictures go there; WS-Trust pictures go to WSTRUST_SCREENSHOT_DIR
 // when that is set, and otherwise to the same directory.
 //
-// This job is not in the ordinary suite. Run it when the pictures need
-// refreshing. See the "Regenerating the screenshots" section of each
-// guide.
+// An ordinary scheduled job (tests/run-report.js), whether or not pictures
+// are taken; the suite hands it fresh GUIDE_SAML_PASSWORD and
+// GUIDE_WST_PASSWORD values per run. To refresh the pictures, see the
+// "Regenerating the screenshots" section of each guide.
 
 const { Builder, By, until, logging } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
@@ -677,6 +678,11 @@ async function samlLogout(driver) {
   log.debug("Entering samlLogout().");
   await loadPage(driver, baseUrl + "/saml_request.html",
                  "saml_logout_btn", { timeout: waitTime });
+  // The same SP entityID the sign-in used (see samlRequestPage()).
+  var entity = process.env.GUIDE_SP_ENTITY_ID || "";
+  if (entity && (await textOf(driver, "saml_sp_entity_id")) !== entity) {
+    await setField(driver, "saml_sp_entity_id", entity);
+  }
   await setField(driver, "saml_binding", "redirect");
   await driver.wait(async function () {
     var nameid = await driver.executeScript(
@@ -720,8 +726,7 @@ async function samlLogout(driver) {
 
 async function saml11(driver, user) {
   log.debug("Entering saml11().");
-  await loadPage(driver, baseUrl + "/saml_request.html",
-                 "saml_metadata_url", { timeout: waitTime });
+  await samlRequestPage(driver);
   var entity = await textOf(driver, "saml_sp_entity_id");
   if (!entity) {
     entity = baseUrl.replace(/\/+$/, "") + "/saml/sp";
@@ -1435,10 +1440,25 @@ async function installIssuedSigningKey(driver) {
   log.debug("Leaving installIssuedSigningKey().");
 }
 
-async function samlGuide(driver) {
-  log.debug("Entering samlGuide().");
+// Load saml_request.html. When GUIDE_SP_ENTITY_ID is set, use it as the
+// SP entityID. The suite sets it so the walk registers a service provider
+// of its own: the page's default is the one the SAML SSO jobs register, and
+// the walk adds its own signing certificate to whatever it registers.
+// A documentation run leaves it unset, so the pictures show the default.
+async function samlRequestPage(driver) {
+  log.debug("Entering samlRequestPage().");
   await loadPage(driver, baseUrl + "/saml_request.html",
                  "saml_metadata_url", { timeout: waitTime });
+  var entity = process.env.GUIDE_SP_ENTITY_ID || "";
+  if (entity && (await textOf(driver, "saml_sp_entity_id")) !== entity) {
+    await setField(driver, "saml_sp_entity_id", entity);
+  }
+  log.debug("Leaving samlRequestPage().");
+}
+
+async function samlGuide(driver) {
+  log.debug("Entering samlGuide().");
+  await samlRequestPage(driver);
   await loadMetadata(driver, stsOrigin + "/saml2/metadata");
   await shot(driver, samlDir, "saml-redirect", "01-metadata", [
     "pane_metadata"
@@ -1448,11 +1468,9 @@ async function samlGuide(driver) {
   ]);
   await samlRoundTrip(driver, "redirect", samlUser);
   await samlLogout(driver);
-  await loadPage(driver, baseUrl + "/saml_request.html",
-                 "saml_metadata_url", { timeout: waitTime });
+  await samlRequestPage(driver);
   await samlRoundTrip(driver, "post", samlUser);
-  await loadPage(driver, baseUrl + "/saml_request.html",
-                 "saml_metadata_url", { timeout: waitTime });
+  await samlRequestPage(driver);
   await samlRoundTrip(driver, "artifact", samlUser);
   await saml11(driver, samlUser);
   log.debug("Leaving samlGuide().");

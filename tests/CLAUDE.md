@@ -184,6 +184,8 @@ build served from an origin that issuer's CORS policy does not list. No
 launcher sets any of them. The regeneration commands are at the foot of
 `docs/vc/index.md`.
 
+**`docs/saml/` and `docs/wstrust/` are the third**, by `saml_wstrust_user_guide.js`. It is also an ordinary scheduled job, registered beside `vc_user_guide.js` and gated on `WSTRUST_STS_URL`. It creates two accounts on iya-sts, `guide-saml` and `guide-wstrust`. `run-report.js` makes their passwords for each run (`guidePassword()`), unless `GUIDE_SAML_PASSWORD` / `GUIDE_WST_PASSWORD` are set. It registers its SAML service provider and the three AppliesTo applications through `/admin-api`.
+
 ## A TEST THAT DOES NOT RUN IS NOT A PASSING TEST
 
 This is the rule that costs a run most often here, and this file already
