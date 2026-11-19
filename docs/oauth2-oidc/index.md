@@ -43,8 +43,8 @@ client IDs and secrets in place of the ones shown.
 
 ### Start the debugger
 
-From a checkout, follow *Getting Started* in the repository's
-[README](../../README.md#getting-started). In short:
+From a checkout, follow
+[Getting started](../getting-started.md). In short:
 
 ```bash
 git submodule update --init

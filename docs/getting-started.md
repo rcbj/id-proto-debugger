@@ -62,7 +62,7 @@ On other systems, the commands needed to start the debugger in a local docker co
 are in [docs/oauth2-oidc](oauth2-oidc/index.md):
 [OAuth 2.0 authorization grants](oauth2-oidc/oauth2-grants.md) and
 [OpenID Connect authentication flows](oauth2-oidc/oidc-flows.md). The
-summary below is the short version. The same guide covers [dynamic client registration](oauth2-oidc/dynamic-client-registration.md) and the [token detail, introspection, UserInfo, and JWKS pages](oauth2-oidc/related-tools.md). SAML 2.0 is [Using the SAML workflow](saml.md). WS-Trust is [Using the WS-Trust workflow](wstrust.md).
+summary below is the short version. The same guide covers [dynamic client registration](oauth2-oidc/dynamic-client-registration.md) and the [token detail, introspection, UserInfo, and JWKS pages](oauth2-oidc/related-tools.md). SAML 2.0 is [Using the SAML workflow](saml/index.md). WS-Trust is [Using the WS-Trust workflow](wstrust/index.md).
 
 * Open your favorite browser and enter "https://localhost:3000" in the address bar.
 * Choose the OAuth2 Grant or OIDC Flow that you want to test.

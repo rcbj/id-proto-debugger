@@ -60,7 +60,7 @@ The **critical** flag is separately settable on each. A validator must reject a 
 ### Keys and certificates are kept
 Everything issued is kept in the browser, because a certificate authority is only worth having if it is still there tomorrow — the whole point of a root is that it signs an intermediate next week and an issuing CA the week after. Each object records who issued it, so the page can assemble the chain for an export, a truststore or the TLS test below.
 
-Key pairs come from the same pane, and the same code, as the [JWT Tools](#jwt-tools) page, and download in the same formats: **PEM**, **DER**, a **JWK set**, or a password-protected **PKCS#12** carrying the key with its whole certificate chain — the format `keytool`, OpenSSL, Windows and macOS all import. The private key can be encrypted (PBES2) in every format.
+Key pairs come from the same pane, and the same code, as the [JWT Tools](jwt-tools.md) page, and download in the same formats: **PEM**, **DER**, a **JWK set**, or a password-protected **PKCS#12** carrying the key with its whole certificate chain — the format `keytool`, OpenSSL, Windows and macOS all import. The private key can be encrypted (PBES2) in every format.
 
 **Private keys are saved by default and there is a checkbox to stop it**, as on every other key-generating page here. It is the private half only: clearing it strips the private keys already written and keeps the certificates and public keys, which are public documents — so the trust anchors and the chains stay usable while nothing can sign any more.
 

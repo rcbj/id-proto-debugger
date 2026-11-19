@@ -51,12 +51,28 @@
 
 - section: SAML and WS-*
   items:
-    - { title: Using the SAML workflow, url: /docs/saml.html }
+    - title: Using the SAML workflow
+      url: /docs/saml/
+      children:
+        - { title: Protocol, url: /docs/saml/protocol.html }
+        - { title: Configuration reference,
+            url: /docs/saml/reference.html }
+        - { title: Tutorials, url: /docs/saml/tutorials.html }
+        - { title: Pointing it at iya-sts,
+            url: /docs/saml/setup-iya-sts.html }
     - { title: SAML 1.1, url: /docs/saml11.html }
     - { title: SAML Assertion Tool, url: /docs/saml-assertion.html }
     - { title: SAML decoders, url: /docs/saml-decoders.html }
     - { title: WS-Federation, url: /docs/wsfed.html }
-    - { title: Using the WS-Trust workflow, url: /docs/wstrust.html }
+    - title: Using the WS-Trust workflow
+      url: /docs/wstrust/
+      children:
+        - { title: Protocol, url: /docs/wstrust/protocol.html }
+        - { title: Configuration reference,
+            url: /docs/wstrust/reference.html }
+        - { title: Tutorials, url: /docs/wstrust/tutorials.html }
+        - { title: Pointing it at iya-sts,
+            url: /docs/wstrust/setup-iya-sts.html }
     - { title: Post-quantum XML Signature, url: /docs/xmldsig-pqc.html }
 
 - section: Verifiable credentials

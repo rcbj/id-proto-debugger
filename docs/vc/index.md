@@ -28,7 +28,7 @@ does is in the developer notes listed [at the end](#developer-notes).
 
 ## Before you start
 
-Start the debugger as the [README](../../README.md#getting-started)
+Start the debugger as [Getting started](../getting-started.md)
 describes, open `https://localhost:3000`, and choose **VC Issuance** or
 **VC Presentation**. The deployed copy at [idptools.com](https://idptools.com)
 has every VC page, but it runs no backend, so some things work there and some

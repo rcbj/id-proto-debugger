@@ -149,4 +149,4 @@ throwaway recipient pair.
 | **EncryptedAssertion to Decrypt** / **Decrypt** | | Round-trip with the recipient private key. |
 
 The page builds an assertion, not a `<samlp:Response>`. A full sign-in is
-the [SAML workflow](saml.md).
+the [SAML workflow](saml/index.md).

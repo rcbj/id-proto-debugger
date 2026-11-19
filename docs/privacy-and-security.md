@@ -9,7 +9,7 @@ To be clear about what we do with that data:
 * **We do not log** any of the query parameters, fragments, authorization codes, tokens, or redirect URIs that are sent to the site as part of normal debugger operations.
 * All token handling, decoding, and validation happens **client-side in your browser**; your configuration is stored only in your browser's `localStorage`.
 
-If sending authorization codes to a third-party hosting provider is not acceptable for your use case (for example, when testing against a production Identity Provider), we strongly encourage you to **run a local build of the debugger** so that nothing leaves your machine. See [Getting Started / running locally](#general-usage-notes) below — in short:
+If sending authorization codes to a third-party hosting provider is not acceptable for your use case (for example, when testing against a production Identity Provider), we strongly encourage you to **run a local build of the debugger** so that nothing leaves your machine. See [Getting started](getting-started.md). In short:
 
 ```bash
 ./generate-tls-cert.sh                 # once per checkout: the TLS pair
