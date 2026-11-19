@@ -369,23 +369,6 @@ async function present(driver, c) {
     }
   }
   const doc = await common.verdictFor(verifierBase, started.state);
-  if (c.verifierGap) {
-    // What iya-sts DOES with this answer, asserted exactly, because the
-    // shortfall is the verifier's and not the wallet's (see the case).
-    const failed = ((doc.verdict || {}).checks || []).filter(function (k) {
-      return !k.ok;
-    });
-    assert.deepStrictEqual(failed.map(function (k) {
-      return k.name;
-    }), [c.verifierGap], c.label + ": iya-sts was expected to fail ONLY '" +
-      c.verifierGap + "' (a known gap in its 1.0.0 verifier). It failed: " +
-      JSON.stringify(failed) + ". If that list is now empty, iya-sts has " +
-      "been fixed: drop verifierGap from this case.");
-    log.info("[" + c.label + "] every iya-sts check passed but its known " +
-             "gap, '" + c.verifierGap + "'.");
-    log.debug("Leaving present(). Known verifier gap.");
-    return doc.verdict;
-  }
   assert.ok(doc.verdict && doc.verdict.ok, c.label + ": iya-sts should " +
     "accept the answer. The checks it failed: " + JSON.stringify(
       ((doc.verdict || {}).checks || []).filter(function (k) {
@@ -461,11 +444,15 @@ async function mdocCredential() {
 }
 
 // The iya-sts settings an mdoc from a foreign issuer needs, set for the
-// run and put back after it: the issuer's IACA as an mdoc trust anchor, and
-// a status reference required only of iya-sts's own credentials (a test
-// issuer publishes no status list).
+// run and put back after it: the issuer's IACA as an mdoc trust anchor, a
+// status reference required only of iya-sts's own credentials (a test
+// issuer publishes no status list), and the docType and namespace the
+// Verifier asks for. Those two default to the type iya-sts issues itself
+// (since rcbj/iya-sts#1862); the test issuer mints an ISO mDL.
 const MDOC_SETTINGS = ["oid4vp.mdocTrustAnchors",
-                       "oid4vp.requireStatusReference"];
+                       "oid4vp.requireStatusReference",
+                       "oid4vp.expectedDoctype",
+                       "oid4vp.mdocNamespace"];
 
 async function test() {
   log.debug("Entering test().");
@@ -477,6 +464,10 @@ async function test() {
   restore[MDOC_SETTINGS[0]] = await setting(MDOC_SETTINGS[0],
                                             held.mso_mdoc.iacaPem);
   restore[MDOC_SETTINGS[1]] = await setting(MDOC_SETTINGS[1], "own-only");
+  restore[MDOC_SETTINGS[2]] = await setting(MDOC_SETTINGS[2],
+                                            mdocIssuer.DOCTYPE);
+  restore[MDOC_SETTINGS[3]] = await setting(MDOC_SETTINGS[3],
+                                            mdocIssuer.NS);
   try {
     log.debug("Leaving test().");
     return await withFormats(held);
@@ -514,14 +505,6 @@ async function withFormats(held) {
       protocol: "siopv2", format: format, anchor: anchor,
       ldp: format === "ldp_vc", idToken: true,
       mustPass: ["id_token subject is the holder"],
-      // iya-sts 1.0.0 verifies an mdoc's device signature with the MSO's
-      // device key but does not return that key as the presentation's
-      // holder key (oid4vc/vc_mdoc.ts sets no holderJwk), so its SIOPv2
-      // "same holder" check cannot pass for ANY mdoc (rcbj/iya-sts#1864).
-      // The wallet's own step 3 re-check of the same thing ("Same holder")
-      // has passed by this point; everything else iya-sts checks must pass.
-      verifierGap: format === "mso_mdoc" ?
-          "id_token subject is the holder" : "",
       asked: { format: format, by: "reference", client_id_prefix: "x509_hash",
                response_type: "vp_token id_token",
                response_mode: "direct_post", mode: "same-device" } });
