@@ -4582,6 +4582,11 @@ function buildJobs() {
         GUIDE_SAML_PASSWORD: env.GUIDE_SAML_PASSWORD ||
             guidePassword(),
         GUIDE_WST_PASSWORD: env.GUIDE_WST_PASSWORD || guidePassword(),
+        // A service provider of its own. The page's default entityID is the
+        // one the SAML SSO jobs register, and the walk adds its own signing
+        // certificate to the provider it registers.
+        GUIDE_SP_ENTITY_ID: BASE_URL.replace(/\/+$/, "") +
+            "/saml/sp-user-guide",
       },
     });
     jobs.push({
