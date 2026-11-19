@@ -62,15 +62,16 @@ function hidden(name, value) {
  */
 function textField(name, value, size) {
   log.debug("Entering textField().");
+  var html = wrapTip(name, '<input type="text" name="' + esc(name) +
+    '" value="' + esc(value == null ? "" : value) + '" size="' +
+    Number(size) + '">');
   log.debug("Leaving textField().");
-  return '<input type="text" name="' + esc(name) + '" value="' +
-    esc(value == null ? "" : value) + '" size="' + Number(size) + '"' +
-    titleFor(name) + '>';
+  return html;
 }
 
 // THE TOOLTIP OF EVERY EDITOR FIELD, by its form field name. Every field
 // the editor draws comes through textField() or select(), so one table
-// covers all of them; a name not listed gets no title.
+// covers all of them; a name not listed is drawn with no tooltip.
 var FIELD_TIPS = {
   action: "What to add or remove at this element.",
   attributeId: "The AttributeId: the URI naming the attribute to read " +
@@ -108,7 +109,8 @@ var FIELD_TIPS = {
     "Content.",
   ref: "The id of the Policy or PolicySet this reference points to.",
   referenceKind: "Whether the reference names a Policy or a PolicySet.",
-  type: "The kind of element to add.",
+  type: "The data type of this value, such as string, anyURI, " +
+    "integer or dateTime.",
   value: "The literal value.",
   variableId: "The VariableDefinition this refers to, or defines.",
   version: "The version of this Policy or PolicySet, such as 1.0.",
@@ -127,12 +129,25 @@ function explain(summary, inner) {
     "</summary><div>" + inner + "</div></details>";
 }
 
-function titleFor(name) {
-  log.debug("Entering titleFor().");
+/**
+ * The house tooltip: the control, then its explanation. A name with no
+ * entry in FIELD_TIPS is returned unchanged.
+ *
+ * @param {string} name - the field name
+ * @param {string} inner - the control's HTML
+ * @returns {string} the control, wrapped when it has a tip
+ */
+function wrapTip(name, inner) {
+  log.debug("Entering wrapTip().");
   var tip = Object.prototype.hasOwnProperty.call(FIELD_TIPS, name) ?
       FIELD_TIPS[name] : "";
-  log.debug("Leaving titleFor().");
-  return tip ? ' title="' + esc(tip) + '"' : "";
+  if (!tip) {
+    log.debug("Leaving wrapTip(). No tip.");
+    return inner;
+  }
+  log.debug("Leaving wrapTip().");
+  return '<span class="tooltip xacml-tip">' + inner +
+    '<span class="tooltiptext">' + esc(tip) + "</span></span>";
 }
 
 /**
@@ -145,13 +160,14 @@ function titleFor(name) {
  */
 function select(name, options, selected) {
   log.debug("Entering select().");
-  var html = '<select name="' + esc(name) + '"' + titleFor(name) + '>';
+  var html = '<select name="' + esc(name) + '">';
   (options || []).forEach(function (one) {
     var on = String(one.value) === String(selected == null ? "" : selected);
     html += '<option value="' + esc(one.value) + '"' +
       (on ? " selected" : "") + '>' + esc(one.label) + '</option>';
   });
   html += "</select>";
+  html = wrapTip(name, html);
   log.debug("Leaving select().");
   return html;
 }

@@ -65,34 +65,48 @@
     <p>The key this client instance proves itself with. It is sent in the grant request (client.key) and every request is signed with it. The private key stays in this browser; the API path forwards a request that is already signed.</p>
   </details>
   <div class="saml-row">
-    <label title="The signing algorithm, and so the kind of key Generate makes.">Algorithm
-      <select id="gnap_alg" title="The signing algorithm, and so the kind of key Generate makes.">
-        <option value="ES256">ES256</option>
-        <option value="ES384">ES384</option>
-        <option value="EdDSA">EdDSA</option>
-        <option value="RS256">RS256</option>
-      </select>
-    </label>
+    <div class="tooltip gnap-tip">
+      <label>Algorithm
+        <select id="gnap_alg">
+          <option value="ES256">ES256</option>
+          <option value="ES384">ES384</option>
+          <option value="EdDSA">EdDSA</option>
+          <option value="RS256">RS256</option>
+        </select>
+      </label>
+      <span class="tooltiptext">The signing algorithm, and so the
+      kind of key Generate makes.</span>
+    </div>
     <button type="button" id="gnap_generate" title="Generate a new key pair for the chosen algorithm." onclick="return gnap.generate();">
       Generate</button>
     <button type="button" id="gnap_use_pasted" title="Use the private key pasted below (a JWK) instead of a generated one." onclick="return gnap.usePasted();">
       Use pasted key</button>
-    <label title="Keep the private key in this browser's storage. Clearing it removes the stored key.">
-      <input type="checkbox" id="gnap_save_keypair" checked
-             title="Keep the private key in this browser's storage. Clearing it removes the stored key."
-             onchange="return gnap.onSaveChange();">
-      Save the private key in this browser
-    </label>
+    <div class="tooltip gnap-tip gnap-tip-left">
+      <label>
+        <input type="checkbox" id="gnap_save_keypair" checked
+               onchange="return gnap.onSaveChange();">
+        Save the private key in this browser
+      </label>
+      <span class="tooltiptext">Keep the private key in this
+      browser's storage. Clearing it removes the stored key.</span>
+    </div>
   </div>
   <div class="saml-field">
-    <label for="gnap_public" title="The public half as a JWK. It is what the grant request sends as client.key.">Public key</label>
-    <textarea id="gnap_public" class="gnap-mono" rows="4" readonly
-              title="The public half as a JWK. It is what the grant request sends as client.key."></textarea>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_public">Public key</label>
+      <span class="tooltiptext">The public half as a JWK. It is
+      what the grant request sends as client.key.</span>
+    </div>
+    <textarea id="gnap_public" class="gnap-mono" rows="4"
+              readonly></textarea>
   </div>
   <div class="saml-field">
-    <label for="gnap_private" title="The private key as a JWK. Paste one here and press Use pasted key to sign with it.">Private key</label>
-    <textarea id="gnap_private" class="gnap-mono" rows="4"
-              title="The private key as a JWK. Paste one here and press Use pasted key to sign with it."></textarea>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_private">Private key</label>
+      <span class="tooltiptext">The private key as a JWK. Paste one
+      here and press Use pasted key to sign with it.</span>
+    </div>
+    <textarea id="gnap_private" class="gnap-mono" rows="4"></textarea>
   </div>
   </div>
 </fieldset>
@@ -107,14 +121,21 @@
     <p>Used only when the proof is <code>mtls</code> (RFC 9635 section 7.3.2). The grant request carries the certificate as <code>client.key.cert</code>, and the API presents it, with this key, in the TLS handshake of that one call. The PKI page issues one. The key follows the save box above. Section 7.3.2.1 defines no key rotation for mtls.</p>
   </details>
   <div class="saml-field">
-    <label for="gnap_mtls_cert" title="The client certificate the API presents in the TLS handshake, as PEM.">Certificate (PEM)</label>
-    <textarea id="gnap_mtls_cert" class="gnap-mono" rows="6"
-              title="The client certificate the API presents in the TLS handshake, as PEM."></textarea>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_mtls_cert">Certificate (PEM)</label>
+      <span class="tooltiptext">The client certificate the API
+      presents in the TLS handshake, as PEM.</span>
+    </div>
+    <textarea id="gnap_mtls_cert" class="gnap-mono" rows="6"></textarea>
   </div>
   <div class="saml-field">
-    <label for="gnap_mtls_key" title="The certificate's private key, as PEM. Sent to the API for this one call; never shown in the HTTP tab.">Private key (PEM)</label>
-    <textarea id="gnap_mtls_key" class="gnap-mono" rows="6"
-              title="The certificate's private key, as PEM. Sent to the API for this one call; never shown in the HTTP tab."></textarea>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_mtls_key">Private key (PEM)</label>
+      <span class="tooltiptext">The certificate's private key, as
+      PEM. Sent to the API for this one call; never shown in the
+      HTTP tab.</span>
+    </div>
+    <textarea id="gnap_mtls_key" class="gnap-mono" rows="6"></textarea>
   </div>
   </div>
 </fieldset>
@@ -134,50 +155,77 @@
     <p>Where the grant request goes and how its proof travels. Through the API, the debugger's server forwards a request this browser already signed; from this browser, the request is sent directly and needs the server to allow it (CORS). Mutual TLS is a property of the connection, which a browser cannot choose, so the mtls proof goes through the API only.</p>
   </details>
   <div class="saml-field">
-    <label for="gnap_grant" title="The authorization server's grant request endpoint (RFC 9635 section 2).">Grant endpoint</label>
-    <input type="text" id="gnap_grant" value="https://localhost:8081/gnap"
-           title="The authorization server's grant request endpoint (RFC 9635 section 2).">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_grant">Grant endpoint</label>
+      <span class="tooltiptext">The authorization server's grant
+      request endpoint (RFC 9635 section 2).</span>
+    </div>
+    <input type="text" id="gnap_grant"
+           value="https://localhost:8081/gnap">
   </div>
   <div class="saml-row">
-    <label title="How the client key is proved: an HTTP message signature (httpsig), a detached JWS (jwsd), an attached JWS (jws), or the TLS client certificate (mtls, through the API only).">Proof
-      <select id="gnap_proof" title="How the client key is proved: an HTTP message signature (httpsig), a detached JWS (jwsd), an attached JWS (jws), or the TLS client certificate (mtls, through the API only).">
-        <option value="httpsig">httpsig</option>
-        <option value="jwsd">jwsd</option>
-        <option value="jws">jws</option>
-        <option value="mtls">mtls (through the API)</option>
-      </select>
-    </label>
-    <label title="Send through the debugger's API, or straight from this browser.">Send
-      <select id="gnap_via" title="Send through the debugger's API, or straight from this browser.">
-        <option value="api">through the API</option>
-        <option value="browser">from this browser</option>
-      </select>
-    </label>
-    <label title="On the API path, do not verify the authorization server's TLS certificate. For test servers only.">
-      <input type="checkbox" id="gnap_insecure"
-             title="On the API path, do not verify the authorization server's TLS certificate. For test servers only.">
-      Skip certificate verification on the API path
-    </label>
+    <div class="tooltip gnap-tip">
+      <label>Proof
+        <select id="gnap_proof">
+          <option value="httpsig">httpsig</option>
+          <option value="jwsd">jwsd</option>
+          <option value="jws">jws</option>
+          <option value="mtls">mtls (through the API)</option>
+        </select>
+      </label>
+      <span class="tooltiptext">How the client key is proved: an
+      HTTP message signature (httpsig), a detached JWS (jwsd), an
+      attached JWS (jws), or the TLS client certificate (mtls,
+      through the API only).</span>
+    </div>
+    <div class="tooltip gnap-tip">
+      <label>Send
+        <select id="gnap_via">
+          <option value="api">through the API</option>
+          <option value="browser">from this browser</option>
+        </select>
+      </label>
+      <span class="tooltiptext">Send through the debugger's API,
+      or straight from this browser.</span>
+    </div>
+    <div class="tooltip gnap-tip gnap-tip-left">
+      <label>
+        <input type="checkbox" id="gnap_insecure">
+        Skip certificate verification on the API path
+      </label>
+      <span class="tooltiptext">On the API path, do not verify the
+      authorization server's TLS certificate. For test servers
+      only.</span>
+    </div>
   </div>
   <div class="saml-field">
-    <label for="gnap_api" title="The debugger API that forwards the signed request. Empty uses this deployment's API.">API base URL</label>
-    <input type="text" id="gnap_api"
-           title="The debugger API that forwards the signed request. Empty uses this deployment's API.">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_api">API base URL</label>
+      <span class="tooltiptext">The debugger API that forwards the
+      signed request. Empty uses this deployment's API.</span>
+    </div>
+    <input type="text" id="gnap_api">
   </div>
   <div class="saml-row">
     <button type="button" id="gnap_discover" title="Read the server's discovery document (OPTIONS on the grant endpoint) and show what it supports." onclick="return gnap.discover();">
       Discover</button>
   </div>
   <div class="saml-field">
-    <label for="gnap_display" title="client.display.name: the name the authorization server shows the person approving the grant.">Display name</label>
-    <input type="text" id="gnap_display" value="GNAP debugger"
-           title="client.display.name: the name the authorization server shows the person approving the grant.">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_display">Display name</label>
+      <span class="tooltiptext">client.display.name: the name the
+      authorization server shows the person approving the grant.</span>
+    </div>
+    <input type="text" id="gnap_display" value="GNAP debugger">
   </div>
   <div class="saml-field">
-    <label for="gnap_class" title="client.class_id: the registered client this key is an instance of, when there is one.">class_id</label>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_class">class_id</label>
+      <span class="tooltiptext">client.class_id: the registered
+      client this key is an instance of, when there is one.</span>
+    </div>
     <input type="text" id="gnap_class"
-           placeholder="registered client, when this key is an instance"
-           title="client.class_id: the registered client this key is an instance of, when there is one.">
+           placeholder="registered client, when this key is an instance">
   </div>
   </div>
   <div class="dbg-tabpanel dbg-tabpanel-off" id="gnap_tabpanel_http_server" role="tabpanel" aria-labelledby="gnap_tab_http_server">
@@ -201,9 +249,12 @@
     <p>The client key is added when you send, unless the JSON already names <code>client.key</code> or a string <code>client</code>. The box below is the logical request. The signed body is the one in the Exchange pane.</p>
   </details>
   <div class="saml-field">
-    <label for="gnap_request" title="The grant request (RFC 9635 section 2): access_token, subject, client, interact.">Request JSON</label>
-    <textarea id="gnap_request" class="gnap-mono" rows="8"
-              title="The grant request (RFC 9635 section 2): access_token, subject, client, interact."></textarea>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_request">Request JSON</label>
+      <span class="tooltiptext">The grant request (RFC 9635 section
+      2): access_token, subject, client, interact.</span>
+    </div>
+    <textarea id="gnap_request" class="gnap-mono" rows="8"></textarea>
   </div>
   <div class="saml-row">
     <button type="button" id="gnap_fill_sample" title="Fill the request box with a sample grant request." onclick="return gnap.fillSample();">
@@ -214,9 +265,12 @@
       Send grant request</button>
   </div>
   <div class="saml-field">
-    <label for="gnap_client_nonce" title="interact.finish.nonce: this client's nonce, one input to the interaction hash.">Client finish nonce</label>
-    <input type="text" id="gnap_client_nonce"
-           title="interact.finish.nonce: this client's nonce, one input to the interaction hash.">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_client_nonce">Client finish nonce</label>
+      <span class="tooltiptext">interact.finish.nonce: this client's
+      nonce, one input to the interaction hash.</span>
+    </div>
+    <input type="text" id="gnap_client_nonce">
   </div>
   </div>
   <div class="dbg-tabpanel dbg-tabpanel-off" id="gnap_tabpanel_http_grant" role="tabpanel" aria-labelledby="gnap_tab_http_grant">
@@ -234,34 +288,62 @@
     <summary>How interaction works</summary>
     <p>Open the redirect, approve at the authorization server, and come back. If the finish URI is this page, the hash and interact_ref arrive in the query string.</p>
   </details>
-  <p class="gnap-links"><a id="gnap_redirect" href="" title="The interaction redirect the authorization server returned."></a></p>
-  <p class="gnap-links" title="The user code to enter at the user code URI.">User code: <span id="gnap_user_code"></span></p>
-  <p class="gnap-links"><a id="gnap_user_code_uri" href="" title="Where the user code is entered."></a></p>
+  <p class="gnap-links"><span class="tooltip gnap-tip">
+    <a id="gnap_redirect" href=""></a>
+    <span class="tooltiptext">The interaction redirect the
+    authorization server returned.</span>
+  </span></p>
+  <p class="gnap-links"><span class="tooltip gnap-tip">User code:
+    <span id="gnap_user_code"></span>
+    <span class="tooltiptext">The user code to enter at the user
+    code URI.</span>
+  </span></p>
+  <p class="gnap-links"><span class="tooltip gnap-tip">
+    <a id="gnap_user_code_uri" href=""></a>
+    <span class="tooltiptext">Where the user code is entered.</span>
+  </span></p>
   <div class="saml-field">
-    <label for="gnap_as_nonce" title="interact.finish from the response: the server's nonce, the other input to the hash.">Authorization server nonce</label>
-    <input type="text" id="gnap_as_nonce"
-           title="interact.finish from the response: the server's nonce, the other input to the hash.">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_as_nonce">Authorization server nonce</label>
+      <span class="tooltiptext">interact.finish from the response:
+      the server's nonce, the other input to the hash.</span>
+    </div>
+    <input type="text" id="gnap_as_nonce">
   </div>
   <div class="saml-field">
-    <label for="gnap_finish_url" title="The redirect back from the authorization server, pasted here if it did not land on this page.">Finish URL</label>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_finish_url">Finish URL</label>
+      <span class="tooltiptext">The redirect back from the
+      authorization server, pasted here if it did not land on
+      this page.</span>
+    </div>
     <input type="text" id="gnap_finish_url"
-           placeholder="paste the redirect back, if it did not land here"
-           title="The redirect back from the authorization server, pasted here if it did not land on this page.">
+           placeholder="paste the redirect back, if it did not land here">
   </div>
   <div class="saml-field">
-    <label for="gnap_interact_ref" title="The interaction reference from the redirect back. It is sent when continuing.">interact_ref</label>
-    <input type="text" id="gnap_interact_ref"
-           title="The interaction reference from the redirect back. It is sent when continuing.">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_interact_ref">interact_ref</label>
+      <span class="tooltiptext">The interaction reference from the
+      redirect back. It is sent when continuing.</span>
+    </div>
+    <input type="text" id="gnap_interact_ref">
   </div>
   <div class="saml-field">
-    <label for="gnap_hash" title="The hash the authorization server sent back with the redirect.">hash</label>
-    <input type="text" id="gnap_hash"
-           title="The hash the authorization server sent back with the redirect.">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_hash">hash</label>
+      <span class="tooltiptext">The hash the authorization server
+      sent back with the redirect.</span>
+    </div>
+    <input type="text" id="gnap_hash">
   </div>
   <div class="saml-field">
-    <label for="gnap_hash_expected" title="The hash this client computes from both nonces, the interact_ref and the grant endpoint (RFC 9635 section 4.2.3).">Expected hash</label>
-    <input type="text" id="gnap_hash_expected" readonly
-           title="The hash this client computes from both nonces, the interact_ref and the grant endpoint (RFC 9635 section 4.2.3).">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_hash_expected">Expected hash</label>
+      <span class="tooltiptext">The hash this client computes from
+      both nonces, the interact_ref and the grant endpoint
+      (RFC 9635 section 4.2.3).</span>
+    </div>
+    <input type="text" id="gnap_hash_expected" readonly>
   </div>
   <div class="saml-row">
     <button type="button" id="gnap_check_hash" title="Compare the received hash with the expected one." onclick="return gnap.checkFinish();">
@@ -285,14 +367,20 @@
     <p>A grant that is not finished at once returns a continue URI and token. Continue asks again, with the interact_ref when there was interaction; Revoke ends the grant. The access token's management URI rotates or revokes the token itself.</p>
   </details>
   <div class="saml-field">
-    <label for="gnap_continue_uri" title="continue.uri from the response: where the grant is continued.">Continue URI</label>
-    <input type="text" id="gnap_continue_uri"
-           title="continue.uri from the response: where the grant is continued.">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_continue_uri">Continue URI</label>
+      <span class="tooltiptext">continue.uri from the response:
+      where the grant is continued.</span>
+    </div>
+    <input type="text" id="gnap_continue_uri">
   </div>
   <div class="saml-field">
-    <label for="gnap_continue_token" title="continue.access_token.value: presented when continuing or revoking the grant.">Continue token</label>
-    <input type="text" id="gnap_continue_token"
-           title="continue.access_token.value: presented when continuing or revoking the grant.">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_continue_token">Continue token</label>
+      <span class="tooltiptext">continue.access_token.value:
+      presented when continuing or revoking the grant.</span>
+    </div>
+    <input type="text" id="gnap_continue_token">
   </div>
   <div class="saml-row">
     <button type="button" id="gnap_continue" title="Continue the grant at the continue URI." onclick="return gnap.continueGrant();">
@@ -301,20 +389,32 @@
       Revoke grant</button>
   </div>
   <div class="saml-field">
-    <label for="gnap_token" title="The access token the grant issued.">Access token
-      <a href="/token_detail.html?type=gnap_access&amp;from=gnap.html" id="gnap_inspect_token" class="gnap-inspect" title="Open the token detail page the OAuth2 workflow uses: decode, verify and check the token." onclick="return gnap.inspectToken();">Inspect</a></label>
-    <textarea id="gnap_token" class="gnap-mono" rows="2"
-              title="The access token the grant issued."></textarea>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_token">Access token
+        <a href="/token_detail.html?type=gnap_access&amp;from=gnap.html"
+           id="gnap_inspect_token" class="gnap-inspect"
+           title="Open token detail: decode, verify and check the token."
+           onclick="return gnap.inspectToken();">Inspect</a></label>
+      <span class="tooltiptext">The access token the grant
+      issued.</span>
+    </div>
+    <textarea id="gnap_token" class="gnap-mono" rows="2"></textarea>
   </div>
   <div class="saml-field">
-    <label for="gnap_manage_uri" title="access_token.manage.uri: where the token is rotated or revoked.">Token management URI</label>
-    <input type="text" id="gnap_manage_uri"
-           title="access_token.manage.uri: where the token is rotated or revoked.">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_manage_uri">Token management URI</label>
+      <span class="tooltiptext">access_token.manage.uri: where the
+      token is rotated or revoked.</span>
+    </div>
+    <input type="text" id="gnap_manage_uri">
   </div>
   <div class="saml-field">
-    <label for="gnap_manage_token" title="access_token.manage.access_token: presented at the management URI.">Management token</label>
-    <input type="text" id="gnap_manage_token"
-           title="access_token.manage.access_token: presented at the management URI.">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_manage_token">Management token</label>
+      <span class="tooltiptext">access_token.manage.access_token:
+      presented at the management URI.</span>
+    </div>
+    <input type="text" id="gnap_manage_token">
   </div>
   <div class="saml-row">
     <button type="button" id="gnap_rotate_token" title="Rotate the access token at its management URI (RFC 9635 section 6.1)." onclick="return gnap.rotateToken();">
@@ -322,6 +422,7 @@
     <button type="button" id="gnap_rotate_key" title="Rotate to a new client key at the token management URI, presenting the management token and signed with both keys (RFC 9635 section 6.1.1)." onclick="return gnap.rotateKey();">
       Rotate the client key</button>
     <button type="button" id="gnap_revoke_token"
+            title="Revoke the access token (RFC 9635 section 6.2)."
             onclick="return gnap.revokeToken();">
       Revoke the access token</button>
   </div>
@@ -347,36 +448,50 @@
     <p>Any other request proved with the same key: present the access token, introspect it as a resource server, or read <code>/.well-known/gnap-as-rs</code>. Introspection is signed by the resource server's key.</p>
   </details>
   <div class="saml-row">
-    <label title="The HTTP method of the signed call.">Method
-      <select id="gnap_call_method" title="The HTTP method of the signed call.">
-        <option>POST</option>
-        <option>GET</option>
-        <option>PATCH</option>
-        <option>DELETE</option>
-        <option>OPTIONS</option>
-      </select>
-    </label>
+    <div class="tooltip gnap-tip">
+      <label>Method
+        <select id="gnap_call_method">
+          <option>POST</option>
+          <option>GET</option>
+          <option>PATCH</option>
+          <option>DELETE</option>
+          <option>OPTIONS</option>
+        </select>
+      </label>
+      <span class="tooltiptext">The HTTP method of the signed
+      call.</span>
+    </div>
     <button type="button" id="gnap_fill_introspect" title="Fill the call with a token introspection request (RFC 9767)." onclick="return gnap.fillIntrospect();">
       Fill introspection</button>
     <button type="button" id="gnap_fill_resource"
+            title="Fill a GET of the Shared Signals streams, with this token."
             onclick="return gnap.fillResourceCall();">
       Fill a Shared Signals call</button>
   </div>
   <div class="saml-field">
-    <label for="gnap_call_url" title="The URL the signed call is sent to.">URL</label>
-    <input type="text" id="gnap_call_url"
-           title="The URL the signed call is sent to.">
+    <div class="tooltip gnap-tip">
+      <label for="gnap_call_url">URL</label>
+      <span class="tooltiptext">The URL the signed call is sent
+      to.</span>
+    </div>
+    <input type="text" id="gnap_call_url">
   </div>
   <div class="saml-field">
-    <label for="gnap_call_token" title="An access token presented in the Authorization header and, for a JWS proof, bound in ath.">GNAP token</label>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_call_token">GNAP token</label>
+      <span class="tooltiptext">An access token presented in the
+      Authorization header and, for a JWS proof, bound in ath.</span>
+    </div>
     <input type="text" id="gnap_call_token"
-           placeholder="bound into Authorization and, for a JWS, ath"
-           title="An access token presented in the Authorization header and, for a JWS proof, bound in ath.">
+           placeholder="bound into Authorization and, for a JWS, ath">
   </div>
   <div class="saml-field">
-    <label for="gnap_call_body" title="The request body, signed with the client key.">Body</label>
-    <textarea id="gnap_call_body" class="gnap-mono" rows="3"
-              title="The request body, signed with the client key."></textarea>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_call_body">Body</label>
+      <span class="tooltiptext">The request body, signed with the
+      client key.</span>
+    </div>
+    <textarea id="gnap_call_body" class="gnap-mono" rows="3"></textarea>
   </div>
   <div class="saml-row">
     <button type="button" id="gnap_send_call" title="Sign and send the call." onclick="return gnap.sendCall();">
@@ -395,14 +510,22 @@
           title="Click to collapse or expand this pane.">Exchange</legend>
   <div class="saml-pane-body" id="gnap_pane_exchange_body">
   <div class="saml-field">
-    <label for="gnap_signed" title="The last request exactly as signed and sent: method, URI, headers and body.">Signed request</label>
-    <textarea id="gnap_signed" class="gnap-mono" rows="8" readonly
-              title="The last request exactly as signed and sent: method, URI, headers and body."></textarea>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_signed">Signed request</label>
+      <span class="tooltiptext">The last request exactly as signed
+      and sent: method, URI, headers and body.</span>
+    </div>
+    <textarea id="gnap_signed" class="gnap-mono" rows="8"
+              readonly></textarea>
   </div>
   <div class="saml-field">
-    <label for="gnap_response" title="The authorization server's answer to the last request.">Response</label>
-    <textarea id="gnap_response" class="gnap-mono" rows="10" readonly
-              title="The authorization server's answer to the last request."></textarea>
+    <div class="tooltip gnap-tip">
+      <label for="gnap_response">Response</label>
+      <span class="tooltiptext">The authorization server's answer
+      to the last request.</span>
+    </div>
+    <textarea id="gnap_response" class="gnap-mono" rows="10"
+              readonly></textarea>
   </div>
   </div>
 </fieldset>

@@ -483,8 +483,61 @@ function pageWiring() {
     assert.ok(!/require\(["'][^"']*iya-sts/.test(text), name);
     assert.ok(!/require\(["'][^"']*\/sts\//.test(text), name);
   });
+  assert.ok(css.indexOf(".xacml-tip") >= 0 &&
+    css.indexOf("pointer-events: none") >= 0,
+    "xacml.css does not restyle the field tooltips");
+  ["xacml_name", "xacml_kind", "xacml_import_name", "xacml_import",
+   "xacml_upload", "xacml_export_layout", "xacml_open",
+   "xacml_enabled", "xacml_decide_policy", "xacml_subject",
+   "xacml_action", "xacml_resource", "xacml_request"]
+    .forEach(function (id) {
+      fieldHasTooltip(html, id);
+    });
+  var pageJs = fs.readFileSync(path.join(SRC, "xacml.js"), "utf8");
+  assert.ok(pageJs.indexOf('class="tooltip xacml-tip"') >= 0,
+    "an added attribute row has no tooltip");
+  var draw = load("xacml_draw.js");
+  var sample = fresh();
+  assert.strictEqual(sample.loadSample().ok, true);
+  var body = draw.editorBody(sample.editorView("sample"));
+  editorControlsAreTipped(body);
   log.info("OK — the page, the card and the engine are wired.");
   log.debug("Leaving pageWiring().");
+}
+
+// The house tooltip is a .tooltip wrapper whose .tooltiptext sits
+// beside the control. A native title on the control is not that.
+function fieldHasTooltip(html, id) {
+  log.debug("Entering fieldHasTooltip().");
+  var at = html.indexOf('id="' + id + '"');
+  assert.ok(at >= 0, id);
+  var slice = html.slice(Math.max(0, at - 900), at + 900);
+  assert.ok(slice.indexOf("tooltiptext") >= 0 &&
+    slice.indexOf('class="tooltip ') >= 0,
+    id + " has no tooltip");
+  log.debug("Leaving fieldHasTooltip().");
+}
+
+// Every editor control the sample draws, hidden fields aside, is
+// followed immediately by its tooltip. A select's options sit inside
+// the control, so the tip is what comes after </select>.
+function editorControlsAreTipped(html) {
+  log.debug("Entering editorControlsAreTipped().");
+  var re = /<input\b[^>]*>|<select\b[\s\S]*?<\/select>/g;
+  var found = 0;
+  var match;
+  while ((match = re.exec(html))) {
+    if (/type="hidden"/.test(match[0])) {
+      continue;
+    }
+    var after = html.slice(match.index + match[0].length,
+      match.index + match[0].length + 40);
+    assert.ok(after.indexOf('<span class="tooltiptext">') === 0,
+      "no tooltip after " + match[0].slice(0, 60));
+    found += 1;
+  }
+  assert.ok(found > 0, "the sample editor drew no controls");
+  log.debug("Leaving editorControlsAreTipped(). " + found + ".");
 }
 
 // A literal that is not a value of its datatype is refused at the edit,
