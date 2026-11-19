@@ -27,9 +27,9 @@ guide, a page per workflow, and how to run, test and release it.
 |---|---|---|
 | [OAuth 2.0 and OpenID Connect](docs/oauth2-oidc/index.md) | RFC 6749, OIDC Core 1.0, RFC 7636, RFC 8414, RFC 8628, RFC 8693, RFC 7009, RFC 7662, RFC 7591/7592, OIDC Discovery, RP-Initiated Logout | A client and relying party for every grant and the three OIDC flows, with token detail, introspection, revocation, token exchange, the device grant and dynamic registration. |
 | [OAuth security](docs/rfc9700.md) | RFC 9700, RFC 9449 (DPoP) | A compliance mode that enforces the OAuth 2.0 Security BCP, and DPoP proof of possession. |
-| [SAML 2.0](docs/saml.md) | SAML 2.0 Core, Bindings, Profiles | SP-initiated SSO over Redirect, POST and Artifact, Single Logout, signed and encrypted messages, an Assertion Tool and decoders. |
+| [SAML 2.0](docs/saml/index.md) | SAML 2.0 Core, Bindings, Profiles | SP-initiated SSO over Redirect, POST and Artifact, Single Logout, signed and encrypted messages, an Assertion Tool and decoders. |
 | [SAML 1.1](docs/saml11.md) | SAML 1.1, the Shibboleth AuthnRequest profile | Browser/POST and Browser/Artifact sign-in. |
-| [WS-Trust](docs/wstrust.md) | WS-Trust 1.0–1.4, WS-Security, WS-Addressing | Issue, renew, validate and cancel against a security token service. |
+| [WS-Trust](docs/wstrust/index.md) | WS-Trust 1.0–1.4, WS-Security, WS-Addressing | Issue, renew, validate and cancel against a security token service. |
 | [WS-Federation](docs/wsfed.md) | WS-Federation 1.2 | The passive requestor profile: sign-in and sign-out, signed requests, encrypted tokens. |
 | [Verifiable credentials](docs/vc/index.md) | OID4VCI 1.0, OID4VP 1.0, HAIP 1.0, SIOPv2, SD-JWT (RFC 9901), SD-JWT VC, DCQL, JAR (RFC 9101), DIDs | A wallet: credential issuance and presentation with selective disclosure; a Verifier; DID, VC Barcode, Gordian Envelope and ACDC tools. |
 | [WebAuthn](docs/webauthn.md) | WebAuthn Level 3, FIDO U2F | Registration and authentication ceremonies decoded, with a read-only browser extension. |

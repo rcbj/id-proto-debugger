@@ -422,7 +422,10 @@ function copyField(id) {
     log.debug("Leaving copyField().");
     return false;
   }
-  var text = e.value || '';
+  // The token box is indented for reading. That indent is not what was
+  // signed. Copy the assertion as the service issued it.
+  var text = (id === 'wst_token_xml' && lastTokenXml &&
+      lastTokenXml.indexOf('<') >= 0) ? lastTokenXml : (e.value || '');
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).catch(function (err) { log.error(
                                   'copyField: ' + err); });

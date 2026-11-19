@@ -183,9 +183,9 @@ the tree. Each protocol has its own page here:
 | | |
 |---|---|
 | using the OAuth2 / OIDC workflow, registration, and the token pages | [oauth2-oidc](oauth2-oidc/index.md) |
-| using the SAML 2.0 workflow, the assertion tool, and the decoders | [saml.md](saml.md), [saml-assertion.md](saml-assertion.md), [saml-decoders.md](saml-decoders.md) |
+| using the SAML 2.0 workflow, the assertion tool, and the decoders | [saml/index.md](saml/index.md), [saml-assertion.md](saml-assertion.md), [saml-decoders.md](saml-decoders.md) |
 | SAML 1.1, as a different protocol rather than an older spelling | [saml11.md](saml11.md) |
-| using the WS-Trust workflow | [wstrust.md](wstrust.md) |
+| using the WS-Trust workflow | [wstrust/index.md](wstrust/index.md) |
 | JWT Tools and Digital Signature | [jwt-tools.md](jwt-tools.md), [digital-signature.md](digital-signature.md) |
 | WS-Federation | [wsfed.md](wsfed.md) |
 | the OAuth 2.0 Security BCP | [rfc9700.md](rfc9700.md) |
