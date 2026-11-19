@@ -1003,14 +1003,10 @@ function encryptXml(xml, opts) {
 //                        2026-11-12: <ds:KeyInfo><ds:X509Data> with the
 //                        certificate inline. Valid XMLDSIG, and not a
 //                        WS-Security token reference.
-//   'both'               the token and its reference as 'bst' does, AND the
-//                        certificate inline in the same KeyInfo — XMLDSIG
-//                        lets a KeyInfo name its key more than one way. For a
-//                        receiver that reads one form for the signature and
-//                        the other for something else: iya-sts 1.0.0 checks
-//                        the signature by the token reference but finds the
-//                        certificate it encrypts a token to by looking for an
-//                        inline ds:X509Certificate (rcbj/iya-sts#1668).
+//
+// A KeyInfo does not carry both. The X.509 Token Profile and WS-I BSP put
+// one SecurityTokenReference in KeyInfo, and that token is the certificate
+// element a WS-Trust response is encrypted to.
 //
 // Neither changes what is SIGNED: KeyInfo is outside SignedInfo here, and the
 // BinarySecurityToken is not one of the references.
@@ -1103,8 +1099,12 @@ function signWsSecurity(soapXml, opts) {
   // what goes out is a valid XMLDSIG KeyInfo and not a WS-Security token
   // reference.
   var keyReference = opts.keyReference || 'bst';
-  var byToken = !pqSpec && (keyReference === 'bst' || keyReference === 'both');
-  var alsoInline = !pqSpec && keyReference === 'both';
+  if (keyReference === 'both') {
+    log.debug("Leaving signWsSecurity(). keyReference both is retired.");
+    throw new Error('signWsSecurity: keyReference \'both\' is retired. ' +
+        'The certificate is a BinarySecurityToken, or pass \'x509data\'.');
+  }
+  var byToken = !pqSpec && keyReference === 'bst';
   var tokenId = byToken
     ? 'X509-' + forge.util.bytesToHex(forge.random.getBytesSync(8)) : '';
   var keyInfoXml;
@@ -1113,11 +1113,7 @@ function signWsSecurity(soapXml, opts) {
   } else if (byToken) {
     keyInfoXml = '<ds:KeyInfo><wsse:SecurityTokenReference xmlns:wsse="' +
       WSSE_NS + '"><wsse:Reference URI="#' + tokenId + '" ValueType="' +
-      WSS_X509V3 + '"/></wsse:SecurityTokenReference>' +
-      (alsoInline ? '<ds:X509Data><ds:X509Certificate>' +
-         certPemToB64(opts.certPem) + '</ds:X509Certificate></ds:X509Data>'
-                  : '') +
-      '</ds:KeyInfo>';
+      WSS_X509V3 + '"/></wsse:SecurityTokenReference></ds:KeyInfo>';
   } else {
     keyInfoXml = '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' +
       certPemToB64(opts.certPem) +
@@ -1686,6 +1682,56 @@ function cipherValueOf(container) {
   return cv ? (cv.textContent || '').replace(/\s+/g, '') : '';
 }
 
+// The EncryptedKey that opens this EncryptedData. One nested in it wins.
+// Otherwise the KeyInfo's Reference URI, or a DataReference that names
+// this EncryptedData's Id, selects the key WS-Security 1.1 section 9
+// parked in the security header. The first EncryptedKey in the document
+// is the last resort, which is the sibling key an EncryptedAssertion
+// carries.
+function encryptedKeyFor(doc, ed) {
+  log.debug("Entering encryptedKeyFor().");
+  var own = firstByLocal(ed, 'EncryptedKey');
+  if (own) {
+    log.debug("Leaving encryptedKeyFor(). Nested.");
+    return own;
+  }
+  var keys = doc.getElementsByTagNameNS('*', 'EncryptedKey');
+  var ref = firstByLocal(ed, 'Reference');
+  var uri = ref ? String(ref.getAttribute('URI') || '') : '';
+  var id = uri.charAt(0) === '#' ? uri.substring(1) : '';
+  var i;
+  var r;
+  if (id) {
+    for (i = 0; i < keys.length; i++) {
+      var keyId = keys[i].getAttribute('Id') ||
+          keys[i].getAttributeNS(WSU_NS, 'Id') || '';
+      if (keyId === id) {
+        log.debug("Leaving encryptedKeyFor(). Referenced.");
+        return keys[i];
+      }
+    }
+  }
+  var dataId = ed.getAttribute('Id') ||
+      ed.getAttributeNS(WSU_NS, 'Id') || '';
+  if (dataId) {
+    for (i = 0; i < keys.length; i++) {
+      var listed = keys[i].getElementsByTagNameNS('*', 'DataReference');
+      for (r = 0; r < listed.length; r++) {
+        if (listed[r].getAttribute('URI') === '#' + dataId) {
+          log.debug("Leaving encryptedKeyFor(). Listed.");
+          return keys[i];
+        }
+      }
+    }
+  }
+  if (keys.length) {
+    log.debug("Leaving encryptedKeyFor(). First in the document.");
+    return keys[0];
+  }
+  log.debug("Leaving encryptedKeyFor(). None.");
+  return null;
+}
+
 function decryptXml(xml, opts) {
   log.debug("Entering decryptXml().");
   opts = opts || {};
@@ -1701,10 +1747,11 @@ function decryptXml(xml, opts) {
 
   // The wrapped session key may be nested in EncryptedData/KeyInfo, or a
   // sibling <xenc:EncryptedKey> (referenced by a ds:RetrievalMethod) — the
-  // layout Keycloak and other IdPs emit. Look inside EncryptedData first, then
+  // layout Keycloak and other IdPs emit. WS-Security 1.1 section 9 puts
+  // one EncryptedKey in wsse:Security instead, and the EncryptedData names
+  // it. Look inside EncryptedData first, then by that reference, then
   // anywhere.
-  var ek = firstByLocal(ed, 'EncryptedKey') || firstByLocal(doc,
-      'EncryptedKey');
+  var ek = encryptedKeyFor(doc, ed);
   if (!ek) throw new Error('no <xenc:EncryptedKey> — could not find the ' +
       'wrapped session key.');
   var kmEl = firstByLocal(ek, 'EncryptionMethod');

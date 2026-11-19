@@ -58,21 +58,75 @@ with no credential is anonymous, and a service is free to refuse it.
 **Digitally sign the request** is off by default. When it is on, the
 page signs the SOAP body with a WS-Security signature. **Also sign the
 Timestamp** adds the timestamp to the signed references. The
-certificate is carried in `KeyInfo`.
+certificate is a `BinarySecurityToken` in the security header, and
+`KeyInfo` holds a `SecurityTokenReference` to it.
 
 On iya-sts in product mode that signature is the authentication, and
 the certificate has to be one the service knows. A key the page
 generates and has never shown the service is refused. See
 [setup-iya-sts.md](setup-iya-sts.md).
 
-**Encrypt the request body** is off. The form says most services will
-not process an encrypted body. Encryption runs in the browser, after
-the signature.
+**Encrypt the request body** is off. Encryption runs in the browser,
+after the signature, and replaces the RST with `xenc:EncryptedData`.
+The recipient is **Encryption Certificate**. On iya-sts that is the
+application's own WS-Trust decryption certificate when the application
+has one, and otherwise the first `KeyDescriptor use="encryption"` in
+`GET /saml2/metadata`. `GET /sts/cert` is the signing certificate.
+The `EncryptedKey` carries the recipient certificate in its `KeyInfo`.
+The page does not send `wst:EncryptWith` or `wst:EncryptionAlgorithm`.
+Those elements name the cipher and the key transport only when
+response encryption is already on and the name matches the
+application's algorithm.
 
-A service can encrypt the token it issues. iya-sts does that when the
-STS URL carries `encrypt=1`, and it encrypts to the certificate on the
-request's signature. The response page decrypts with **Decryption
-Key**, prefilled from the signing key when that key was saved.
+Requiring a named element of the request to arrive encrypted is the
+application's request map, `wstrustEncryptRequest` set to `true` and
+one value of `wstrustEncryptRequestElements`. The expression for the
+RST, which matches SOAP 1.1 and SOAP 1.2, is:
+
+```
+//*[local-name()='RequestSecurityToken']
+```
+
+That map is what admits the ciphertext. `wstrust.acceptEncryptedElements`
+is off unless an application sets `wstrustAcceptEncryptedElements` to
+`true`. Off, ciphertext is opened only where the request map names the
+restored element, or names an element it sits inside. Ciphertext the
+map does not name is `STS-WSTRUST-0080`. On, a request may carry XML
+Encryption anywhere and no map has to name it.
+
+A request encrypted to another application's decryption key is
+`STS-WSTRUST-0082`. A request for an application that has its own key,
+encrypted to the realm's key instead, is `STS-WSTRUST-0083`. Both are
+`wsse:FailedCheck` on the wire. The WSDL does not carry either
+certificate unless `wstrust.advertiseEndpointIdentity` is on, and then
+it carries only the realm certificate. Leave that setting off. Paste
+the certificate, or take it from the application or the metadata.
+
+A service can encrypt an element of the token it issues. That choice
+is the same kind of map on the response. iya-sts encrypts the issued
+SAML 2.0 assertion when `wstrustEncryptResponse` is `true` and
+`wstrustEncryptResponseElements` contains:
+
+```
+//*[local-name()='Assertion' and namespace-uri()='urn:oasis:names:tc:SAML:2.0:assertion']
+```
+
+The token is `xenc:EncryptedData`, not `saml:EncryptedAssertion`. A
+query on the STS URL does not turn this on. The recipient is the
+`BinarySecurityToken` the signature names, unless the application sets
+`wstrustEncryptionCertificate` or `wstrustResponseRecipientXPath`. The
+content key is an `xenc:EncryptedKey` in the response `wsse:Security`
+header, and the `EncryptedData` names it with a
+`SecurityTokenReference`. **Decrypt** reads that key from the whole
+response. The private key is **Decryption Key**, prefilled from the
+signing key when that key was saved and it is the recipient.
+
+A certificate whose `keyUsage` is only `digitalSignature` is refused
+as a recipient in product mode. **Generate Keys** writes no
+`keyUsage`, so that certificate may encrypt. A message-signing
+certificate iya-sts issues permits `digitalSignature` only. For that
+certificate, set `wstrustEncryptionCertificate` to one that permits
+`keyEncipherment` or `keyAgreement`, and decrypt with that private key.
 
 ## Delegation
 
@@ -95,7 +149,8 @@ action, token type, key type, lifetime, AppliesTo, and the Validate or
 Cancel status. **Issued Token** is the contents of
 `RequestedSecurityToken`. **Validate Signature** checks an enveloped
 signature with the certificate in `KeyInfo`. **Decrypt** replaces an
-`EncryptedData` with the assertion.
+`EncryptedData` with the assertion. An issued SAML assertion that the
+relying party's response map names arrives as that element.
 
 ## WS-Addressing
 
