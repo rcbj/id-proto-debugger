@@ -349,8 +349,8 @@ function jwkToCoseKey(jwk) {
 // The Issuer Header of a CPT, in the reading this file PARSES with —
 // Appendix A.2's: alg as its JPA number, claims at 6, iek/hpk as COSE_Keys,
 // hpa as a fully specified COSE algorithm. JWP leaves these labels
-// unsettled (see the header and docs/jwp-sd-cwt.md), so a CPT issued here
-// is the A.2 reading, not a settled format.
+// unsettled (see the header and docs/v0.9.5/jwp-sd-cwt.md), so a CPT issued
+// here is the A.2 reading, not a settled format.
 function cborIssuerHeader(header) {
   log.debug("Entering cborIssuerHeader().");
   var labelOf = {};

@@ -4,7 +4,13 @@
   content (_includes/sidebar.html, drawn from _data/navigation.yml). Every
   page on the site inherits it: GitHub Pages wraps a page with no `layout:`
   in `default`. Keep the head and footer in step with the theme's own.
+
+  The site is versioned (docs/CLAUDE.md). The header names the version the
+  page is in and links each other one: to the same page when that version
+  has it, and to its overview when it does not. A page of any version but
+  the latest opens with a line saying so and linking the latest.
 {%- endcomment -%}
+{%- include version.html -%}
 <html lang="{{ site.lang | default: "en-US" }}">
   <head>
     <meta charset="UTF-8">
@@ -22,12 +28,34 @@
       </label>
       <a class="site-title" href="{{ "/" | relative_url }}">{{ site.title | default: site.github.repository_name | escape }}</a>
       <span class="site-tagline">documentation</span>
+      {%- if doc_version %}
+      <nav class="version-switcher" aria-label="Documentation version">
+        <span class="version-label">Version</span>
+        {%- for v in site.data.versions %}
+        {%- if v.folder == doc_version.folder %}
+        <span class="version-current" aria-current="true">{{ v.label | escape }}{% if v.folder == doc_latest.folder %} (latest){% endif %}</span>
+        {%- else %}
+        {%- assign v_url = v.home %}
+        {%- if doc_rest %}
+        {%- assign same_url = "/docs/" | append: v.folder | append: doc_rest %}
+        {%- if v.folder == doc_latest.folder and doc_rest == "/" %}{% assign same_url = v.home %}{% endif %}
+        {%- assign same_page = site.pages | where: "url", same_url | first %}
+        {%- if same_page %}{% assign v_url = same_url %}{% endif %}
+        {%- endif %}
+        <a href="{{ v_url | relative_url }}">{{ v.label | escape }}{% if v.folder == doc_latest.folder %} (latest){% endif %}</a>
+        {%- endif %}
+        {%- endfor %}
+      </nav>
+      {%- endif %}
     </header>
 
     <div class="site-body">
       {%- include sidebar.html -%}
 
       <main class="site-content container-lg px-3 my-5 markdown-body">
+        {%- if doc_version and doc_version.folder != doc_latest.folder %}
+        <p class="version-notice">This is the documentation of release {{ doc_version.label | escape }}. The latest is <a href="{{ doc_latest.home | relative_url }}">{{ doc_latest.label | escape }}</a>.</p>
+        {%- endif %}
         {{ content }}
 
         {% if site.github.private != true and site.github.license %}

@@ -7,7 +7,7 @@
 // behalf, and the limits document. The page calls a SCIM server straight
 // from the browser by default; this endpoint is for what a browser cannot do
 // — a server that sends no CORS headers, a self-signed certificate, and the
-// whole exchange reported. See docs/scim.md.
+// whole exchange reported. See docs/v0.9.5/scim.md.
 //
 // THE THREE OUTCOMES, which every answer below keeps apart:
 //

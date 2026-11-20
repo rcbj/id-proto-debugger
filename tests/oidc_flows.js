@@ -104,8 +104,8 @@ var baseUrl = "https://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-// Pictures for docs/oauth2-oidc/, taken only when DOC_SCREENSHOT_DIR is set.
-// The prefix names the flow, and is set in test() once the flow is known.
+// Pictures for docs/v0.9.5/oauth2-oidc/, taken only when DOC_SCREENSHOT_DIR is
+// set. The prefix names the flow, and is set in test() once the flow is known.
 const docShots = require("./doc_screenshots.js");
 
 const { populateMetadata } = require("../common/tests.js")({ By, until, Select,

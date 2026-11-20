@@ -4,7 +4,7 @@
 // File: models/api/smartcard.tsp
 //
 // SMART CARDS AND OTP: two families in one file, because the page that calls
-// them is one (smartcard.html) and so is docs/smartcard.md.
+// them is one (smartcard.html) and so is docs/v0.9.5/smartcard.md.
 //
 // * Otp — POST /otp/verify sends a Yubico OTP validation request the PAGE
 //   built and signed (the API key stays in the browser) to a YubiCloud-style

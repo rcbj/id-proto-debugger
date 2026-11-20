@@ -1,6 +1,6 @@
 {
   "family": "wsfed",
-  "about": "WS-Federation's Passive Requestor Profile landing (POST and GET /wsfed) and GET /wsfedresponse. Recorded against the api as it was before the family switched to the model (docs/data-model.md). The landing is what an identity provider's browser reaches, so it is sent as a form or a query string, and answers with a 302; a sign-in's Location carries a stash id that is new every run, hence volatile, and a sign-out's does not. Nothing here connects anywhere.",
+  "about": "WS-Federation's Passive Requestor Profile landing (POST and GET /wsfed) and GET /wsfedresponse. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md). The landing is what an identity provider's browser reaches, so it is sent as a form or a query string, and answers with a 302; a sign-in's Location carries a stash id that is new every run, hence volatile, and a sign-out's does not. Nothing here connects anywhere.",
   "cases": [
     {
       "name": "landing (POST): a wresult is stashed and the browser sent on",

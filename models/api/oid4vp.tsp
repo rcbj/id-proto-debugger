@@ -6,7 +6,7 @@
 // OPENID4VP THROUGH THE API: the wallet's route to a Verifier that sends no
 // CORS headers (POST /oid4vp/call), and the document a page reads to learn
 // that there is an api at all (GET /oid4vp/limits). See api/oid4vp_proxy.js
-// and docs/sd-jwt-vc-presentation.md.
+// and docs/v0.9.5/sd-jwt-vc-presentation.md.
 //
 // THE CALL keeps the SSF proxy's outcomes: a refusal by this service is a
 // 400 (a shape refusal, or the address policy refusing the URL or a redirect

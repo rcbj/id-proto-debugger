@@ -260,7 +260,7 @@ function nameOf(text) {
 // the mock salts a service as REALM + a squashed form of its name, Active
 // Directory salts it as REALM + sAMAccountName, and neither is derivable from
 // the other. The salt arrives in the PREAUTH_REQUIRED refusal, which is the
-// only place it is ever published. See docs/kerberos.md.
+// only place it is ever published. See docs/v0.9.5/kerberos.md.
 // ---------------------------------------------------------------------------
 async function tgtFor(principalText, password, realm, kdcOptions) {
   log.debug("Entering tgtFor(). principal=" + principalText);

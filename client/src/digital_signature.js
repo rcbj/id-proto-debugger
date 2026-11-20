@@ -83,7 +83,7 @@ var xmldsig = require("./xmldsig");
 // performs it. `xmldsig.js` holds the sixteen identifiers and no
 // cryptography — see its own header on why — and this page already has
 // pqc.js and hbs.js loaded, which is why the XML pane can offer them at no
-// cost at all. See docs/xmldsig-pqc.md.
+// cost at all. See docs/v0.9.5/xmldsig-pqc.md.
 var xmldsigPqc = require("./xmldsig_pqc");
 var log = bunyan.createLogger({ name: 'digital_signature',
                                 level: appconfig.logLevel });
@@ -2398,7 +2398,7 @@ window.onload = function () {
   // the classical ones. Five pages carry this menu and sixteen hand-written
   // options in five files is five copies that will disagree the first time the
   // draft renames anything. See client/src/xmldsig_pqc.js and
-  // docs/xmldsig-pqc.md.
+  // docs/v0.9.5/xmldsig-pqc.md.
   xmldsigPqc.appendSignatureOptions(document.getElementById('ds_xml_sigalg'),
       xmldsig.SIG_METHODS, xmldsig.PQ_SIG_URIS);
   setVal('ds_value', 'Sign me with SLH-DSA!');

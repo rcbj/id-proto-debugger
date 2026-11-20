@@ -4,7 +4,7 @@
 // File: models/api/wsfed.tsp
 //
 // WS-Federation's Passive Requestor Profile landing, and the stash the page
-// reads what arrived there from. See docs/wsfed.md.
+// reads what arrived there from. See docs/v0.9.5/wsfed.md.
 //
 // The landing is what an IDENTITY PROVIDER'S BROWSER reaches — wa, wresult
 // and wctx in a form or a query string somebody else wrote — so, like the

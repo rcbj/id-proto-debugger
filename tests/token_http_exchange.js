@@ -66,7 +66,7 @@
 // row and what it shows is other people's bytes — a 3,000-character header
 // value, a JWT with no break opportunity in it, an HTML error page where JSON
 // was expected. An empty pane fits inside anything. See
-// `docs/sd-jwt-vc-issuance.md` on measuring a pane populated.
+// `docs/v0.9.5/sd-jwt-vc-issuance.md` on measuring a pane populated.
 // ---------------------------------------------------------------------------
 const { Builder, By, until } = require("selenium-webdriver");
 const { Select } = require('selenium-webdriver/lib/select');

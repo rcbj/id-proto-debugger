@@ -1,0 +1,30 @@
+{%- comment -%}
+  Works out which documentation version the page belongs to and leaves it
+  in `doc_version` (a row of _data/versions.yml), `doc_prefix`
+  ("/docs/v0.9.5"), `doc_rest` (the page's address inside its version, or
+  nil) and `doc_latest`. A page under /docs/<folder>/ is in that version.
+  /docs/ itself, the landing page, is in none (`doc_version` nil). Every
+  other page (the README at /, the CLAUDE.md pages, COVERAGE) belongs to
+  the latest, whose overview the README is. The header, the sidebar and the
+  layout include this, so the three agree.
+{%- endcomment -%}
+{%- assign doc_latest = site.data.versions | first -%}
+{%- assign doc_segments = page.url | split: "/" -%}
+{%- assign doc_version = nil -%}
+{%- assign doc_rest = nil -%}
+{%- assign doc_landing = false -%}
+{%- if page.url == "/docs/" or page.url == "/docs/index.html" -%}
+  {%- assign doc_landing = true -%}
+{%- elsif doc_segments[1] == "docs" and doc_segments[2] -%}
+  {%- comment -%} `where` with nil matches every row; doc_segments[2] is set here. {%- endcomment -%}
+  {%- assign doc_version = site.data.versions | where: "folder", doc_segments[2] | first -%}
+{%- endif -%}
+{%- if doc_version -%}
+  {%- assign doc_prefix = "/docs/" | append: doc_version.folder -%}
+  {%- assign doc_rest = page.url | remove_first: doc_prefix -%}
+{%- elsif doc_landing == false -%}
+  {%- assign doc_version = doc_latest -%}
+  {%- assign doc_prefix = "/docs/" | append: doc_latest.folder -%}
+{%- else -%}
+  {%- assign doc_prefix = "" -%}
+{%- endif -%}

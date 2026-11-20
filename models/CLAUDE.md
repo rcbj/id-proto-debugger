@@ -8,7 +8,7 @@ of its models, decorators or generated files are used here**, and nothing
 here ever reads iya-sts's `models/generated/`. Its libraries are BUSL-1.1;
 everything in this directory is MIT and was written for this tree.
 
-`docs/data-model.md` is the reader's page. This file is for somebody changing
+`docs/v0.9.5/data-model.md` is the reader's page. This file is for somebody changing
 a model.
 
 ## The four namespaces

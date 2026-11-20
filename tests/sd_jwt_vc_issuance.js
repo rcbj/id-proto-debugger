@@ -2064,7 +2064,7 @@ async function chooserFitsOnOneScreen(driver) {
         m.toolsHeight + "px, partials/vc_tools.html), which all nine " +
         "workflow pages carry — check whether it gained a tool or a longer " +
         "description before looking at this page. See the budget table in " +
-        "docs/sd-jwt-vc-issuance.md."
+        "docs/v0.9.5/sd-jwt-vc-issuance.md."
       : "The lowest thing on the page is the use-case status line, not the " +
         "VC Tools pane, so the chooser's own content is what grew."));
   assert.strictEqual(m.sideways, false,

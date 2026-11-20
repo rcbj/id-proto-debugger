@@ -6,8 +6,8 @@
 // SAML 2.0 and SAML 1.1: the metadata proxy, request signing, the artifact
 // back-channel's context, and the landings an IDENTITY PROVIDER'S BROWSER
 // reaches — the assertion consumer and Single Logout services — together with
-// the stash the page reads what arrived there from. See docs/saml.md and
-// docs/saml11.md.
+// the stash the page reads what arrived there from. See docs/v0.9.5/saml.md and
+// docs/v0.9.5/saml11.md.
 //
 // TWO KINDS OF CALLER, and the rule is different for each.
 //

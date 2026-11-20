@@ -5,7 +5,7 @@
 //
 // LDAP (RFC 4511): seven operations and a limits document. The protocol is
 // BER over a TCP socket, so the whole of it lives in api/ldap_client.js and
-// the page never touches a socket. See docs/ldap.md.
+// the page never touches a socket. See docs/v0.9.5/ldap.md.
 //
 // THE THREE OUTCOMES, which every answer below keeps apart:
 //

@@ -334,7 +334,7 @@ function everyXmssParameterSetVerifies() {
 // state every comment in this tree warns about. These vectors close that:
 // they are produced by the reference implementation itself, deterministically
 // from a fixed seed, so they are reproducible by anybody who repeats the
-// procedure in `_source` and in docs/hbs.md.
+// procedure in `_source` and in docs/v0.9.5/hbs.md.
 //
 // What they cover that the single-tree vectors cannot is the multi-tree loop:
 // splitting one index into a tree address and a leaf address at each layer,

@@ -460,7 +460,7 @@ var BRIDGE_REQ = "idptools-webauthn-request";
 var BRIDGE_RES = "idptools-webauthn-response";
 var bridgeSeq = 0;
 // The capture envelope shape this page can read. See the contract in
-// docs/webauthn-plan.md; extension/src/shim.js writes it.
+// docs/v0.9.5/webauthn-plan.md; extension/src/shim.js writes it.
 var SUPPORTED_CAPTURE_VERSION = 1;
 
 // Presence, read synchronously off an attribute the extension sets at

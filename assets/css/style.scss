@@ -110,3 +110,28 @@ $link: #0366d6;
   }
   .sidebar-trigger:checked + .sidebar { display: block; }
 }
+
+// The versioned site (docs/CLAUDE.md): the header's version switcher, the
+// sidebar's link up to the versions, and the line an older version's pages
+// open with.
+.version-switcher {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 0.8125rem;
+}
+.version-label { color: $muted; }
+.version-current { font-weight: 600; color: $text; }
+.all-versions {
+  display: block;
+  font-size: 0.8125rem;
+  margin-bottom: 12px;
+}
+.version-notice {
+  padding: 8px 12px;
+  border: 1px solid #f1e05a;
+  background: #fffbdd;
+  border-radius: 4px;
+}
