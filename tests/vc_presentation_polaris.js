@@ -36,11 +36,13 @@
 //   refused   family_name withheld on step 2; Polaris refuses on `claims`,
 //             and the wallet's step 3 says the Verifier refused it.
 //
-// Wiring: Polaris runs inside tests/polaris/serve-loop.sh, which restarts
-// `serve --once` for each case on a signal file in a volume this job shares
-// (POLARIS_DATA_DIR), and sits behind tests/cors-proxy/cors-proxy.js serving
-// TLS (POLARIS_URL), because Polaris sends no CORS headers and HAIP's URLs are
-// https. The job is not scheduled when POLARIS_DATA_DIR is unset.
+// Wiring: Polaris runs inside tests/polaris/serve-loop.sh, which execs
+// `serve` once. Each case is POST /control/request on POLARIS_CONTROL_URL
+// (Polaris's plain-HTTP listener). The launch parameters come back in that
+// answer. The verdict is --result's result.json, for that request's number.
+// Polaris sits behind tests/cors-proxy/cors-proxy.js serving TLS, because
+// HAIP's URLs are https. The job is not scheduled when POLARIS_DATA_DIR is
+// unset.
 // ---------------------------------------------------------------------------
 
 const { Builder, By, until } = require("selenium-webdriver");
@@ -48,6 +50,7 @@ const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const browserFlags = require("./browser_flags.js");
 const common = require("./jwt_vc_json_common.js");
 const walletIssuance = require("./wallet_issuance.js");
@@ -69,6 +72,10 @@ var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL ||
     stsUrl.replace(/\/sts\/?$/, "");
 const DATA = process.env.POLARIS_DATA_DIR || "";
+const CONTROL = (process.env.POLARIS_CONTROL_URL || "").replace(/\/+$/, "");
+// The bearer token serve read at startup. Empty until armVerifier() writes
+// it. A later case reuses it: serve does not re-read the file.
+var controlToken = "";
 const SD_JWT_CONFIG_ID = process.env.OID4VCI_CONFIG_ID || "IdentityCredential";
 const ASKED = ["given_name", "family_name"];
 
@@ -220,49 +227,114 @@ async function issuerJwks(held) {
   return { keys: keys };
 }
 
-// Start a fresh Polaris request and read its launch parameters.
-async function freshRequest(serveArgs, issuers) {
-  log.debug("Entering freshRequest().");
-  fs.writeFileSync(path.join(DATA, "issuers.json"), JSON.stringify(issuers));
-  fs.writeFileSync(path.join(DATA, "serve.args"), serveArgs.join("\n") + "\n");
-  const before = readJson(path.join(DATA, "result.json"));
-  fs.writeFileSync(path.join(DATA, "next"), String(Date.now()));
-  const params = await until_("Polaris to start a request", function () {
-    const result = readJson(path.join(DATA, "result.json"));
-    if (!result || result.outcome !== "nothing_received" || !result.state ||
-        (before && before.state === result.state)) {
-      return null;
+// Write the issuer keys and the control token, then signal serve-loop.sh
+// to exec `serve`. Once. A second case reuses the process: the token serve
+// read at startup is the one this holds, and POST /control/request starts
+// the next request. `start` is written last, because the entrypoint execs
+// as soon as that file exists.
+function armVerifier(issuers) {
+  log.debug("Entering armVerifier().");
+  if (controlToken) {
+    log.debug("Leaving armVerifier(). Already serving.");
+    return;
+  }
+  if (!CONTROL) {
+    log.debug("Leaving armVerifier(). No control URL.");
+    throw new Error("POLARIS_CONTROL_URL is not set; the containerized " +
+      "stack points it at Polaris's plain-HTTP listener.");
+  }
+  // A later run in the same container finds serve already up. The token
+  // file is the one it read; replacing it would make every POST a 401.
+  const file = path.join(DATA, "control-token");
+  if (fs.existsSync(path.join(DATA, "start")) && fs.existsSync(file)) {
+    const held = fs.readFileSync(file, "utf8").trim();
+    if (held.length >= 32) {
+      controlToken = held;
+      log.debug("Leaving armVerifier(). Reusing the running verifier.");
+      return;
     }
-    let text = "";
-    try {
-      text = fs.readFileSync(path.join(DATA, "serve.log"), "utf8");
-    } catch (e) {
-      return null;
-    }
-    const block = text.split("authorization request parameters:")[1] || "";
-    const got = {};
-    block.split("\n").forEach(function (line) {
-      const m = /^\s+(client_id|request_uri|request_uri_method)\s+(\S+)/
-          .exec(line);
-      if (m) got[m[1]] = m[2];
-    });
-    // The link a wallet is launched with: HAIP 1.0's own scheme
-    // (section 5.1), which Polaris prints beside openid4vp://.
-    const link = /^\s+(haip-vp:\/\/\?\S+)/m.exec(text);
-    got.launch = link ? link[1] : "";
-    return got.client_id && got.request_uri && got.launch ? got : null;
-  }, stepWait);
-  log.info("Polaris asks as " + params.client_id + " at " +
-           params.request_uri);
-  log.debug("Leaving freshRequest().");
-  return params;
+  }
+  fs.writeFileSync(path.join(DATA, "issuers.json"),
+    JSON.stringify(issuers));
+  const token = crypto.randomBytes(32).toString("base64url");
+  fs.writeFileSync(file, token + "\n", { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  fs.writeFileSync(path.join(DATA, "start"), String(Date.now()) + "\n");
+  controlToken = token;
+  log.debug("Leaving armVerifier().");
 }
 
-async function outcome() {
-  log.debug("Entering outcome().");
-  const result = await until_("Polaris's verdict", function () {
+// POST /control/request until Polaris answers 201. A connection refused is
+// serve still starting; 400, 401 and 413 are the request itself and stop.
+async function controlCall(token, body) {
+  log.debug("Entering controlCall().");
+  const end = Date.now() + stepWait;
+  let last = "";
+  for (;;) {
+    let r = null;
+    try {
+      r = await common.httpJson(CONTROL + "/control/request", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      last = e.message;
+    }
+    if (r && r.status === 201 && r.body && r.body.request &&
+        r.body.client_id && r.body.request_uri && r.body.launch &&
+        r.body.launch["haip-vp"]) {
+      log.debug("Leaving controlCall().");
+      return r.body;
+    }
+    if (r && (r.status === 400 || r.status === 401 ||
+        r.status === 413)) {
+      log.debug("Leaving controlCall(). Refused.");
+      throw new Error("Polaris refused POST /control/request (" +
+        r.status + "): " + String(r.raw).slice(0, 300));
+    }
+    if (Date.now() > end) {
+      log.debug("Leaving controlCall(). Timed out.");
+      const detail = r ? (" status " + r.status + " " +
+        String(r.raw).slice(0, 200)) : (last ? ": " + last : "");
+      throw new Error("timed out waiting for Polaris's control " +
+        "endpoint" + detail);
+    }
+    await new Promise(function (resolve) {
+      setTimeout(resolve, 300);
+    });
+  }
+}
+
+// Start a fresh Polaris request. `spec` is the control body's claims and
+// vct, judged for that request alone.
+async function freshRequest(spec, issuers) {
+  log.debug("Entering freshRequest().");
+  armVerifier(issuers);
+  const started = await controlCall(controlToken, spec);
+  log.info("Polaris asks as " + started.client_id + " at " +
+           started.request_uri);
+  log.debug("Leaving freshRequest().");
+  return {
+    client_id: started.client_id,
+    request_uri: started.request_uri,
+    launch: started.launch["haip-vp"],
+    request: started.request,
+  };
+}
+
+// --result describes the newest request. Wait for THIS request's number,
+// so an earlier case's verdict cannot be read as this one's.
+async function outcome(requestNumber) {
+  log.debug("Entering outcome(). request=" + requestNumber);
+  const result = await until_("Polaris's verdict on request " +
+      requestNumber, function () {
     const r = readJson(path.join(DATA, "result.json"));
-    return r && r.outcome && r.outcome !== "nothing_received" ? r : null;
+    return r && r.request === requestNumber && r.outcome &&
+      r.outcome !== "nothing_received" ? r : null;
   }, stepWait);
   log.debug("Leaving outcome(). " + result.outcome);
   return result;
@@ -363,9 +435,9 @@ async function presentTo(driver, launchLink, withhold) {
 
 async function test() {
   log.debug("Entering test().");
-  if (!DATA) {
-    throw new Error("POLARIS_DATA_DIR is not set; this job is scheduled " +
-                    "only when it is.");
+  if (!DATA || !CONTROL) {
+    throw new Error("POLARIS_DATA_DIR and POLARIS_CONTROL_URL are set by " +
+      "the containerized stack; this job is scheduled only there.");
   }
   var options = new chrome.Options();
   if (headless) options.addArguments("--headless=new");
@@ -384,16 +456,15 @@ async function test() {
         return null;
       }
     }, stepWait);
-    const args = ["--vct", held.payload.vct].concat([].concat.apply([],
-        ASKED.map(function (c) {
-          return ["--claim", c];
-        })));
+    assert.ok(held.payload.vct, "the credential has no vct; Polaris " +
+      "would ask for urn:eudi:pid:1 and refuse this one");
+    const spec = { claims: ASKED.slice(), vct: [held.payload.vct] };
 
     log.info("=== Polaris accepts a complete HAIP presentation ===");
     await chooseHaip(driver, anchor);
-    let params = await freshRequest(args, issuers);
+    let params = await freshRequest(spec, issuers);
     let answer = await presentTo(driver, params.launch, "");
-    let result = await outcome();
+    let result = await outcome(params.request);
     assert.strictEqual(result.outcome, "accepted", "Polaris should accept " +
       "the presentation: " + JSON.stringify(result));
     assert.ok(/accepted the response/.test(answer),
@@ -407,9 +478,9 @@ async function test() {
              JSON.stringify(result.claims));
 
     log.info("=== Polaris refuses a presentation that withholds a claim ===");
-    params = await freshRequest(args, issuers);
+    params = await freshRequest(spec, issuers);
     answer = await presentTo(driver, params.launch, "family_name");
-    result = await outcome();
+    result = await outcome(params.request);
     assert.strictEqual(result.outcome, "refused", "withholding family_name " +
       "must be refused: " + JSON.stringify(result));
     assert.strictEqual(result.check, "claims", "and refused on claims: " +
@@ -428,9 +499,9 @@ async function test() {
     if (process.env.POLARIS_SKIP_API_ROUTE !== "1") {
       log.info("=== Polaris accepts it through the debugger's api ===");
       await chooseHaip(driver, anchor, true);
-      params = await freshRequest(args, issuers);
+      params = await freshRequest(spec, issuers);
       answer = await presentTo(driver, params.launch, "");
-      result = await outcome();
+      result = await outcome(params.request);
       assert.strictEqual(result.outcome, "accepted", "through the api, " +
         "Polaris should accept the presentation: " + JSON.stringify(result));
       const route = await driver.executeScript(
