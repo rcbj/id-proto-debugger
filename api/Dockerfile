@@ -96,7 +96,7 @@ COPY api/node-ldapjs ./node-ldapjs
 # HOST's /run/pcscd, which is how a container reaches a key plugged into the
 # host. pcsc-lite 2.4 here was checked against a host's pcscd 1.9.5 on
 # 2026-11-13. The relay itself stays off unless smartcardReaderEnabled is
-# true — see docs/smartcard.md.
+# true — see docs/v0.9.5/smartcard.md.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get -y install \
         --no-install-recommends libpcsclite1 libpcsclite-dev python3 make g++

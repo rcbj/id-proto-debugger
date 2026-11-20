@@ -5,7 +5,7 @@
 //
 // The WS-Trust SOAP proxy: the page builds a RequestSecurityToken and this
 // posts it to the STS server-side, because a SOAP endpoint almost never sends
-// the CORS headers a browser needs. See docs/wstrust.md.
+// the CORS headers a browser needs. See docs/v0.9.5/wstrust.md.
 //
 // THE STS'S OWN ANSWER IS A 200 HERE, whatever its status: a SOAP Fault with
 // a 500 is the most useful thing an STS says, so it is carried in

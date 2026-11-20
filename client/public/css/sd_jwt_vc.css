@@ -201,7 +201,8 @@ button.vc-usecase-soon .vc-usecase-spec { color: #666; background: #eee; }
    line box — which costs the pane ~3px per row now and ~11px per row later. Keep new
    tool descriptions to roughly the length of the DID one for the same reason the
    landing page keeps its card descriptions equal: the row is as tall as its longest
-   cell. See docs/sd-jwt-vc-issuance.md for what the page's budget stands at. */
+   cell. See docs/v0.9.5/sd-jwt-vc-issuance.md for what the page's budget
+   stands at. */
 .vc-fit #pane_vc_tools td { line-height: 1.3; }
 
 /* The VC Tools pane's label column. Its table is the same two-column shape the

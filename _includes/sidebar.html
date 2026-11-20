@@ -1,22 +1,32 @@
 {%- comment -%}
-  The left-hand navigation, drawn from _data/navigation.yml. No script: on a
-  narrow screen the checkbox below is toggled by the menu button in
-  _layouts/default.html and CSS shows or hides the tree, which is the
-  arrangement the mock STS's documentation site uses.
+  The left-hand navigation. A page in a version draws that version's
+  _data/navigation/<nav>.yml (its _data/versions.yml row's `nav`), every
+  url prefixed with the version's folder so a link never leaves the version
+  the reader is in; a row marked `root: true` names an address outside
+  every version and is used as it stands. The landing page (/docs/) lists
+  the versions. No script: on a narrow screen the checkbox below is toggled
+  by the menu button in _layouts/default.html and CSS shows or hides the
+  tree, which is the arrangement iya-sts's documentation site uses.
 {%- endcomment -%}
+{%- include version.html -%}
 <input type="checkbox" id="sidebar-trigger" class="sidebar-trigger" />
 <nav class="sidebar" aria-label="Documentation">
-  {%- for group in site.data.navigation %}
+  <a class="all-versions" href="{{ "/docs/" | relative_url }}">&uarr; All documentation versions</a>
+  {%- if doc_version %}
+  {%- assign navigation = site.data.navigation[doc_version.nav] %}
+  {%- for group in navigation %}
   <div class="sidebar-section">
     <p class="sidebar-heading">{{ group.section | escape }}</p>
     <ul>
       {%- for item in group.items %}
+      {%- if item.root %}{% assign item_url = item.url %}{% else %}{% assign item_url = doc_prefix | append: item.url %}{% endif %}
       <li>
-        <a href="{{ item.url | relative_url }}"{% if page.url == item.url %} class="current" aria-current="page"{% endif %}>{{ item.title | escape }}</a>
+        <a href="{{ item_url | relative_url }}"{% if page.url == item_url %} class="current" aria-current="page"{% endif %}>{{ item.title | escape }}</a>
         {%- if item.children %}
         <ul class="sidebar-children">
           {%- for child in item.children %}
-          <li><a href="{{ child.url | relative_url }}"{% if page.url == child.url %} class="current" aria-current="page"{% endif %}>{{ child.title | escape }}</a></li>
+          {%- if child.root %}{% assign child_url = child.url %}{% else %}{% assign child_url = doc_prefix | append: child.url %}{% endif %}
+          <li><a href="{{ child_url | relative_url }}"{% if page.url == child_url %} class="current" aria-current="page"{% endif %}>{{ child.title | escape }}</a></li>
           {%- endfor %}
         </ul>
         {%- endif %}
@@ -25,4 +35,14 @@
     </ul>
   </div>
   {%- endfor %}
+  {%- else %}
+  <div class="sidebar-section">
+    <p class="sidebar-heading">Documentation versions</p>
+    <ul>
+      {%- for v in site.data.versions %}
+      <li><a href="{{ v.home | relative_url }}">{{ v.label | escape }} ({{ v.note | escape }})</a></li>
+      {%- endfor %}
+    </ul>
+  </div>
+  {%- endif %}
 </nav>

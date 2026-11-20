@@ -128,7 +128,7 @@ var config = {
   ldapPasswordDefault: "",
 
   // ---------------------------------------------------------------------------
-  // SCIM 2.0 (client/public/scim.html, docs/scim.md).
+  // SCIM 2.0 (client/public/scim.html, docs/v0.9.5/scim.md).
   //
   // EMPTY here, like every other endpoint default on this build: a public site
   // has no business defaulting to somebody's localhost. Note that unlike the
@@ -143,7 +143,7 @@ var config = {
   scimSignInUrlDefault: "",
 
   // ---------------------------------------------------------------------------
-  // SHARED SIGNALS (client/public/ssf.html, docs/ssf.md).
+  // SHARED SIGNALS (client/public/ssf.html, docs/v0.9.5/ssf.md).
   //
   // The TRANSMITTER's base URL. The page looks for
   // /.well-known/ssf-configuration under it in BOTH shapes — RFC 8414 inserts

@@ -31,7 +31,7 @@
 // finite-field family has always done — Diffie-Hellman over the same (p, q, g)
 // group, and ElGamal, which is the encryption scheme DSA's own key structure
 // comes from. Both are here, under their own names, over the standard MODP
-// groups of RFC 3526. See docs/encryption.md.
+// groups of RFC 3526. See docs/v0.9.5/encryption.md.
 //
 // NO DOM. Bytes and strings in, bytes and strings out, so
 // tests/crypto_engines.js drives every path in node with no browser.

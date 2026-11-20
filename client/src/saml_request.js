@@ -100,7 +100,7 @@ var xmldsig = require("./xmldsig");
 // tests (tests/saml_message_engine.js).
 var samlMessage = require("./saml_message");
 // The post-quantum SignatureMethods and the bridge to the engines that
-// perform them. See docs/xmldsig-pqc.md.
+// perform them. See docs/v0.9.5/xmldsig-pqc.md.
 var xdPqc = require("./xmldsig_pqc");
 var pqc = require("./pqc");
 var hbs = require("./hbs");
@@ -2821,7 +2821,7 @@ function validateConfigUrls() {
 window.onload = function () {
   // The sixteen post-quantum SignatureMethods, appended to this page's menu
   // FROM THE REGISTRY, before any stored selection is restored. See
-  // client/src/xmldsig_pqc.js and docs/xmldsig-pqc.md.
+  // client/src/xmldsig_pqc.js and docs/v0.9.5/xmldsig-pqc.md.
   xdPqc.appendSignatureOptions(document.getElementById('saml_sig_alg'),
       xmldsig.SIG_METHODS, xmldsig.PQ_SIG_URIS);
   log.debug('Entering onload().');

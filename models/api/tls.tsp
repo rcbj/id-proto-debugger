@@ -7,7 +7,7 @@
 // the certificates it issued, its limits document, and the certificate this
 // api serves. A page cannot choose a client certificate or a truststore, and
 // cannot read the handshake it made, so api/tls_probe.js opens the socket.
-// See docs/pki.md.
+// See docs/v0.9.5/pki.md.
 //
 // THE THREE OUTCOMES:
 //

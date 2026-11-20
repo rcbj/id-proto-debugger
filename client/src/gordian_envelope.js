@@ -21,7 +21,7 @@
 // "John" being guessed from its digest.
 //
 // Ten things that cost a day each if missed are listed at the top of the
-// implementation notes in docs/gordian-envelope.md; the ones that change
+// implementation notes in docs/v0.9.5/gordian-envelope.md; the ones that change
 // bytes:
 //   * a leaf's digest is SHA-256 of its dCBOR WITHOUT tag 201;
 //   * a known value is a bare uint on the wire and hashed as 40000(n);

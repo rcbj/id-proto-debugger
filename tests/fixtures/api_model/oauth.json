@@ -1,6 +1,6 @@
 {
   "family": "oauth",
-  "about": "POST /token, /introspection, /revoke, /tokenexchange, /deviceauthorization, /register; GET and POST /userinfo; GET /claimdescription. Recorded against the api as it was before the family switched to the model (docs/data-model.md). Every target is as.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 500 on any machine. Every credential here is a dummy. GET /claimdescription is the one case that leaves the machine: it fetches IANA's registry, so its text is volatile and only its status (and that the body is not JSON) is held.",
+  "about": "POST /token, /introspection, /revoke, /tokenexchange, /deviceauthorization, /register; GET and POST /userinfo; GET /claimdescription. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md). Every target is as.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 500 on any machine. Every credential here is a dummy. GET /claimdescription is the one case that leaves the machine: it fetches IANA's registry, so its text is volatile and only its status (and that the body is not JSON) is held.",
   "cases": [
     {
       "name": "token: an empty body",

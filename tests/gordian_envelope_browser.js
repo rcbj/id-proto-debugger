@@ -39,8 +39,8 @@ const path = require("path");
 const browserFlags = require("./browser_flags.js");
 const { Command, Option } = require("commander");
 const { loadUrl } = require("./page_load.js");
-// The user guide's pictures (docs/vc/). Inert unless DOC_SCREENSHOT_DIR is
-// set, so an ordinary run takes none.
+// The user guide's pictures (docs/v0.9.5/vc/). Inert unless DOC_SCREENSHOT_DIR
+// is set, so an ordinary run takes none.
 const docShots = require("./doc_screenshots.js");
 const waitForContent = require("./wait_for.js");
 const { waitForStatus } = require("./wait_for");

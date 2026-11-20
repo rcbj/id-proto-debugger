@@ -227,7 +227,7 @@ var config = {
   // "any".
   scimMaxRequestBytes: 1048576,
   // ---------------------------------------------------------------------------
-  // SHARED SIGNALS (client/public/ssf.html, docs/ssf.md).
+  // SHARED SIGNALS (client/public/ssf.html, docs/v0.9.5/ssf.md).
   //
   // `POST /ssf/call` is the SCIM proxy's shape and not the LDAP relay's: SSF's
   // management API is ordinary HTTPS with a JSON body, so the page calls a
@@ -245,7 +245,7 @@ var config = {
   // or a request_uri POST); see api/oid4vp_proxy.js.
   oid4vpMaxRequestBytes: 262144,
   // ---------------------------------------------------------------------------
-  // GNAP (client/public/gnap.html, docs/gnap.md).
+  // GNAP (client/public/gnap.html, docs/v0.9.5/gnap.md).
   //
   // POST /gnap/call forwards one request the page has already signed.
   // This bounds that request body. maxContentLength bounds the
@@ -417,7 +417,7 @@ var config = {
   // a reader on the machine this api runs on, with any APDU the caller
   // sends (a wrong-PIN VERIFY blocks a PIN; PIV and OpenPGP have
   // reset/terminate commands). Off unless this is true. See
-  // docs/smartcard.md.
+  // docs/v0.9.5/smartcard.md.
   //
   // ON on the containerized test stacks, because there it reaches NOTHING:
   // the api container has no pcscd socket mounted and no HID device, so

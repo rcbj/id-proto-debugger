@@ -796,10 +796,11 @@ async function authenticatingAnywhereCreatesAnLdapUser(described) {
   // here" and return green — and it did exactly that on every run, because all
   // three of the mock's env files carried `autocreateUsers: false`. An
   // appconfig value beats the default, so the setting the header of
-  // ldap_server.js, docs/ldap.md, docs/mock-sts.md and this file all describe
-  // as ON was off everywhere it was ever run, and the check that would have
-  // said so opted out of saying anything. A test that reports OK when its
-  // subject is turned off is not a weaker test, it is a test of nothing.
+  // ldap_server.js, docs/v0.9.5/ldap.md, docs/v0.9.5/mock-sts.md and this file
+  // all describe as ON was off everywhere it was ever run, and the check that
+  // would have said so opted out of saying anything. A test that reports OK
+  // when its subject is turned off is not a weaker test, it is a test of
+  // nothing.
   assert.ok(described.autoCreateUsers,
     "LDAP_AUTOCREATE_USERS is off on this mock, so no protocol here seeds a " +
     "directory entry and everything below this line would be checking a " +

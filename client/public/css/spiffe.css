@@ -43,7 +43,7 @@
  * bundle — never from a fixed `rows` chosen for the biggest answer it might
  * one day hold, because most of these boxes are empty most of the time and an
  * empty ten-row box is ten rows of white space. `tests/spiffe_page.js` asserts
- * both halves; see docs/spiffe.md.
+ * both halves; see docs/v0.9.5/spiffe.md.
  */
 
 .spiffe-return {

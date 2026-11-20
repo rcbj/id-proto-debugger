@@ -1,6 +1,6 @@
 {
   "family": "wstrust",
-  "about": "POST /wstrust, the WS-Trust SOAP proxy. Recorded against the api as it was before the family switched to the model (docs/data-model.md). Every target is sts.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 500 on any machine.",
+  "about": "POST /wstrust, the WS-Trust SOAP proxy. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md). Every target is sts.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 500 on any machine.",
   "cases": [
     {
       "name": "an empty body is refused",

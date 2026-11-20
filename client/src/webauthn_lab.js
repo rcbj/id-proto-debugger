@@ -30,7 +30,7 @@
 // "client", which turned out to be fine.
 //
 // What this page will never do: name an RP ID this origin does not own, or
-// pretend it can. See the non-goals in docs/webauthn-plan.md.
+// pretend it can. See the non-goals in docs/v0.9.5/webauthn-plan.md.
 // ---------------------------------------------------------------------------
 
 var bunyan = require("bunyan");

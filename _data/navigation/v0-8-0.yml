@@ -1,0 +1,6 @@
+# The sidebar of docs/v0.8.0/, release 0.8.0. That release published no
+# documentation pages: its README, which is this snapshot's index.md,
+# was the documentation.
+- section: Start here
+  items:
+    - { title: Overview, url: / }
