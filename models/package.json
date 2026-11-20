@@ -1,6 +1,6 @@
 {
   "name": "id-proto-debugger-models",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "private": true,
   "description": "The abstract data model's TypeSpec compiler and emitters. Dev only: nothing here ships in an image.",
   "scripts": {
