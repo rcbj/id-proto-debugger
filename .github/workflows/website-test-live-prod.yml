@@ -23,6 +23,22 @@ on:
     workflows: ["Deploy Static Site (idptools.com)"]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      # The iya-sts release to run against, for a manual run only, as in
+      # website-test-live.yml: the checkout below is the deployed commit, so
+      # only these can change its compose defaults. Empty keeps them.
+      iya_sts_image:
+        description: >-
+          IYA_STS_IMAGE, e.g.
+          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts:1.1.0-candidate
+        type: string
+        default: ""
+      iya_sts_companion_image:
+        description: >-
+          IYA_STS_COMPANION_IMAGE, e.g.
+          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts-companion:v1.1.0-candidate
+        type: string
+        default: ""
   # Nightly, staggered after the test-site live run (11:00 UTC).
   schedule:
     - cron: '0 12 * * *'
@@ -125,7 +141,20 @@ jobs:
       # non-zero when a test fails: run-report.js exits 1 and check_return_code
       # propagates it.
       - name: Run the suite against the live PROD site
-        run: ./remote-run-tests.sh https://idptools.com
+        env:
+          IYA_STS_IMAGE_INPUT: ${{ inputs.iya_sts_image }}
+          IYA_STS_COMPANION_INPUT: ${{ inputs.iya_sts_companion_image }}
+        run: |
+          set -euo pipefail
+          if [ -n "${IYA_STS_IMAGE_INPUT}" ]; then
+            export IYA_STS_IMAGE="${IYA_STS_IMAGE_INPUT}"
+            echo "iya-sts: ${IYA_STS_IMAGE}"
+          fi
+          if [ -n "${IYA_STS_COMPANION_INPUT}" ]; then
+            export IYA_STS_COMPANION_IMAGE="${IYA_STS_COMPANION_INPUT}"
+            echo "iya-sts companion: ${IYA_STS_COMPANION_IMAGE}"
+          fi
+          ./remote-run-tests.sh https://idptools.com
 
       # The script deliberately leaves the stack up for fast local re-runs. A
       # runner is thrown away, but tearing down keeps the log honest about what

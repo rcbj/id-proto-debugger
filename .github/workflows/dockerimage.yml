@@ -377,6 +377,15 @@ jobs:
              echo ""
              echo "Commit \`${SHA}\`; git tags \`${VERSION}\` and \`${tag}\`."
              echo ""
+             # The release's own changelog page (docs/v<M.N.P>/), linked
+             # at this tag so the link names the text that shipped. A
+             # release whose docs have no such page gets no link.
+             page="docs/v${RELEASE}/release-notes.md"
+             if [ -f "${page}" ]; then
+               echo "What changed, and what to do about it:" \
+                    "[Release notes](https://github.com/${repo}/blob/${tag}/${page})."
+               echo ""
+             fi
            } > "${notes}"
            .github/scripts/release-changes.sh "${previous}" "${tag}" \
              "${repo}" >> "${notes}"
