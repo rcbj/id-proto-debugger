@@ -88,12 +88,19 @@ client and the embedded debugger and then, from `master` only:
   | `ghcr.io/rcbj/id-proto-debugger-client` | `iyasec/id-proto-debugger-client` |
   | `ghcr.io/rcbj/id-proto-debugger-embedded` | `iyasec/id-proto-debugger-embedded` |
 
-  Each is tagged `M.N.P.B` and `latest`. The embedded image is
+  Each is tagged `M.N.P.B`, `latest` and `M.N.P`. `M.N.P` is the tag a
+  consumer pins: IYA STS's Dockerfile names
+  `id-proto-debugger-embedded:<M.N.P>`. Builds before 2026-11-20 pushed no
+  `M.N.P`; `gh workflow run dockerimage.yml --ref develop -f
+  retag=<M.N.P.B>` gives a published release build that tag on both
+  registries, and moves the git tag `M.N.P` to its release commit,
+  without building anything. The embedded image is
   `FROM scratch` and holds only the built tree that IYA STS's own image
   copies in; it is not run by itself.
 * **Git tags.** `M.N.P.B` on the commit, created once and never moved,
-  whose message names the images. `M.N.P`, a floating tag force-moved to
-  the newest build of that line.
+  whose message names the images. `M.N.P`, force-moved by each `master`
+  build of that line, so it names the released commit (a develop build
+  moved it too until 2026-11-20).
 * **A GitHub release**, on the first `master` build of a line only:
   the tag `release-M.N.P` is created on that commit and never moved, and
   the release is titled "Release M.N.P" and marked Latest. Its notes
