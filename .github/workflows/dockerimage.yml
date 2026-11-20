@@ -24,6 +24,18 @@ on:
           `latest`, no GitHub release). Ignored on master.
         type: boolean
         default: false
+      # RETAG A RELEASE: give an already-published release build its M.N.P
+      # tag, which builds before 2026-11-20 never pushed. Names the build
+      # (M.N.P.B); its three images get the M.N.P tag on both registries,
+      # from the digests already there, and the git tag M.N.P is moved to
+      # the commit release-M.N.P names. Nothing is built, `latest` and the
+      # GitHub release are not touched. Runs instead of the build.
+      retag:
+        description: >-
+          Retag a published release build (e.g. 0.9.5.20261120053023) with
+          its M.N.P on ghcr.io and Docker Hub. Skips the build.
+        type: string
+        default: ""
 
 permissions:
   # write is needed to push the version tags back to the repo.
@@ -32,7 +44,73 @@ permissions:
   packages: write
 
 jobs:
+  retag:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.retag != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" |
+             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "${DOCKERHUB_TOKEN}" |
+            docker login docker.io -u "${DOCKERHUB_USERNAME}" --password-stdin
+      - name: Tag the release's images and commit M.N.P
+        env:
+          BUILD_VERSION: ${{ inputs.retag }}
+        run: |
+          set -euo pipefail
+          case "${BUILD_VERSION}" in
+            [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::retag takes a build, M.N.P.B: ${BUILD_VERSION}"
+               exit 1 ;;
+          esac
+          RELEASE="${BUILD_VERSION%.*}"
+          {
+            echo "### Retag \`${BUILD_VERSION}\` as \`${RELEASE}\`"
+            echo ""
+            echo "| Image | Digest |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for name in api client embedded; do
+            for registry in ghcr.io/rcbj docker.io/iyasec; do
+              dst="${registry}/id-proto-debugger-${name}"
+              docker buildx imagetools create \
+                -t "${dst}:${RELEASE}" "${dst}:${BUILD_VERSION}"
+              digest="$(docker buildx imagetools inspect \
+                "${dst}:${RELEASE}" --format '{{.Manifest.Digest}}')"
+              echo "| \`${dst}:${RELEASE}\` | \`${digest}\` |" \
+                >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
+          # The git tag M.N.P names the released commit.
+          tag="release-${RELEASE}"
+          git fetch --tags --force origin
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            sha="$(git rev-list -n 1 "${tag}")"
+            git config user.name  "github-actions[bot]"
+            git config user.email \
+              "github-actions[bot]@users.noreply.github.com"
+            git tag -f -a "${RELEASE}" "${sha}" \
+              -m "Release ${RELEASE}: ${BUILD_VERSION} (retagged)"
+            git push -f origin "refs/tags/${RELEASE}"
+            echo "Git tag \`${RELEASE}\` -> \`${sha}\` (${tag})." \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No ${tag}; the git tag ${RELEASE} is left as it is." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   build:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.retag == '' }}
     runs-on: ubuntu-latest
     env:
       # PUBLISH: a master build that is not a pull request, or a candidate.
@@ -203,11 +281,15 @@ jobs:
            set -euo pipefail
            REGISTRIES="ghcr.io/rcbj docker.io/iyasec"
            RELEASE="${VERSION%.*}"
+           # The tags each image gets beside its M.N.P.B. A release (master)
+           # build is also `latest` and `M.N.P`, the tag a consumer pins:
+           # IYA STS's Dockerfile names id-proto-debugger-embedded:<M.N.P>.
+           # A candidate is M.N.P-candidate only.
            if [ "${CANDIDATE}" = true ]; then
              FLOAT="${RELEASE}-candidate"
            else
              case "${BRANCH}" in
-               master)  FLOAT=latest ;;
+               master)  FLOAT="latest ${RELEASE}" ;;
                *)       FLOAT="" ;;
              esac
            fi
@@ -221,10 +303,10 @@ jobs:
                docker tag "${src}" "${dst}:${VERSION}"
                docker push "${dst}:${VERSION}"
                published="${published} ${dst}:${VERSION}"
-               if [ -n "${FLOAT}" ]; then
-                 docker tag "${src}" "${dst}:${FLOAT}"
-                 docker push "${dst}:${FLOAT}"
-               fi
+               for float in ${FLOAT}; do
+                 docker tag "${src}" "${dst}:${float}"
+                 docker push "${dst}:${float}"
+               done
                # One RepoDigests entry per registry now, so pick this one's.
                # Docker records docker.io repositories without the host.
                repo="${dst#docker.io/}"
@@ -298,8 +380,14 @@ jobs:
              git push origin "refs/tags/${VERSION}"
              echo "Tagged ${SHA} as ${VERSION}"
            fi
-           # M.N.P — a floating tag that always points at the newest build of this
-           # line, so it is force-moved on every build.
+           # M.N.P — the release's git tag, beside the images of that name. It
+           # moves only with a master build, so it names what was released;
+           # a develop build of the line used to move it past the release.
+           if [ "${GITHUB_REF}" != "refs/heads/master" ]; then
+             echo "Tagged \`${VERSION}\`; \`${RELEASE}\` moves only on master." \
+               >> "$GITHUB_STEP_SUMMARY"
+             exit 0
+           fi
            git tag -f -a "${RELEASE}" -m "Latest ${RELEASE} build: ${VERSION} (Docker Image CI)"
            git push -f origin "refs/tags/${RELEASE}"
            echo "Moved ${RELEASE} to ${SHA}"
@@ -340,7 +428,7 @@ jobs:
            set -euo pipefail
            repo="${GITHUB_REPOSITORY}"
            tag="release-${RELEASE}"
-           float="latest"
+           float="latest\` and \`${RELEASE}"
            if [ "${CANDIDATE}" = true ]; then
              # The candidate's tag moves with each candidate build; the
              # previous release is looked up against the real tag's name.
