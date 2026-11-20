@@ -53,7 +53,7 @@ services:
     # docker-compose-run-tests.yml runs, where the release is named
     # (IYA_STS_IMAGE; tests/image_mirror_coverage.js holds this default to
     # that one). This repository has no iya-sts checkout to build from.
-    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
+    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.1.0-candidate}
     # ROOT, and the only container here that is. The image runs as uid 10001
     # and this service binds 88 (TCP and UDP), 389 and 636 — all privileged —
     # on the HOST's network namespace, where the per-namespace sysctl the
@@ -150,7 +150,7 @@ services:
     container_name: idptools-kctest-companion
     # iya-sts's release tag, built into the mirror; see
     # docker-compose-run-tests.yml.
-    image: ${IYA_STS_COMPANION_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts-companion:v1.0.0}
+    image: ${IYA_STS_COMPANION_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts-companion:v1.1.0-candidate}
     network_mode: "host"
     environment:
       - COMPANION_PORT=9700

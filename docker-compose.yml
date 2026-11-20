@@ -169,7 +169,7 @@ services:
     # docker-compose-run-tests.yml runs, where the release is named
     # (IYA_STS_IMAGE; tests/image_mirror_coverage.js holds this default to
     # that one). This repository has no iya-sts checkout to build from.
-    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
+    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.1.0-candidate}
     # The image runs as uid 10001 and binds 88 (TCP and UDP), 389 and 636,
     # all privileged. The sysctl is per network namespace, so it lowers the
     # bar inside this container alone; docker-compose-run-tests.yml does the
