@@ -24,6 +24,9 @@
 
 <p class="ds-return"><a id="return_link" href="/">&larr; Return to Home</a> &nbsp;|&nbsp; <a href="/encryption_tools.html?from=digital_signature.html">Encryption / Decryption &rarr;</a></p>
 
+<details class="ds-intro-more">
+<summary>About this page: twelve panes of signatures and MACs, four of
+them post-quantum. Nothing is stored.</summary>
 <p class="ds-intro">Generate key pairs, sign any value, and validate
 signatures &mdash; all in your browser. Twelve panes, in this order.
 <strong>Four of them are post-quantum signatures.</strong> Pane 1 is
@@ -61,9 +64,12 @@ Poly1305 / SipHash), labelled separately because a MAC uses a shared
 secret and is <em>not</em> a true digital signature. <strong>No key
 material is stored:</strong> keys live only in this page and are never
 written to local storage.</p>
+</details>
 
-<p class="ds-intro ds-standards-note"><strong>Which of these is
-actually standardised, and which is a draft.</strong> Post-quantum
+<details class="ds-intro-more ds-standards-more">
+<summary>Which of these is actually standardised, and which is a
+draft</summary>
+<p class="ds-intro ds-standards-note">Post-quantum
 cryptography is not one thing yet, and this page marks the difference
 rather than blurring it. <strong>Published:</strong> the primitives
 ML-DSA (FIPS 204), SLH-DSA (FIPS 205) and their pre-hash variants,
@@ -91,6 +97,7 @@ selected in March 2025 as the backup KEM, has the opposite problem: no
 draft FIPS, no IETF binding and no implementation at all, so adding it
 would mean inventing a wire format &mdash; the one thing a debugger
 must never do.</p>
+</details>
 
 <p class="ds-controls">
   <label class="ds-toggle" title="Expand or collapse every pane.">

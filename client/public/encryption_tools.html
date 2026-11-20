@@ -24,7 +24,11 @@
 
 <p class="ds-return"><a id="return_link" href="/">&larr; Return to Home</a> &nbsp;|&nbsp; <a href="/digital_signature.html?from=encryption_tools.html">Digital Signature &rarr;</a></p>
 
+<details class="ds-intro-more">
+<summary>About this page: every encryption mechanism, one pane each,
+symmetric, asymmetric and JWE. Nothing is stored.</summary>
 <p class="ds-intro">Encrypt and decrypt with every mechanism, entirely in your browser &mdash; one pane per mechanism. <strong>Symmetric:</strong> <strong>AES</strong> in every mode (GCM, CBC, CTR, CFB, OFB, ECB) at every key size, <strong>ChaCha20-Poly1305</strong> (RFC 8439), the legacy <strong>3DES / DES</strong>, and <strong>password-based</strong> encryption through PBKDF2, scrypt or PBES2. <strong>Asymmetric:</strong> <strong>RSA</strong> (OAEP and PKCS#1 v1.5, direct or hybrid), <strong>ECC</strong> as ECIES over five curves, the post-quantum <strong>ML-KEM</strong> (FIPS 203) alone, as <strong>X-Wing</strong>, or as one of six <strong>Composite ML-KEM</strong> pairings, and the finite-field family <strong>DSA</strong> belongs to &mdash; ElGamal and DHIES. <strong>Protocol:</strong> <strong>JWE</strong> compact serialization, the same code the rest of this debugger reads tokens with. One thing is worth knowing before you start: <strong>only RSA encrypts a message directly</strong>, and only a short one &mdash; every other asymmetric mechanism here agrees a key and encrypts the message symmetrically under it, which is what ECIES, HPKE, JWE and TLS all do. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
+</details>
 
 <p class="ds-controls">
   <label class="ds-toggle" title="Expand or collapse every pane.">
