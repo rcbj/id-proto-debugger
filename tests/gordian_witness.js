@@ -90,17 +90,23 @@ function fromImage() {
                     (created.stderr || "").trim());
   }
   fs.mkdirSync(dir, { recursive: true });
+  // Pooled jobs reach this at the same moment, so each copies to a name of
+  // its own and RENAMES it into place, which is atomic: a second `docker cp`
+  // onto the same path would hand the first job a half-written binary.
+  var tmp = bin + ".tmp-" + process.pid + "-" + Date.now();
   var copied;
   try {
-    copied = docker(["cp", cid + ":/envelope/envelope", bin]);
+    copied = docker(["cp", cid + ":/envelope/envelope", tmp]);
   } finally {
     docker(["rm", "-f", cid]);
   }
-  if (copied.status !== 0 || !versionOf(bin)) {
+  if (copied.status !== 0 || !versionOf(tmp)) {
+    fs.rmSync(tmp, { force: true });
     log.debug("Leaving fromImage(). docker cp failed.");
     throw new Error("could not copy the witness out of " + img + ": " +
                     (copied.stderr || "").trim());
   }
+  fs.renameSync(tmp, bin);
   log.debug("Leaving fromImage(). Copied to " + bin + ".");
   return bin;
 }
