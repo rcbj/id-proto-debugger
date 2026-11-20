@@ -1,5 +1,7 @@
 # Releases, versions and images
 
+What each release changed is [Release notes](release-notes.md).
+
 How a build is numbered, what a `master` build publishes, and how a
 release is cut. The workflows are `.github/workflows/dockerimage.yml`
 (Docker Image CI), `tests.yml` (Selenium Tests),
