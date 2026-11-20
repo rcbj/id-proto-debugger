@@ -461,8 +461,8 @@ async function walletPresents(driver, where, credential, round) {
   // equal to iss (rcbj/iya-sts#1880, on its develop branch and in 1.1.0).
   // This is the only test of that binding path against a third party's
   // real certificate, so it must PASS, not merely be reported. It needs
-  // the stack on an iya-sts build with #1880: for now that is the local
-  // iya-sts develop build (IYA_STS_IMAGE), not the 1.0.0 release.
+  // an iya-sts build with #1880: 1.1.0 (the stacks' default since the
+  // 1.1.0-candidate pin), not the 1.0.0 release.
   check("iss is bound to iya-sts's signing certificate by a URI " +
       "subjectAltName (" + round.label + ")", function () {
         assert.ok(issRow && /pass/.test(issRow.cls) &&
