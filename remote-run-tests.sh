@@ -119,6 +119,9 @@ init()
       # same reason: a local dev server has the api, so POST /tls/connect is
       # there and the pane is live.
       PKI_TLS_AVAILABLE="${PKI_TLS_AVAILABLE:-true}"
+      # The api itself, which the two API-document jobs replay requests
+      # against (api_model_wire.js, api_model_gaps.js).
+      API_AVAILABLE="${API_AVAILABLE:-true}"
       # WS-Trust STS (mock) started on the host (keycloak-tests.yml). A local dev
       # site has the api backend, so the WS-Trust jobs can run here.
       WSTRUST_STS_URL="${WSTRUST_STS_URL:-https://localhost:8081/sts}"
@@ -182,6 +185,11 @@ init()
       # in place of the section it cannot run. Set this to true for a remote
       # target that IS api-backed.
       PKI_TLS_AVAILABLE="${PKI_TLS_AVAILABLE:-false}"
+      # A static site deploys no api, so the two jobs that replay requests
+      # against one (api_model_wire.js, api_model_gaps.js) have nothing to
+      # reach: API_BASE_URL is the site itself. Set this to true for a
+      # remote target that IS api-backed.
+      API_AVAILABLE="${API_AVAILABLE:-false}"
       # SAML_ACS_URL / SAML_SLO_URL are NOT decided here. Where the IdP should
       # return its response depends on whether this target has the edge landings
       # deployed, which probeEdgeLandings() finds out with a real POST before
@@ -210,7 +218,7 @@ init()
   KERBEROS_PAGES_AVAILABLE="${KERBEROS_AVAILABLE}"
   export KERBEROS_AVAILABLE KERBEROS_PAGES_AVAILABLE
   export LDAP_AVAILABLE LDAP_URL
-  export PKI_TLS_AVAILABLE
+  export PKI_TLS_AVAILABLE API_AVAILABLE
   # Only exported when set (backendless targets); otherwise common.sh derives them.
   [ -n "${SAML_ACS_URL:-}" ] && export SAML_ACS_URL
   [ -n "${SAML_SLO_URL:-}" ] && export SAML_SLO_URL
@@ -414,9 +422,17 @@ init()
 
 prepTestEnv()
 {
+  echo "Entering prepTestEnv()."
   npm install --prefix tests
+  check_return_code $?
+  # models/'s own TypeSpec install: data_model.js compiles models/ to check
+  # that common/model/ is what it generates. The tests image makes this
+  # install itself (tests/Dockerfile); a host run has to.
+  npm ci --prefix models --no-audit --no-fund
+  check_return_code $?
   # (iya-sts's own dependencies come with its tree out of the image; see
   # warmIyaStsTree() below.)
+  echo "Leaving prepTestEnv()."
 }
 
 # ---------------------------------------------------------------------------

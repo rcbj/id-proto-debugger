@@ -217,8 +217,9 @@ the report was green.
 The distinction is not "can this run" — it is **who was supposed to have made
 that decision**. `run-report.js` already gates every family on the facts about
 the target it can know: `LDAP_AVAILABLE`, `SPIFFE_AVAILABLE`,
-`KERBEROS_AVAILABLE`, `PKI_TLS_AVAILABLE`, `RFC9700_STS_URL`, the WS-Federation
-pair. A job that reaches its own gate is therefore a job the launcher **expected
+`KERBEROS_AVAILABLE`, `PKI_TLS_AVAILABLE`, `API_AVAILABLE` (the two
+API-document jobs, which replay requests against an api a static site does
+not deploy), `RFC9700_STS_URL`, the WS-Federation pair. A job that reaches its own gate is therefore a job the launcher **expected
 to run**.
 
 * **The prerequisite is genuinely ABSENT** — an environment variable nobody

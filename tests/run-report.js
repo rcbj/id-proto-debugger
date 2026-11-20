@@ -508,6 +508,16 @@ function buildJobs() {
     env: {},
   });
 
+  // Both api jobs below replay requests against a running api. A static
+  // site deploys none (remote-run-tests.sh sets API_AVAILABLE=false for it),
+  // so there they would report the site's 404s as the api's answers.
+  const apiJobSkip = env.API_AVAILABLE === "false"
+    ? "this target deploys no api: a static site's API_BASE_URL is the site " +
+      "itself. The job replays requests against the api and its record of " +
+      "answers, so it says nothing about a static deployment. Set " +
+      "API_AVAILABLE=true for a remote target that IS api-backed."
+    : null;
+
   // THE API ANSWERS WHAT IT ANSWERED BEFORE ITS MODEL. Each family's
   // requests were recorded against the api as it was, into
   // fixtures/api_model/, before its hand-written checks gave way to the
@@ -520,6 +530,7 @@ function buildJobs() {
     env: {
       API_URL: env.API_URL || "https://localhost:4000",
     },
+    skip: apiJobSkip,
   });
 
   // NO ANSWER THIS RUN IS ONE THE API DOCUMENT DOES NOT DESCRIBE. LAST, so
@@ -533,6 +544,7 @@ function buildJobs() {
     env: {
       API_URL: env.API_URL || "https://localhost:4000",
     },
+    skip: apiJobSkip,
   });
 
   // EVERY STORAGE KEY THE RUN'S PAGES WROTE IS DECLARED. LAST, so every
@@ -4587,6 +4599,9 @@ function buildJobs() {
         // certificate to the provider it registers.
         GUIDE_SP_ENTITY_ID: BASE_URL.replace(/\/+$/, "") +
             "/saml/sp-user-guide",
+        // A static target cannot run the Artifact binding; the walk leaves
+        // that one round trip out there.
+        SAML_BACKEND_AVAILABLE: env.SAML_BACKEND_AVAILABLE || "true",
       },
     });
     jobs.push({
