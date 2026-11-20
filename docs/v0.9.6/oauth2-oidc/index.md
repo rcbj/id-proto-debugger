@@ -70,9 +70,9 @@ Register a client with:
 | Web origins / CORS | the debugger's origin, if token requests will be sent from the browser |
 
 For the mock STS, see
-[Configuring OAuth 2.0 grants](https://rcbj.github.io/iya-sts/configure-oauth2-grants.html)
+[Configuring OAuth 2.0 grants](https://rcbj.github.io/iya-sts/v1.1.0/configure-oauth2-grants.html)
 and
-[Configuring OpenID Connect flows](https://rcbj.github.io/iya-sts/configure-oidc-flows.html).
+[Configuring OpenID Connect flows](https://rcbj.github.io/iya-sts/v1.1.0/configure-oidc-flows.html).
 In development mode it accepts a client it has never seen. The Device
 Authorization grant is the exception: that client must be registered first.
 

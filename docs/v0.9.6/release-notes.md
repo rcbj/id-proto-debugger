@@ -14,6 +14,12 @@ release is numbered, built and published is
 
 In development. Changes are described here as they land.
 
+### The test stacks run iya-sts 1.1.0
+
+The compose files, the image mirror and iya-sts's companion name the
+1.1.0 release, which replaces 0.9.5's `1.1.0-candidate` pin. Links to
+iya-sts's documentation name its `v1.1.0` pages.
+
 ## 0.9.5
 
 0.9.5 replaces 0.9.4 with nothing to migrate. The debugger keeps its

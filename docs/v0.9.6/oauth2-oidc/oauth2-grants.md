@@ -355,5 +355,5 @@ pair of clients involved.
   and the Hybrid flows.
 * [RFC 9700 compliance mode](../rfc9700.md): what the debugger checks when
   compliance mode is on.
-* The mock STS's [Configuring OAuth 2.0 grants](https://rcbj.github.io/iya-sts/configure-oauth2-grants.html):
+* The mock STS's [Configuring OAuth 2.0 grants](https://rcbj.github.io/iya-sts/v1.1.0/configure-oauth2-grants.html):
   how to set up the other side.

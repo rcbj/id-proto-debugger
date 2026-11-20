@@ -10,10 +10,12 @@
 // nothing schedules it; tests/mdoc_engine.js and
 // tests/vc_presentation_mdoc.js require it.
 //
-// It exists because no issuer in this stack mints `mso_mdoc` (iya-sts 1.0.0
-// VERIFIES mdocs from issuers it trusts, through `oid4vp.mdocTrustAnchors`,
-// and mints none). An issuer written beside the wallet that reads its output
-// would share any misreading of the specification with it, so this one
+// It exists because no issuer in this stack mints an ISO mDL: iya-sts 1.1.0
+// issues an `mso_mdoc` of its own type (urn:iya:sts:mdoc:identity, #1862)
+// and VERIFIES others from issuers it trusts, through
+// `oid4vp.mdocTrustAnchors`; 1.0.0 minted none. An issuer written beside
+// the wallet that reads its output would share any misreading of the
+// specification with it, so this one
 // shares no code with client/src/mdoc.js: if the two agree, and iya-sts's
 // verifier accepts what the wallet built from it, three readings agree.
 //

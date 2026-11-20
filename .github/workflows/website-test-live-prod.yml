@@ -30,13 +30,13 @@ on:
       iya_sts_image:
         description: >-
           IYA_STS_IMAGE, e.g.
-          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts:1.1.0-candidate
+          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts:<version>-candidate
         type: string
         default: ""
       iya_sts_companion_image:
         description: >-
           IYA_STS_COMPANION_IMAGE, e.g.
-          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts-companion:v1.1.0-candidate
+          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts-companion:v<version>-candidate
         type: string
         default: ""
   # Nightly, staggered after the test-site live run (11:00 UTC).

@@ -262,5 +262,5 @@ the authorization endpoint, which never sees a proof. The DPoP pane says so.
 * [OAuth 2.0 authorization grants](oauth2-grants.md): the underlying grants,
   plus Refresh Token and Token Exchange.
 * [RFC 9700 compliance mode](../rfc9700.md).
-* The mock STS's [Configuring OpenID Connect flows](https://rcbj.github.io/iya-sts/configure-oidc-flows.html):
+* The mock STS's [Configuring OpenID Connect flows](https://rcbj.github.io/iya-sts/v1.1.0/configure-oidc-flows.html):
   how to set up the other side.
