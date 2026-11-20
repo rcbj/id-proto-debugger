@@ -44,6 +44,21 @@ Both also run nightly. Three things about them are easy to get wrong.
   the site's `/version.json` and checks out the commit it names, so the
   tests and the deployed pages always agree, whichever branch the
   workflow file came from.
+* **A manual run of `website-test-live.yml` may name the iya-sts
+  images.** Because the checkout is the deployed commit, its compose
+  defaults name that commit's iya-sts release, and a branch cannot
+  change them. The `iya_sts_image` and `iya_sts_companion_image` inputs
+  set `IYA_STS_IMAGE` and `IYA_STS_COMPANION_IMAGE` for the run, which is
+  how a candidate is tried against the live site (empty keeps the
+  defaults):
+
+  ```bash
+  gh workflow run website-test-live.yml --ref develop \
+    -f iya_sts_image=ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts:1.1.0-candidate \
+    -f iya_sts_companion_image=ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts-companion:v1.1.0-candidate
+  ```
+
+  Both images must be in the private mirror first.
 * **They need the ghcr.io login and `packages: read`**, because every
   stack image is a private package, and MIT Kerberos on the runner,
   which the containerized suite gets from `tests/Dockerfile`.
