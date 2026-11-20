@@ -14,6 +14,18 @@ on:
   pull_request:
     branches: [ master, develop ]
   workflow_dispatch:
+    inputs:
+      # The instrumented suite (./run-coverage.sh) instead of the plain one.
+      # Manual only: the job below was switched off for pushes and the
+      # schedule on 2026-10-02, when a standard runner died a third of the
+      # way through it. A dispatch with this set is one more try on that
+      # runner.
+      coverage:
+        description: >-
+          Run the coverage suite (./run-coverage.sh) instead of the plain
+          suite.
+        type: boolean
+        default: false
 permissions:
   contents: read
   # Pulling the private image mirror and pushing what the run built, both on
@@ -55,6 +67,7 @@ jobs:
   # runs the Selenium suite, and always tears the stack down.
   test:
     needs: mirror
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.coverage) }}
     runs-on: ubuntu-latest
     env:
       # The name every image this job builds is tagged with, and pushed under
@@ -149,84 +162,87 @@ jobs:
   # the suite run. The plain test job on the same commit passed. A
   # standard ubuntu-latest runner cannot be given more memory or cores, so
   # until this job has a larger runner, run ./run-coverage.sh locally when
-  # a coverage report is wanted. To restore it, uncomment the block below.
+  # a coverage report is wanted. Since 2026-11-20 it can be dispatched by
+  # hand (`gh workflow run tests.yml --ref develop -f coverage=true`), which
+  # runs it instead of the plain suite; pushes and the schedule never do.
 
-#   coverage:
-#     needs: mirror
-#     runs-on: ubuntu-latest
-#     env:
-#       # Its own tag: these images are built with COVERAGE=true, so they are
-#       # not the same images as the test job's under the same names.
-#       IMAGE_TAG: ${{ github.sha }}-coverage
-#     steps:
-#       - name: Checkout Repository
-#         uses: actions/checkout@v7
-#         with:
-#           # api/node-ldapjs — see the test job above. This run uses
-#           # --abort-on-container-exit, so a service that cannot be built takes
-#           # the whole coverage run down with it.
-#           submodules: true
-#       - name: Install docker-compose
-#         uses: KengoTODA/actions-setup-docker-compose@v1
-#         with:
-#           version: '5.2.0'
-#       # THE IMAGE MIRROR AND THE BUILT IMAGES ARE PRIVATE PACKAGES on ghcr.io.
-#       # GITHUB_TOKEN carries packages: write (above), and a package this
-#       # repository's workflows created grants it access. Compose runs WITHOUT
-#       # sudo on a runner, so this login is the one it uses.
-#       - name: Log in to GitHub Container Registry
-#         run: echo "${{ secrets.GITHUB_TOKEN }}" |
-#              docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-#       - name: Run test suite with coverage
-#         # `info`, not the mock's own default of `debug`. That log is the record
-#         # of everything the mock issued and is why debug is the default for a
-#         # run somebody is watching — but nobody reads a passing CI run's log,
-#         # and run-coverage.sh's own header measures what it costs: about half
-#         # of that service's CPU, 156MB written in sixteen seconds, and `info`
-#         # roughly doubles what one instance can answer with several jobs
-#         # driving it. The variable outranks whatever env/docker-tests.js says,
-#         # so nothing on this machine or anybody else's changes with it.
-#         #
-#         # THE api AND THE CLIENT ARE AT `info` TOO NOW, and not through a
-#         # variable — issue #269's second half was a decision rather than a
-#         # knob. Their level comes from the config file alone and the client's
-#         # is compiled into the browser bundle by browserify, so no runtime
-#         # variable can reach either; `api/env/docker-tests.js` changed on
-#         # 2026-08-31 and `client/src/env/docker-tests.js` on 2026-09-01, each
-#         # saying so beside the key. `env/local.js` stays at `debug` on both,
-#         # which is the stack somebody watches. The client's mattered most:
-#         # that one is what every PAGE logs at, in Chrome, while this job is
-#         # serving Istanbul-instrumented bundles to a pool of jobs whose every
-#         # browser wait is two seconds.
-#         env:
-#           STS_LOG_LEVEL: info
-#         run: ./run-coverage.sh
-#       - name: Push built images
-#         if: (success() || failure()) && github.event_name != 'pull_request'
-#         run: .github/scripts/push-stack-images.sh
-#              "${{ github.ref_name }}-coverage"
-#       # coverage/ and tests/report are written as root inside the containers.
-#       - name: Normalize coverage permissions
-#         if: always()
-#         run: sudo chown -R "$(id -u):$(id -g)" coverage tests/report || true
-#       - name: Upload coverage report
-#         if: always()
-#         uses: actions/upload-artifact@v7
-#         with:
-#           name: coverage-report
-#           path: coverage/
-#           if-no-files-found: warn
-#           retention-days: 30
-#       # Distinct artifact name from the test job (artifact names must be unique
-#       # across a workflow run).
-#       - name: Upload Test Report
-#         if: always()
-#         uses: actions/upload-artifact@v7
-#         with:
-#           name: coverage-test-report
-#           path: tests/report/latest
-#           if-no-files-found: warn
-#           retention-days: 30
+  coverage:
+    needs: mirror
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.coverage }}
+    runs-on: ubuntu-latest
+    env:
+      # Its own tag: these images are built with COVERAGE=true, so they are
+      # not the same images as the test job's under the same names.
+      IMAGE_TAG: ${{ github.sha }}-coverage
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          # api/node-ldapjs — see the test job above. This run uses
+          # --abort-on-container-exit, so a service that cannot be built takes
+          # the whole coverage run down with it.
+          submodules: true
+      - name: Install docker-compose
+        uses: KengoTODA/actions-setup-docker-compose@v1
+        with:
+          version: '5.2.0'
+      # THE IMAGE MIRROR AND THE BUILT IMAGES ARE PRIVATE PACKAGES on ghcr.io.
+      # GITHUB_TOKEN carries packages: write (above), and a package this
+      # repository's workflows created grants it access. Compose runs WITHOUT
+      # sudo on a runner, so this login is the one it uses.
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" |
+             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Run test suite with coverage
+        # `info`, not the mock's own default of `debug`. That log is the record
+        # of everything the mock issued and is why debug is the default for a
+        # run somebody is watching — but nobody reads a passing CI run's log,
+        # and run-coverage.sh's own header measures what it costs: about half
+        # of that service's CPU, 156MB written in sixteen seconds, and `info`
+        # roughly doubles what one instance can answer with several jobs
+        # driving it. The variable outranks whatever env/docker-tests.js says,
+        # so nothing on this machine or anybody else's changes with it.
+        #
+        # THE api AND THE CLIENT ARE AT `info` TOO NOW, and not through a
+        # variable — issue #269's second half was a decision rather than a
+        # knob. Their level comes from the config file alone and the client's
+        # is compiled into the browser bundle by browserify, so no runtime
+        # variable can reach either; `api/env/docker-tests.js` changed on
+        # 2026-08-31 and `client/src/env/docker-tests.js` on 2026-09-01, each
+        # saying so beside the key. `env/local.js` stays at `debug` on both,
+        # which is the stack somebody watches. The client's mattered most:
+        # that one is what every PAGE logs at, in Chrome, while this job is
+        # serving Istanbul-instrumented bundles to a pool of jobs whose every
+        # browser wait is two seconds.
+        env:
+          STS_LOG_LEVEL: info
+        run: ./run-coverage.sh
+      - name: Push built images
+        if: (success() || failure()) && github.event_name != 'pull_request'
+        run: .github/scripts/push-stack-images.sh
+             "${{ github.ref_name }}-coverage"
+      # coverage/ and tests/report are written as root inside the containers.
+      - name: Normalize coverage permissions
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" coverage tests/report || true
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: warn
+          retention-days: 30
+      # Distinct artifact name from the test job (artifact names must be unique
+      # across a workflow run).
+      - name: Upload Test Report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-test-report
+          path: tests/report/latest
+          if-no-files-found: warn
+          retention-days: 30
 
 
 
