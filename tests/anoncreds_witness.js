@@ -86,20 +86,46 @@ function fromImage() {
                     "login ghcr.io` first?): " +
                     (created.stderr || "").trim());
   }
-  fs.mkdirSync(dir, { recursive: true });
+  // Pooled jobs reach this at the same moment, so each copies into a
+  // directory of its own and RENAMES it into place: two `docker cp`s into
+  // one directory fail with "file exists" part-way through. The loser of the
+  // rename uses the winner's copy.
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  var tmp = fs.mkdtempSync(dir + ".tmp-");
   var copied;
   try {
-    copied = docker(["cp", cid + ":/anoncreds/.", dir + "/"]);
+    copied = docker(["cp", cid + ":/anoncreds/.", tmp + "/"]);
   } finally {
     docker(["rm", "-f", cid]);
   }
-  if (copied.status !== 0 || !holds(dir)) {
+  if (copied.status !== 0 || !holds(tmp)) {
+    fs.rmSync(tmp, { recursive: true, force: true });
     log.debug("Leaving fromImage(). docker cp failed.");
     throw new Error("could not copy the witness out of " + img + ": " +
                     (copied.stderr || "").trim());
   }
+  publish(tmp, dir);
   log.debug("Leaving fromImage(). Copied to " + dir + ".");
   return dir;
+}
+
+// Move a complete copy into place, or keep the one another job put there.
+function publish(tmp, dir) {
+  log.debug("Entering publish().");
+  if (fs.existsSync(dir) && !holds(dir)) {
+    // An incomplete copy from an older run that died part-way.
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  try {
+    fs.renameSync(tmp, dir);
+  } catch (e) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    if (!holds(dir)) {
+      log.debug("Leaving publish(). Rename failed.");
+      throw e;
+    }
+  }
+  log.debug("Leaving publish().");
 }
 
 function witnessDir() {
