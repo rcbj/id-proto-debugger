@@ -42,18 +42,18 @@ on:
       # The iya-sts release to run against, for a manual run only. The
       # checkout below is the commit the site was built from, so its compose
       # defaults name that commit's release; these replace them, which is how
-      # a candidate (iya-sts:1.1.0-candidate) is tried against the live site.
+      # a candidate (iya-sts:<version>-candidate) is tried against the live site.
       # Empty keeps the deployed commit's defaults.
       iya_sts_image:
         description: >-
           IYA_STS_IMAGE, e.g.
-          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts:1.1.0-candidate
+          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts:<version>-candidate
         type: string
         default: ""
       iya_sts_companion_image:
         description: >-
           IYA_STS_COMPANION_IMAGE, e.g.
-          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts-companion:v1.1.0-candidate
+          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts-companion:v<version>-candidate
         type: string
         default: ""
   # Nightly, after the containerized "Selenium Tests" suite (10:00 UTC).

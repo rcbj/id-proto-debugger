@@ -54,8 +54,8 @@ Both also run nightly. Three things about them are easy to get wrong.
 
   ```bash
   gh workflow run website-test-live.yml --ref develop \
-    -f iya_sts_image=ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts:1.1.0-candidate \
-    -f iya_sts_companion_image=ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts-companion:v1.1.0-candidate
+    -f iya_sts_image=ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts:<version>-candidate \
+    -f iya_sts_companion_image=ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts-companion:v<version>-candidate
   ```
 
   Both images must be in the private mirror first.

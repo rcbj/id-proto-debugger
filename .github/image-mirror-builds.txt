@@ -26,6 +26,6 @@
 #
 # mirror path                            source
 shibboleth-idp-dist:4.3.3                ./shibboleth-idp/dist
-iya-sts-companion:v1.1.0-candidate       https://github.com/rcbj/iya-sts.git#v1.1.0-candidate:companion
+iya-sts-companion:v1.1.0                 https://github.com/rcbj/iya-sts.git#v1.1.0:companion
 anoncreds-witness:0.5.0-0.2.3            ./tests/anoncreds-witness
 gordian-witness:0.35.0                   ./tests/gordian-witness
