@@ -763,14 +763,13 @@ services:
   # POLARIS (#423): polaris-oid4vp, an OpenID4VP 1.0 + HAIP 1.0 verifier
   # somebody else wrote, from its own published image, UNMODIFIED. Its
   # entrypoint is replaced by tests/polaris/serve-loop.sh, which runs the
-  # image's own `polaris-oid4vp` command and restarts `serve --once` for each
-  # case on a file tests/vc_presentation_polaris.js drops in the shared
-  # volume: one request per process is the package's design, and a tests
-  # container has no Docker to start one per case. Plain HTTP inside; the
-  # https URLs HAIP hands the wallet are the proxy's below.
+  # image's own `polaris-oid4vp` command. 1.2.0 starts each request on
+  # POST /control/request, so one process serves every case. Plain HTTP
+  # inside; the https URLs HAIP hands the wallet are the proxy's below.
+  # --cors-origin is not set: the proxy terminates TLS and replaces CORS.
   polaris-verifier:
     container_name: polaris-verifier
-    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/polaris-oid4vp:v1.1.0
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/polaris-oid4vp:v1.2.0
     user: "10001:10001"
     entrypoint: ["sh", "/serve-loop.sh"]
     environment:
@@ -788,11 +787,13 @@ services:
     networks:
       - keycloak
 
-  # TLS and CORS in front of Polaris, which sends no CORS headers and whose
-  # URLs HAIP has be https: tests/cors-proxy/cors-proxy.js in its TLS mode, under the
-  # stack's own certificate (whose SANs carry `polaris` for this). Healthy
-  # once the proxy's own /__proxy/health answers, which does not touch
-  # Polaris: polaris-verifier's healthcheck already gates on Polaris (#431).
+  # TLS in front of Polaris. HAIP's request_uri and response_uri are https,
+  # and the stack certificate (whose SANs carry `polaris`) is what the
+  # wallet trusts. tests/cors-proxy/cors-proxy.js terminates that TLS and
+  # sets CORS; it replaces any Access-Control-* Polaris would send, so
+  # --cors-origin is left off. Healthy once the proxy's own /__proxy/health
+  # answers, which does not touch Polaris: polaris-verifier's healthcheck
+  # already gates on Polaris (#431).
   polaris:
     container_name: polaris
     image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
@@ -897,8 +898,10 @@ services:
       # SPIRE's own table marks local-only.
       SPIFFE_SERVER_SOCKET: unix:///spire-sock/server.sock
       # The volume shared with polaris-verifier; its presence schedules
-      # tests/vc_presentation_polaris.js.
+      # tests/vc_presentation_polaris.js. The control URL is Polaris's own
+      # plain-HTTP listener, where POST /control/request starts a case.
       POLARIS_DATA_DIR: /polaris-data
+      POLARIS_CONTROL_URL: http://polaris-verifier:9080
     # Chrome crashes tabs on heavy pages when limited to Docker's default 64MB
     # /dev/shm. The tests also pass --disable-dev-shm-usage; this raises the cap
     # as a belt-and-suspenders mitigation.

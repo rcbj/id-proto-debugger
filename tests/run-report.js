@@ -4691,8 +4691,10 @@ function buildJobs() {
   // OpenID4VP 1.0 + HAIP 1.0 verifier, from its own published image, with an
   // ES256 SD-JWT VC iya-sts issues in the same run. Scheduled where the
   // volume it shares with the polaris-verifier container is mounted, which
-  // is the containerized stack. Holds `sts-vc` (JOB_LOCKS) because it mints
-  // with one iya-sts setting changed and put back.
+  // is the containerized stack. POLARIS_CONTROL_URL is that container's
+  // plain-HTTP listener: each case is POST /control/request. Holds `sts-vc`
+  // (JOB_LOCKS) because it mints with one iya-sts setting changed and put
+  // back.
   if (env.POLARIS_DATA_DIR) {
     jobs.push({
       name: "VC Presentation — HAIP 1.0 against Polaris (x509_hash, " +
@@ -4700,6 +4702,7 @@ function buildJobs() {
       script: "vc_presentation_polaris.js",
       env: {
         POLARIS_DATA_DIR: env.POLARIS_DATA_DIR,
+        POLARIS_CONTROL_URL: env.POLARIS_CONTROL_URL || "",
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
