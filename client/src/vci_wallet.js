@@ -42,6 +42,10 @@ var log = bunyan.createLogger({
 
 var metadataClient = require("./metadata_client");
 var jws = require("./jws");
+// Pure-JS key generation in whichever algorithm the issuer accepts (#475),
+// and the JWS a key signs with.
+var cryptoProvider = require("./crypto_provider");
+var vcFormats = require("./vc_formats");
 var dpopLib = require("./dpop");
 
 // The proof of possession is a JWT of its own media type (OID4VCI Appendix D,
@@ -51,6 +55,18 @@ var dpopLib = require("./dpop");
 var PROOF_TYP = "openid4vci-proof+jwt";
 var PROOF_ALG = "ES256";
 
+// The proof types OpenID4VCI 1.0 section 8.2.1 defines and this wallet
+// produces: `jwt` (a holder-signed proof of possession, the default and the
+// one every issuer in this repository advertises) and `attestation` (a Key
+// Attestation JWT the issuer trusts to vouch for the holder keys). Earlier
+// drafts also listed `cwt` and `ldp_vp`/`di_vp`, which the final 1.0 text
+// dropped, so they are not offered. A wallet only ever sends a type the
+// issuer advertised in proof_types_supported.
+var PROOF_TYPES = ["jwt", "attestation"];
+var DEFAULT_PROOF_TYPE = "jwt";
+// The media type of a Key Attestation JWT (OID4VCI 1.0 section 8.2.3).
+var KEY_ATTESTATION_TYP = "keyattestation+jwt";
+
 // ---------------------------------------------------------------------------
 // The holder key pair.
 //
@@ -59,28 +75,39 @@ var PROOF_ALG = "ES256";
 // claim so a verifier can later demand proof that the presenter holds the
 // private half.
 // ---------------------------------------------------------------------------
-function generateHolderKeyPair() {
-  log.debug("Entering generateHolderKeyPair().");
-  log.debug("Leaving generateHolderKeyPair().");
-  return crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true,
-                                   ["sign", "verify"])
-    .then(function (pair) {
-      return Promise.all([
-        crypto.subtle.exportKey("jwk", pair.publicKey),
-        crypto.subtle.exportKey("jwk", pair.privateKey)
-      ]);
-    })
-    .then(function (jwks) {
-      log.debug("Leaving generateHolderKeyPair().");
-      return {
-        // Only the members that identify the key: a stray key_ops/ext/alg makes
-        // a strict JWK consumer unhappy, and the issuer echoes this object
-        // straight into the credential's cnf claim.
-        publicJwk: { kty: jwks[0].kty, crv: jwks[0].crv, x: jwks[0].x,
-                    y: jwks[0].y },
-        privateJwk: jwks[1]
-      };
-    });
+// `alg` is the JOSE algorithm the key is for (vc_formats.holderKeyAlgFor()
+// chooses it from what the issuer accepts); ES256 when none is given. The
+// key is made by crypto_provider.js, pure JS, so a page served over plain
+// HTTP generates an Ed25519, secp256k1 or P-384 key as readily as P-256 —
+// Web Crypto does none of that outside a secure context and secp256k1
+// nowhere. The private JWK carries `alg`, so every later signature names
+// the algorithm the key was made for (EdDSA and Ed25519 are the same key).
+function generateHolderKeyPair(alg) {
+  log.debug("Entering generateHolderKeyPair(). alg=" + (alg || "ES256"));
+  var chosen = alg || PROOF_ALG;
+  var spec = vcFormats.HOLDER_KEY_SPECS[chosen];
+  if (!spec) {
+    log.debug("Leaving generateHolderKeyPair(). Unknown alg.");
+    return Promise.reject(new Error("no holder key is made for " +
+      JSON.stringify(chosen) + "; this wallet makes " +
+      Object.keys(vcFormats.HOLDER_KEY_SPECS).join(", ") + "."));
+  }
+  var pair = cryptoProvider.generateKeyPair(spec);
+  var priv = cryptoProvider.exportKey(pair, "jwk");
+  var full = cryptoProvider.exportKey(pair, "jwk", { publicOnly: true });
+  // Only the members that identify the key: a stray key_ops/ext/alg makes a
+  // strict JWK consumer unhappy, and the issuer echoes this object straight
+  // into the credential's cnf claim.
+  var members = { EC: ["kty", "crv", "x", "y"], OKP: ["kty", "crv", "x"],
+                  RSA: ["kty", "n", "e"] }[full.kty] || Object.keys(full);
+  var pub = {};
+  members.forEach(function (m) {
+    if (full[m] !== undefined) pub[m] = full[m];
+  });
+  priv.alg = chosen;
+  log.debug("Leaving generateHolderKeyPair(). " + full.kty + " " +
+            (full.crv || ""));
+  return Promise.resolve({ publicJwk: pub, privateJwk: priv });
 }
 
 // `count` keys in all, the first of which is the one passed in. One proof per
@@ -90,8 +117,11 @@ function generateHolderKeyPair() {
 function holderKeysFor(first, count) {
   log.debug("Entering holderKeysFor(). count=" + count);
   var extra = [];
+  // The extra keys are the same kind as the first, which is the one the
+  // wallet chose for this issuer.
+  var alg = first && first.privateJwk && first.privateJwk.alg;
   for (var i = 1; i < count; i++) {
-    extra.push(generateHolderKeyPair());
+    extra.push(generateHolderKeyPair(alg));
   }
   log.debug("Leaving holderKeysFor(). Generating " + extra.length +
             " additional key(s).");
@@ -102,31 +132,26 @@ function holderKeysFor(first, count) {
 
 // ---------------------------------------------------------------------------
 // The key an encrypted Credential Response is encrypted to (OID4VCI section
-// 8.2). RSA, because RSA-OAEP-256 is what Web Crypto can unwrap directly and
-// what the mock issuer advertises; the private half is generated
-// non-extractable so it cannot leave the page even by accident.
+// 8.2). RSA, because RSA-OAEP-256 is what the issuers advertise. Generated
+// by crypto_provider.js (#463), in pure JS, so it works on a plain-HTTP page.
+// A pure-JS key cannot be non-extractable as the Web Crypto one was; it is
+// made per request, held in memory only and never stored.
 // ---------------------------------------------------------------------------
 function generateResponseEncryptionKey(enc) {
   log.debug("Entering generateResponseEncryptionKey(). enc=" + enc);
   log.debug("Leaving generateResponseEncryptionKey().");
-  return crypto.subtle.generateKey({
-    name: "RSA-OAEP",
-    modulusLength: 2048,
-    publicExponent: new Uint8Array([1, 0, 1]),
-    hash: "SHA-256"
-  }, false, ["encrypt", "decrypt"])
-    .then(function (pair) {
-      return crypto.subtle.exportKey("jwk",
-                                     pair.publicKey).then(function (jwk) {
-        log.debug("Leaving generateResponseEncryptionKey().");
-        return {
-          publicJwk: { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: "RSA-OAEP-256",
-                      use: "enc" },
-          privateKey: pair.privateKey,
-          enc: enc
-        };
-      });
-    });
+  return new Promise(function (resolve) {
+    setTimeout(resolve, 0);
+  }).then(function () {
+    var pair = cryptoProvider.generateKeyPair("rsa", { bits: 2048 });
+    var jwk = cryptoProvider.exportKey(cryptoProvider.publicKeyOf(pair), "jwk");
+    return {
+      publicJwk: { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: "RSA-OAEP-256",
+                   use: "enc" },
+      privateKey: pair,
+      enc: enc
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -148,26 +173,36 @@ function generateResponseEncryptionKey(enc) {
 // and a wallet may have chosen RS256 for that.
 var PROOF_ALGS = { ES256: true, RS256: true };
 
-function proofAlgFor(key) {
+// The JWS the proof is signed with: { algId, headerAlg } (vc_formats.jwsFor).
+// A DPoP key under Holder of Key names its own alg; a holder key made here
+// otherwise the curve decides, with the issuer's list choosing between
+// EdDSA and Ed25519, or among RSA algorithms.
+function proofAlgFor(key, issuerAlgs) {
   log.debug("Entering proofAlgFor().");
   if (key && PROOF_ALGS[key.alg]) {
-    log.debug("Leaving proofAlgFor().");
-    return key.alg;
+    log.debug("Leaving proofAlgFor(). The key's own.");
+    return { algId: key.alg, headerAlg: key.alg };
   }
-  // A holder key generated by generateHolderKeyPair() carries no alg and is
-  // always P-256, which is what the issuers here advertise in
-  // proof_signing_alg_values_supported.
-  if (key && key.publicJwk && key.publicJwk.kty === "RSA") {
-    log.debug("Leaving proofAlgFor().");
-    return "RS256";
+  // An Ed25519 key made for "Ed25519" keeps that name when the issuer
+  // states no list; otherwise the issuer's list chooses.
+  var named = key && key.privateJwk && key.privateJwk.alg;
+  var offered = [].concat(issuerAlgs || []);
+  if (!offered.length && named) {
+    offered = [named];
   }
-  log.debug("Leaving proofAlgFor().");
-  return PROOF_ALG;
+  var j = vcFormats.jwsFor(key && key.publicJwk, offered);
+  if (!j) {
+    log.debug("Leaving proofAlgFor(). Default.");
+    return { algId: PROOF_ALG, headerAlg: PROOF_ALG };
+  }
+  log.debug("Leaving proofAlgFor(). " + j.headerAlg);
+  return j;
 }
 
 function signProof(key, opts) {
   log.debug("Entering signProof().");
-  var alg = proofAlgFor(key);
+  var chosen = proofAlgFor(key, opts.proofAlgs);
+  var alg = chosen.headerAlg;
   var header = { typ: PROOF_TYP, alg: alg, jwk: key.publicJwk };
   var payload = {
     iss: opts.clientId || "",
@@ -178,12 +213,15 @@ function signProof(key, opts) {
   log.debug("Leaving signProof(). alg=" + alg);
   // VERBATIM header: OID4VCI section 8.2.1.1 fixes what a jwt proof carries,
   // and the proof is the base64url of these exact bytes.
+  // The pure-JS backend, which signs every algorithm a holder key can be
+  // made for; Web Crypto has no secp256k1 and, outside a secure context,
+  // nothing at all.
   return jws.signJwsAsync({
-    algId: alg,
+    algId: chosen.algId,
     protectedHeader: header,
     payload: payload,
     privateKey: { jwk: key.privateJwk },
-    backend: "webcrypto"
+    backend: "js"
   }).then(function (signed) { return signed.serialized; });
 }
 
@@ -191,6 +229,65 @@ function signProofs(keys, opts) {
   log.debug("Entering signProofs(). " + keys.length + " key(s).");
   log.debug("Leaving signProofs().");
   return Promise.all(keys.map(function (key) { return signProof(key, opts); }));
+}
+
+// ---------------------------------------------------------------------------
+// The `attestation` proof type (OpenID4VCI 1.0 section 8.2.1.3 / 8.2.3).
+//
+// A Key Attestation JWT vouches for the holder keys the credential is to be
+// bound to, rather than proving possession of each one with its own signature.
+// A real attestation is issued by a trusted attester (the wallet provider's
+// device attestation); in this debugger the attester is the wallet itself —
+// a key generated for the attestation — so it is a SELF-attestation, which is
+// what lets the whole shape be exercised without a trusted attester in the
+// stack. An issuer that advertises the attestation proof type and trusts this
+// wallet's attester would accept it.
+//
+// typ is keyattestation+jwt, the header carries the attester's public JWK,
+// and the payload is iat, attested_keys (the holder PUBLIC JWKs) and, when the
+// attestation is used as a proof, the request's c_nonce as `nonce`
+// (section 8.2.1.3).
+// ---------------------------------------------------------------------------
+function signKeyAttestation(keys, opts) {
+  log.debug("Entering signKeyAttestation(). " + keys.length + " key(s).");
+  var o = opts || {};
+  var ready = o.attesterKey ? Promise.resolve(o.attesterKey) :
+    generateHolderKeyPair(PROOF_ALG);
+  return ready.then(function (attester) {
+    var chosen = proofAlgFor(attester, o.proofAlgs);
+    var header = { typ: KEY_ATTESTATION_TYP, alg: chosen.headerAlg,
+                   jwk: attester.publicJwk };
+    var payload = {
+      iat: Math.floor(Date.now() / 1000),
+      attested_keys: (keys || []).map(function (k) { return k.publicJwk; })
+    };
+    if (o.nonce) payload.nonce = o.nonce;
+    if (o.exp) payload.exp = o.exp;
+    log.debug("Leaving signKeyAttestation(). alg=" + chosen.headerAlg);
+    // VERBATIM header, pure-JS backend: a Key Attestation is the base64url of
+    // these exact bytes, and the signer works on every deployment.
+    return jws.signJwsAsync({
+      algId: chosen.algId,
+      protectedHeader: header,
+      payload: payload,
+      privateKey: { jwk: attester.privateJwk },
+      backend: "js"
+    }).then(function (signed) {
+      return { attestation: signed.serialized, attesterKey: attester };
+    });
+  });
+}
+
+// The `attestation` proof type's contribution to a Credential Request: the
+// single Key Attestation JWT, in the one-element array proofs.attestation
+// takes. Returns the same { proofs } shape signProofs effectively produces, so
+// the caller keys buildRequestBody by the proof type and nothing else changes.
+function signAttestationProof(keys, opts) {
+  log.debug("Entering signAttestationProof().");
+  log.debug("Leaving signAttestationProof().");
+  return signKeyAttestation(keys, opts).then(function (r) {
+    return { proofs: [r.attestation], attesterKey: r.attesterKey };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -278,8 +375,10 @@ function fetchProtected(opts) {
       url: opts.url, nonce: nonce
     }).then(function (built) {
       var headers = Object.assign({}, opts.headers || {}, built.headers);
+      // opts.signal lets a caller bound the wait (vc_client_auth_pane.js
+      // does, for the token request).
       return fetch(opts.url, { method: method, headers: headers,
-                   body: opts.body })
+                   body: opts.body, signal: opts.signal })
         .then(function (response) {
           return response.text().then(function (text) {
             var body = null;
@@ -381,9 +480,14 @@ function buildRequestBody(opts) {
   } else {
     body.credential_configuration_id = opts.credentialConfigurationId;
   }
-  // OID4VCI 1.0: proofs is an object keyed by proof type, each an array — one
-  // entry per key the credential should be bound to.
-  body.proofs = { jwt: (opts.proofs || []).slice() };
+  // OID4VCI 1.0 section 8.2: proofs is an object keyed by proof type, each an
+  // array. For `jwt` there is one entry per key the credential should be bound
+  // to; for `attestation` the single Key Attestation JWT vouches for them all.
+  // The type defaults to jwt, which is what every issuer here advertises.
+  var proofType = PROOF_TYPES.indexOf(opts.proofType) !== -1 ?
+    opts.proofType : DEFAULT_PROOF_TYPE;
+  body.proofs = {};
+  body.proofs[proofType] = (opts.proofs || []).slice();
   if (opts.encryption) {
     // The wallet supplies the key and the content encryption algorithm; the
     // private half never leaves this browser.
@@ -465,28 +569,22 @@ function decryptJweResponse(compact, encryption) {
   var bits = header.enc === "A128GCM" ? 128 : 256;
   log.debug("Leaving decryptJweResponse(). alg=" + header.alg + ", enc=" +
             header.enc);
-  return crypto.subtle.decrypt({ name: "RSA-OAEP" }, encryption.privateKey,
-      metadataClient.b64uToBytes(parts[1]))
-    .then(function (cek) {
-      return crypto.subtle.importKey("raw", cek, { name: "AES-GCM",
-                                     length: bits }, false, ["decrypt"]);
-    })
-    .then(function (key) {
-      // RFC 7516: the protected header is the additional authenticated data,
-      // and the authentication tag is appended to the ciphertext for Web
-      // Crypto.
-      var ciphertext = metadataClient.b64uToBytes(parts[3]);
-      var tag = metadataClient.b64uToBytes(parts[4]);
-      var joined = new Uint8Array(ciphertext.length + tag.length);
-      joined.set(ciphertext, 0);
-      joined.set(tag, ciphertext.length);
-      return crypto.subtle.decrypt({
-        name: "AES-GCM",
-        iv: metadataClient.b64uToBytes(parts[2]),
-        additionalData: new TextEncoder().encode(parts[0]),
-        tagLength: tag.length * 8
-      }, key, joined);
-    })
+  // RSA-OAEP-256 unwraps the CEK and AES-GCM opens the content, both by
+  // crypto_provider.js (#463). RFC 7516: the protected header, as sent, is
+  // the additional authenticated data.
+  return Promise.resolve().then(function () {
+    var cek = cryptoProvider.rsaDecrypt("rsa-oaep-sha256",
+        encryption.privateKey, metadataClient.b64uToBytes(parts[1]));
+    if (cek.length * 8 !== bits) {
+      throw new Error("the unwrapped content key is " + (cek.length * 8) +
+                      " bits and " + header.enc + " takes " + bits + ".");
+    }
+    return cryptoProvider.aesGcmDecrypt(cek,
+        metadataClient.b64uToBytes(parts[2]),
+        metadataClient.b64uToBytes(parts[3]),
+        metadataClient.b64uToBytes(parts[4]),
+        new TextEncoder().encode(parts[0]));
+  })
     .then(function (plaintext) {
       return JSON.parse(new TextDecoder().decode(plaintext));
     });
@@ -627,36 +725,29 @@ function encryptRequestBody(body, offer) {
   if (offer.kid) header.kid = offer.kid;
   var headerB64 = metadataClient.utf8ToB64u(JSON.stringify(header));
   var plaintext = new TextEncoder().encode(JSON.stringify(body));
-  var cek = crypto.getRandomValues(new Uint8Array(bits / 8));
-  var iv = crypto.getRandomValues(new Uint8Array(12));
+  var cek = cryptoProvider.randomBytes(bits / 8);
+  var iv = cryptoProvider.randomBytes(12);
 
   log.debug("Leaving encryptRequestBody().");
-  return crypto.subtle.importKey("jwk",
-      { kty: offer.jwk.kty, n: offer.jwk.n, e: offer.jwk.e, alg: "RSA-OAEP-256",
-       ext: true },
-      { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"])
-    .then(function (publicKey) {
-      return crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, cek);
-    })
+  // RSA-OAEP-256 wraps the CEK and AES-GCM seals the request, both by
+  // crypto_provider.js (#463).
+  return Promise.resolve().then(function () {
+    return cryptoProvider.rsaEncrypt("rsa-oaep-sha256",
+      cryptoProvider.importKey({ kty: offer.jwk.kty, n: offer.jwk.n,
+                                 e: offer.jwk.e }), cek);
+  })
     .then(function (encryptedKey) {
-      return crypto.subtle.importKey("raw", cek, { name: "AES-GCM",
-                                     length: bits }, false, ["encrypt"])
-        .then(function (contentKey) {
+      return Promise.resolve()
+        .then(function () {
           // RFC 7516: the AAD is ASCII(BASE64URL(protected header)), so
           // altering the header — the kid, say — breaks the tag rather than
           // going unnoticed.
-          return crypto.subtle.encrypt({
-            name: "AES-GCM", iv: iv,
-            additionalData: new TextEncoder().encode(headerB64),
-            tagLength: 128
-          }, contentKey, plaintext);
+          return cryptoProvider.aesGcmEncrypt(cek, iv, plaintext,
+                                        new TextEncoder().encode(headerB64));
         })
         .then(function (sealed) {
-          // Web Crypto appends the 16-byte tag to the ciphertext; the compact
-          // serialization keeps them as separate segments.
-          var all = new Uint8Array(sealed);
-          var ciphertext = all.slice(0, all.length - 16);
-          var tag = all.slice(all.length - 16);
+          var ciphertext = sealed.ciphertext;
+          var tag = sealed.tag;
           var compact = [
             headerB64,
             metadataClient.bytesToB64u(encryptedKey),
@@ -806,11 +897,16 @@ module.exports = {
   fetchProtected: fetchProtected,
   PROOF_TYP: PROOF_TYP,
   PROOF_ALG: PROOF_ALG,
+  PROOF_TYPES: PROOF_TYPES,
+  DEFAULT_PROOF_TYPE: DEFAULT_PROOF_TYPE,
+  KEY_ATTESTATION_TYP: KEY_ATTESTATION_TYP,
   generateHolderKeyPair: generateHolderKeyPair,
   holderKeysFor: holderKeysFor,
   generateResponseEncryptionKey: generateResponseEncryptionKey,
   signProof: signProof,
   signProofs: signProofs,
+  signKeyAttestation: signKeyAttestation,
+  signAttestationProof: signAttestationProof,
   fetchNonce: fetchNonce,
   isStaleNonceError: isStaleNonceError,
   buildRequestBody: buildRequestBody,

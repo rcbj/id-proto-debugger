@@ -392,6 +392,42 @@
       <span class="landing-card-title">GNAP</span>
       <span class="landing-card-desc">Negotiate a grant (RFC 9635): sign the request with the client key, follow the interaction, then continue, rotate or revoke.</span>
     </a>
+    <!-- THE TWENTIETH CARD, and the second row's tenth: twenty at ten
+         columns are a filled 10+10, so the grid did not change (see the
+         note in css/landing.css). Its accent is :nth-child(20).
+
+         NO data-not-on-static MARKER. Every pane on the Digital Signature
+         page signs and verifies in the browser, with no API. -->
+    <a class="landing-card" href="/digital_signature.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 3h8l4 4v14H6z"/>
+          <path d="M14 3v4h4"/>
+          <path d="M8.5 16.5c1.2-2.4 2.2-2.4 2.7 0s1.6 2.4 2.6 0 1.6-2.2 2.2-.4"/>
+          <path d="M9 10h2M9 12.5h4"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">Digital signatures &amp; Hashing</span>
+      <span class="landing-card-desc">Sign and verify with RSA, ECC, ML-DSA, SLH-DSA, BBS, LMS and XMSS, JWS and XML Signature, and compute MACs.</span>
+    </a>
+    <!-- THE TWENTY-FIRST CARD. Twenty at ten columns were a filled
+         10+10, and a twenty-first would start a third row below the fold,
+         so the grid is eleven columns now (css/landing.css records the
+         sum). Its accent is :nth-child(21).
+
+         NO data-not-on-static MARKER. Every pane on the Encryption page
+         runs in the browser, with no API. -->
+    <a class="landing-card" href="/encryption_tools.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="5" y="10.5" width="14" height="10" rx="2"/>
+          <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>
+          <path d="M12 14.5v2.5"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">Encryption tools</span>
+      <span class="landing-card-desc">Encrypt and decrypt with AES, ChaCha20-Poly1305, 3DES, RSA, ECIES, ML-KEM, JWE and password-based encryption.</span>
+    </a>
   </div>
   <!-- The counterpart to the greyed cards above, and the only thing on this
        page that appears ONLY on the static deployments: each dead card says

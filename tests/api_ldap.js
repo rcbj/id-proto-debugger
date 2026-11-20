@@ -796,10 +796,11 @@ async function authenticatingAnywhereCreatesAnLdapUser(described) {
   // here" and return green — and it did exactly that on every run, because all
   // three of the mock's env files carried `autocreateUsers: false`. An
   // appconfig value beats the default, so the setting the header of
-  // ldap_server.js, docs/ldap.md, docs/mock-sts.md and this file all describe
-  // as ON was off everywhere it was ever run, and the check that would have
-  // said so opted out of saying anything. A test that reports OK when its
-  // subject is turned off is not a weaker test, it is a test of nothing.
+  // ldap_server.js, docs/v0.9.5/ldap.md, docs/v0.9.5/mock-sts.md and this file
+  // all describe as ON was off everywhere it was ever run, and the check that
+  // would have said so opted out of saying anything. A test that reports OK
+  // when its subject is turned off is not a weaker test, it is a test of
+  // nothing.
   assert.ok(described.autoCreateUsers,
     "LDAP_AUTOCREATE_USERS is off on this mock, so no protocol here seeds a " +
     "directory entry and everything below this line would be checking a " +
@@ -1512,7 +1513,7 @@ async function theSameDirectoryAnswersOverLdaps(described) {
   //
   // THE FIRST HALF USED TO BE A REFUSAL AND IS NOW A SUCCESS, and the change is
   // the api's rather than this file's. That service's entrypoint
-  // (api/sts_truststore.sh, wired up by STS_CERT_URL in local-tests.yml and
+  // (api/sts_truststore.sh, wired up by STS_CERT_URL in
   // docker-compose-run-tests.yml) fetches this mock's self-signed certificate
   // on every start and points NODE_EXTRA_CA_CERTS at it, because the mock now
   // serves its main port over https and every STS-backed job would otherwise
@@ -1524,8 +1525,8 @@ async function theSameDirectoryAnswersOverLdaps(described) {
   // OBSERVATIONS ANYWHERE ELSE, and this is what tells the two apart. Both of
   // them are about how the api this run is pointed at was CONFIGURED — the
   // truststore its entrypoint filled, and an alias in its /etc/hosts or on its
-  // network — and `./local-run-tests.sh` and `./docker-run-tests.sh` are the
-  // only launchers that configure either. Both reach the directory as `sts`.
+  // network — and `./docker-run-tests.sh` is the only launcher that
+  // configures either. Both reach the directory as `sts`.
   // remote-run-tests.sh's local-dev-server branch reaches an api somebody
   // started by hand, at `localhost`, where neither has been arranged and
   // neither can be asserted.
@@ -1566,9 +1567,8 @@ async function theSameDirectoryAnswersOverLdaps(described) {
   // which had stopped verifying altogether would fail, now that the anchor
   // above is legitimately present.
   //
-  // The name is a SECOND NAME FOR THE SAME SERVICE, provided by the api's
-  // extra_hosts on the host-networked stack (local-tests.yml) and by a network
-  // alias on the `sts` service on the containerized one
+  // The name is a SECOND NAME FOR THE SAME SERVICE, provided by a network
+  // alias on the `sts` service on the containerized stack
   // (docker-compose-run-tests.yml). The mock's certificate carries localhost,
   // sts, sts-mock, sts.example.com and 127.0.0.1, and this name is deliberately
   // none of them. LDAPS_MISMATCH_HOST overrides it for a stack that spells it
@@ -1586,8 +1586,7 @@ async function theSameDirectoryAnswersOverLdaps(described) {
   const unresolved = /resolve|ENOTFOUND|EAI_AGAIN|EBLOCKEDADDRESS|EDNS/i
       .test(mismatchError);
   const aliasAdvice = mismatchHost + " is an alias for the mock, added by " +
-    "the api's extra_hosts in local-tests.yml and by the `sts` service's " +
-    "network aliases in docker-compose-run-tests.yml; a stack that spells it " +
+    "the `sts` service's network aliases in docker-compose-run-tests.yml; a stack that spells it " +
     "differently sets LDAPS_MISMATCH_HOST.";
   // On a launcher stack the alias is declared, so a name that does not
   // resolve is a broken stack and is FAILED rather than skipped: a negative
@@ -2215,7 +2214,7 @@ async function test() {
   // be up. See tests/expectation.js.
   mustBeReady(ready, "the api (for its /ldap/* endpoints) and the mock STS " +
               "with its embedded directory listening on 389. Start the " +
-              "stack, or run ./local-run-tests.sh which does.");
+              "stack, or run ./docker-run-tests.sh which does.");
   log.info("the api is at " + apiUrl + ", the directory it will open is " +
            ldapUrl + " (base " + baseDn + "), and this run's names are " +
            userDn + " and " + groupDn);

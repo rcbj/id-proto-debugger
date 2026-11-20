@@ -25,9 +25,9 @@
 //
 // `snap` is optional, and is tests/doc_screenshots.js's function of that name:
 // the flows below photograph each screen they pass through for the user
-// documentation under docs/oauth2-oidc/. Injected rather than required for the
-// reason everything else here is, and it defaults to doing nothing, so a
-// caller that does not pass it behaves exactly as before. Even when it is
+// documentation under docs/v0.9.5/oauth2-oidc/. Injected rather than required
+// for the reason everything else here is, and it defaults to doing nothing, so
+// a caller that does not pass it behaves exactly as before. Even when it is
 // passed it writes nothing unless DOC_SCREENSHOT_DIR is set.
 //
 // Note: baseUrl is NOT injected here. Each test script mutates its own baseUrl
@@ -47,6 +47,93 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
                       waitTime);
     log.debug("Leaving waitForVisibility().");
     return element;
+  }
+
+  // Whether `e` is WebDriver saying the element it held is gone: replaced by
+  // a re-render, or left behind by a navigation. Read by name, because this
+  // module requires nothing (see the header) and so has no error classes.
+  function isGoneError(e) {
+    log.debug("Entering isGoneError().");
+    const yes = !!e && (e.name === "StaleElementReferenceError" ||
+                        e.name === "NoSuchElementError");
+    log.debug("Leaving isGoneError(). " + yes);
+    return yes;
+  }
+
+  // **SELECT A GRANT THAT LEAVES THE PAGE (#507).** On oauth2_oidc_1.html
+  // the Client Credential and Resource Owner Password grants are
+  // token-endpoint-only, and the select's change handler sends the browser
+  // to oauth2_oidc_2.html at once. Selenium's Select is still holding the
+  // option it clicked, so about one time in four it read that option after
+  // the page had gone and failed with "stale element reference: stale
+  // element not found in the current frame", naming nothing. A stale
+  // option here is the navigation the click asked for, so it is accepted;
+  // what decides success is the next page arriving, loaded, with its token
+  // form visible.
+  async function selectGrantLeavingForTokenPage(driver, visibleText) {
+    log.debug("Entering selectGrantLeavingForTokenPage(). " + visibleText);
+    const grant = By.id("authorization_grant_type");
+    await driver.wait(until.elementLocated(grant), waitTime);
+    try {
+      await new Select(await driver.findElement(grant))
+                       .selectByVisibleText(visibleText);
+    } catch (e) {
+      if (!isGoneError(e)) {
+        log.debug("Leaving selectGrantLeavingForTokenPage(). Refused.");
+        throw e;
+      }
+      log.debug("selectGrantLeavingForTokenPage(): the select went with " +
+                "the page it was on, as the grant navigates. " + e.message);
+    }
+    await driver.wait(async function () {
+      return /oauth2_oidc_2\.html/.test(await driver.getCurrentUrl());
+    }, waitTime * 3, "selecting \"" + visibleText + "\" did not reach " +
+       "oauth2_oidc_2.html");
+    await driver.wait(async function () {
+      return (await driver.executeScript("return document.readyState;")) ===
+          "complete";
+    }, waitTime * 3, "oauth2_oidc_2.html never finished loading");
+    await waitUntilShown(driver, By.id("token_client_id"));
+    log.debug("Leaving selectGrantLeavingForTokenPage().");
+  }
+
+  // An element located AFRESH on every attempt and visible, so a copy a
+  // re-render replaced is never the one waited on.
+  async function waitUntilShown(driver, locator) {
+    log.debug("Entering waitUntilShown(). " + locator);
+    await driver.wait(async function () {
+      try {
+        return await (await driver.findElement(locator)).isDisplayed();
+      } catch (e) {
+        if (isGoneError(e)) return false;
+        throw e;
+      }
+    }, waitTime * 3, "never shown: " + locator);
+    log.debug("Leaving waitUntilShown().");
+  }
+
+  // Type `text` into the field at `locator`, re-locating it by id on every
+  // attempt and done only when the field READS what was typed: a field the
+  // page re-rendered or re-populated after the keystrokes is typed again
+  // rather than left holding something else (#507).
+  async function typeSteadily(driver, locator, text) {
+    log.debug("Entering typeSteadily(). " + locator);
+    await driver.wait(async function () {
+      try {
+        const field = await driver.findElement(locator);
+        if (!(await field.isDisplayed())) return false;
+        if ((await field.getAttribute("value")) !== text) {
+          await field.clear();
+          await field.sendKeys(text);
+        }
+        return (await driver.findElement(locator)
+                                .getAttribute("value")) === text;
+      } catch (e) {
+        if (isGoneError(e)) return false;
+        throw e;
+      }
+    }, waitTime * 3, "could not make " + locator + " read what was typed");
+    log.debug("Leaving typeSteadily().");
   }
 
   const pause = (milliseconds) => {
@@ -129,9 +216,56 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
                     (last ? last.message.split("\n")[0] : "(never found)"));
   }
 
+  // **A STALE REFERENCE MEANS START AGAIN (#507).** caep_page's Client
+  // Credential round trip threw "stale element reference" from inside the
+  // attempt below, 3 runs in 20, after the Password grant before it had
+  // passed: the page it was working on was replaced underneath it (a
+  // navigation still settling, or the discovery fieldset re-rendering
+  // around its own Retrieve click). Every element in the attempt is now
+  // located afresh where it is used, and if one still goes stale the whole
+  // attempt is run again on the page as it now is, rather than failing.
   async function populateMetadata(driver, discovery_endpoint) {
     log.debug("Entering populateMetadata().");
     log.info("Entering populateMetadata().");
+    const attempts = 3;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await populateMetadataOnce(driver, discovery_endpoint);
+        break;
+      } catch (e) {
+        if (!isGoneError(e) || attempt >= attempts) {
+          log.debug("Leaving populateMetadata(). Failed: " + e.message);
+          throw e;
+        }
+        log.warn("populateMetadata(): the page changed under attempt " +
+                 attempt + " (" + e.message.split("\n")[0] + "); " +
+                 "starting again.");
+      }
+    }
+    log.info("Leaving populateMetadata().");
+    log.debug("Leaving populateMetadata().");
+  }
+
+  // Re-locate `locator` and click it, a stale or missing copy being retried
+  // until the wait runs out.
+  async function clickSteadily(driver, locator, budget) {
+    log.debug("Entering clickSteadily(). " + locator);
+    await driver.wait(async function () {
+      try {
+        const el = await driver.findElement(locator);
+        if (!(await el.isDisplayed())) return false;
+        await el.click();
+        return true;
+      } catch (e) {
+        if (isGoneError(e)) return false;
+        throw e;
+      }
+    }, budget || waitTime * 3, "could not click " + locator);
+    log.debug("Leaving clickSteadily().");
+  }
+
+  async function populateMetadataOnce(driver, discovery_endpoint) {
+    log.debug("Entering populateMetadataOnce().");
     // Locate the discovery endpoint field and its related buttons
     const oidc_discovery_endpoint = By.id("oidc_discovery_endpoint");
     const btn_oidc_discovery_endpoint =
@@ -139,16 +273,17 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     const btn_oidc_populate_meta_data =
         By.className("btn_oidc_populate_meta_data");
 
-    // Wait until page is loaded
-    await driver.wait(until.elementLocated(oidc_discovery_endpoint), waitTime);
-    await driver.wait(until.elementIsVisible(driver.findElement(
-                      oidc_discovery_endpoint)), waitTime);
+    // Wait until the page is loaded: the document complete, then the field
+    // shown, located afresh on every poll (#507).
+    await driver.wait(async function () {
+      return (await driver.executeScript("return document.readyState;")) ===
+          "complete";
+    }, waitTime * 3, "the page never finished loading");
+    await waitUntilShown(driver, oidc_discovery_endpoint);
 
-    // Enter discovery endpoint
-    await driver.findElement(oidc_discovery_endpoint).clear();
-    await driver.findElement(oidc_discovery_endpoint)
-                             .sendKeys(discovery_endpoint);
-    await driver.findElement(btn_oidc_discovery_endpoint).click();
+    // Enter discovery endpoint, and Retrieve. Both re-located as used.
+    await typeSteadily(driver, oidc_discovery_endpoint, discovery_endpoint);
+    await clickSteadily(driver, btn_oidc_discovery_endpoint);
 
     // Populate metadata.
     //
@@ -181,11 +316,12 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     // round trip.
     await driver.wait(until.elementLocated(btn_oidc_populate_meta_data),
                       waitTime * 6);
-    await driver.wait(until.elementIsVisible(driver.findElement(
-                      btn_oidc_populate_meta_data)), waitTime);
-    await driver.executeScript("arguments[0].scrollIntoView({ behavior: " +
-        "'smooth', block: 'center' });",
-        await driver.findElement(btn_oidc_populate_meta_data));
+    await waitUntilShown(driver, btn_oidc_populate_meta_data);
+    // Scrolled by a script that finds the button itself, so no handle is
+    // carried across from here to the clicks below.
+    await driver.executeScript("var b = document.getElementsByClassName(" +
+        "'btn_oidc_populate_meta_data'); if (b.length) " +
+        "b[b.length - 1].scrollIntoView({ block: 'center' });");
 
     // Click Populate and wait for the CONTENT, and be willing to click AGAIN.
     //
@@ -250,8 +386,8 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     await snap(driver, "01-metadata",
                { ids: ["oidc_expand_button", "oidc_fieldset"],
                  maxHeight: 640 });
-    log.info("Leaving populateMetadata(). authorization_endpoint=" + seen);
-    log.debug("Leaving populateMetadata().");
+    log.info("populateMetadataOnce(): authorization_endpoint=" + seen);
+    log.debug("Leaving populateMetadataOnce().");
   }
 
   // Authorization-Code family flow (OAuth2 Authorization Code Grant / OIDC
@@ -370,6 +506,8 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
                              "/callback");
     await snap(driver, "05-token-request",
                { ids: ["token_expand_button", "token_fieldset"] });
+    await expectLogoutPane(driver, false,
+                           "before the authorization code is exchanged");
     await driver.findElement(token_btn).click();
 
     // Wait for whichever appears first: the access token field or the error
@@ -387,6 +525,8 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     assert.notStrictEqual(jwt.decode(access_token, { complete: true }), null,
       "Cannot obtain access token. Request result: " + (response_text ?
           response_text[1] : "no response text"));
+    await expectLogoutPane(driver, true,
+                           "once the token set has been retrieved");
 
     if (returnRefreshToken) {
       // Capture the refresh token from the Token Endpoint results pane.
@@ -410,21 +550,36 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     return access_token;
   }
 
+  // #38: the RP-initiated Logout pane on oauth2_oidc_2.html stays collapsed
+  // until the page has retrieved a token set for an end user. Waits for the
+  // pane's fieldset to reach the expected state, and fails naming #38.
+  async function expectLogoutPane(driver, shown, when) {
+    log.debug("Entering expectLogoutPane(). shown=" + shown);
+    const fieldset = By.id("logout_fieldset");
+    try {
+      await driver.wait(async function () {
+        return (await driver.findElement(fieldset).isDisplayed()) === shown;
+      }, waitTime);
+    } catch (e) {
+      log.debug("Leaving expectLogoutPane(). Wrong state.");
+      throw new Error("The RP-initiated Logout pane should be " +
+                      (shown ? "expanded" : "collapsed") + " " + when +
+                      " (#38).");
+    }
+    log.debug("Leaving expectLogoutPane().");
+  }
+
   // Client Credentials grant. No Keycloak login: the token-endpoint form is
   // submitted directly on oauth2_oidc_2.html.
   async function getAccessTokenClientCredentials(driver, client_id,
       client_secret, scope) {
     log.debug("Entering getAccessTokenClientCredentials().");
     log.info("Entering getAccessTokenClientCredentials().");
-    const authorization_grant_type = By.id("authorization_grant_type");
     const token_client_id = By.id("token_client_id");
 
-    // Select the Client Credential grant and wait for the token form to render.
-    await new Select(await driver.findElement(authorization_grant_type))
-                     .selectByVisibleText('OAuth2 Client Credential');
-    await driver.wait(until.elementLocated(token_client_id), waitTime);
-    await driver.wait(until.elementIsVisible(driver.findElement(
-                      token_client_id)), waitTime);
+    // Select the Client Credential grant: the page leaves for
+    // oauth2_oidc_2.html, and this returns once its token form is shown.
+    await selectGrantLeavingForTokenPage(driver, 'OAuth2 Client Credential');
 
     const token_client_secret = By.id("token_client_secret");
     const token_scope = By.id("token_scope");
@@ -433,13 +588,13 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     const display_token_error_form_textarea1 =
         By.id("display_token_error_form_textarea1");
 
-    // Submit credentials
-    await driver.findElement(token_client_id).clear();
-    await driver.findElement(token_client_id).sendKeys(client_id);
-    await driver.findElement(token_client_secret).clear();
-    await driver.findElement(token_client_secret).sendKeys(client_secret);
-    await driver.findElement(token_scope).clear();
-    await driver.findElement(token_scope).sendKeys(scope);
+    // Submit credentials. Each field is re-located as it is typed into, and
+    // all three are read back right before the click, so a re-render of
+    // the token form between them cannot send stale or wrong values.
+    await typeSteadily(driver, token_client_id, client_id);
+    await typeSteadily(driver, token_client_secret, client_secret);
+    await typeSteadily(driver, token_scope, scope);
+    await typeSteadily(driver, token_client_id, client_id);
     await snap(driver, "02-token-request",
                { ids: ["token_expand_button", "token_fieldset"] });
     await driver.findElement(token_btn).click();
@@ -452,13 +607,19 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
       await snap(driver, "03-token-response",
                  { ids: ["token_endpoint_result"] });
       log.info("Returning visibleAccessTokenElement value.");
-      log.debug("Leaving getAccessTokenClientCredentials().");
-      return await driver.findElement(visibleAccessTokenElement)
-                                      .getAttribute("value");
+      var value = await driver.findElement(visibleAccessTokenElement)
+                                           .getAttribute("value");
     } catch (e) {
       log.error("An error occurred: " + e.message);
+      log.debug("Leaving getAccessTokenClientCredentials(). Error.");
+      return undefined;
     }
+    // Outside the try: its catch only logs, and a Client Credentials grant
+    // opens no end-user session, so Logout must stay collapsed (#38).
+    await expectLogoutPane(driver, false,
+                           "after a Client Credentials grant");
     log.debug("Leaving getAccessTokenClientCredentials().");
+    return value;
   }
 
   // Implicit grant. Logs into Keycloak, then the token is delivered straight to
@@ -561,17 +722,11 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
 
     // Select Resource Owner Password Credential grant type on
     // oauth2_oidc_1.html
-    const authorization_grant_type = By.id("authorization_grant_type");
-    await driver.wait(until.elementLocated(authorization_grant_type), waitTime);
-    await new Select(await driver.findElement(authorization_grant_type))
-                     .selectByVisibleText('OAuth2 Resource Owner Password ' +
-                     'Credential Grant');
-
-    // Wait for oauth2_oidc_2.html to load
+    // The page leaves for oauth2_oidc_2.html (#507); this returns once
+    // that page is loaded and its token form is shown.
+    await selectGrantLeavingForTokenPage(driver, 'OAuth2 Resource Owner ' +
+                                         'Password Credential Grant');
     const token_client_id = By.id("token_client_id");
-    await driver.wait(until.elementLocated(token_client_id), waitTime);
-    await driver.wait(until.elementIsVisible(driver.findElement(
-                      token_client_id)), waitTime);
 
     // Select OIDC No
     const noCheckOIDCArtifacts = By.id("noCheckOIDCArtifacts");
@@ -619,17 +774,13 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
         await driver.findElement(token_initiateFromBackEnd));
     await driver.findElement(token_initiateFromBackEnd).click();
 
-    // Fill in credentials
-    await driver.findElement(token_client_id).clear();
-    await driver.findElement(token_client_id).sendKeys(client_id);
-
+    // Fill in credentials, each field re-located as it is typed into
+    // (#507).
+    await typeSteadily(driver, token_client_id, client_id);
     const token_client_secret = By.id("token_client_secret");
-    await driver.findElement(token_client_secret).clear();
-    await driver.findElement(token_client_secret).sendKeys(client_secret);
-
+    await typeSteadily(driver, token_client_secret, client_secret);
     const token_scope = By.id("token_scope");
-    await driver.findElement(token_scope).clear();
-    await driver.findElement(token_scope).sendKeys(scope);
+    await typeSteadily(driver, token_scope, scope);
 
     const token_username = By.id("token_username");
     await driver.wait(until.elementLocated(token_username), waitTime);

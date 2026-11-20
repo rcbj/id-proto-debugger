@@ -162,291 +162,21 @@ var HOBA_ALG_RSA_SHA256 = '0';
 var HOBA_REGISTRATION_PATH = '/.well-known/hoba/register';
 
 // ---------------------------------------------------------------------------
-// THE ERROR CODES RFC 7644 SECTION 3.12 DEFINES, with what each one actually
-// means to somebody reading it off this page.
+// THE CATALOGUES: RFC 7644 section 3.12's error codes, section 2's
+// authentication schemes, and the endpoints of sections 3.2 through 3.12 and
+// 4. They are rows, not code, so they are written once in
+// models/catalog/scim.tsp — where the reasoning for each table now lives —
+// and generated into client/src/catalog/ (models/CLAUDE.md, "Catalogues").
 //
-// `scimType` is a CLOSED list — a server may not invent one — and it is the
-// single most useful thing in a SCIM error, because the HTTP status alone
-// cannot tell `uniqueness` (this userName is taken) from `invalidValue` (this
-// userName is not allowed). Both are 400 on many servers.
+// `SCIM_TYPES` is a CLOSED list (a server may not invent a scimType), and the
+// model's ScimErrorTypes is closed with it. `AUTH_SCHEMES` is section 2's six
+// plus `none` and Digest; DO NOT ADD AN API KEY ROW, for the reason the model
+// gives. `OPERATIONS[].query` is what the page builds its query-string editor
+// from, so an operation that does not accept `sortBy` does not offer one.
 // ---------------------------------------------------------------------------
-var SCIM_TYPES = {
-  invalidFilter: 'The filter is not valid section 3.4.2.2 grammar, or asks ' +
-      'for something this server cannot evaluate.',
-  tooMany: 'The filter matched more than the server is willing to return. ' +
-      'Narrow it or page it.',
-  uniqueness: 'A value that has to be unique is already somebody else\'s — ' +
-      'on a User that is almost always userName.',
-  mutability: 'A read-only attribute was written, or an immutable one was ' +
-      'changed after it was set.',
-  invalidSyntax: 'The body is not the structure this operation expects — a ' +
-      'missing or wrong "schemas" member is the usual cause.',
-  invalidPath: 'The PATCH "path" is not valid section 3.5.2 path grammar.',
-  noTarget: 'The PATCH path is valid grammar but names nothing on this ' +
-      'resource, and the operation needs a target that exists.',
-  invalidValue: 'A value is the wrong type, is missing when required, or is ' +
-      'not one this attribute accepts.',
-  invalidVers: 'The version in the request is not one this server speaks.',
-  sensitive: 'The request put something sensitive in the URL. Send it in a ' +
-      'POST body instead — that is what /.search is for.'
-};
-
-// ---------------------------------------------------------------------------
-// THE AUTHENTICATION SCHEMES, which are RFC 7644 SECTION 2's SIX AND NOT AN
-// INVENTED SET.
-//
-// That section names TLS client authentication, HOBA, bearer tokens,
-// proof-of-possession tokens, cookies and HTTP Basic (which it discourages, in
-// those words), and states the only two normative things about any of them: a
-// server SHALL advertise what it supports in `WWW-Authenticate`, and it MUST be
-// able to map an authenticated client to an access control policy.
-//
-// **DO NOT ADD AN API KEY ROW.** A shared secret in a custom header is what
-// most provisioning integrations actually use in the field, it is in no
-// specification, and a client built against it here would interoperate with
-// nothing. The mock STS's `scim_auth.js` refuses to grow one for the same
-// reason, and these two tables are meant to name the same six things.
-//
-// `needsProof` marks the two that cannot be composed from configuration alone:
-// DPoP needs a signed proof JWT over this exact method and URL, and HOBA needs
-// a signature over an origin-bound string. Both are Web Crypto operations, so
-// this module produces the STRING TO BE SIGNED and the header FORMAT and the
-// page produces the signature — which keeps the cryptography where the key is
-// and keeps this file loadable in node.
-//
-// `sendsCredential` is false for the two that put nothing in an Authorization
-// header: a cookie rides on the request because the browser attaches it, and a
-// client certificate is chosen during the TLS handshake. Both are therefore
-// unavailable to the api path and only one of them is available to the browser
-// path, which the page says rather than leaving to be discovered.
-// ---------------------------------------------------------------------------
-var AUTH_SCHEMES = [
-  { id: 'none', label: 'None (anonymous)', type: '',
-    spec: 'RFC 7644 section 2',
-    sendsCredential: false, needsProof: false, scoped: false,
-    browser: true, backend: true,
-    what: 'Send nothing. Against a server with authentication turned on this ' +
-        'is the 401 that shows you what the WWW-Authenticate challenge says ' +
-        'you may use — which is the SHALL in section 2 and the fastest way ' +
-        'to find out what a server will accept.' },
-  { id: 'bearer', label: 'OAuth 2.0 Bearer token', type: 'oauthbearertoken',
-    spec: 'RFC 6750',
-    sendsCredential: true, needsProof: false, scoped: true,
-    browser: true, backend: true,
-    what: 'Authorization: Bearer <token>. The scope is what decides what you ' +
-        'may do: the read scope to read and the write scope to write. Get ' +
-        'one from the OAuth2 / OIDC workflow with any grant, or paste one.' },
-  { id: 'dpop', label: 'OAuth 2.0 DPoP (proof of possession)', type: 'oauth2',
-    spec: 'RFC 9449',
-    sendsCredential: true, needsProof: true, scoped: true,
-    browser: true, backend: true,
-    what: 'Authorization: DPoP <token> plus a DPoP proof JWT signed over ' +
-        'THIS method and URL and carrying the access token\'s hash. The ' +
-        'proof is minted per request, so a captured one is not replayable ' +
-        'against another endpoint.' },
-  { id: 'basic', label: 'HTTP Basic', type: 'httpbasic',
-    spec: 'RFC 7617',
-    sendsCredential: true, needsProof: false, scoped: false,
-    browser: true, backend: true,
-    what: 'Authorization: Basic base64(user:password). Section 2 names it ' +
-        'and discourages it in the same sentence. It carries no scope, so a ' +
-        'server that accepts it usually lets the caller do everything.' },
-  { id: 'digest', label: 'HTTP Digest', type: 'httpdigest',
-    spec: 'RFC 7616',
-    sendsCredential: true, needsProof: true, scoped: false,
-    browser: true, backend: true,
-    what: 'Two requests, not one: the first is answered 401 with a nonce, ' +
-        'and the second carries a digest computed over it. This page makes ' +
-        'both and shows you both, because the handshake is the interesting ' +
-        'part and a library normally hides it.' },
-  { id: 'hoba', label: 'HOBA (HTTP Origin-Bound Authentication)', type: 'hoba',
-    spec: 'RFC 7486',
-    sendsCredential: true, needsProof: true, scoped: false,
-    browser: true, backend: false,
-    what: 'A signature by a key you registered, over a string bound to this ' +
-        'origin and this realm. No password crosses the wire at all. The ' +
-        'signing key lives in this browser, which is why the api cannot ' +
-        'make this call for you.' },
-  { id: 'cookie', label: 'Session cookie', type: 'httpcookie',
-    spec: 'RFC 7644 section 2 ("Cookies")',
-    sendsCredential: false, needsProof: false, scoped: false,
-    browser: true, backend: false,
-    what: 'Nothing is added to the request: the browser attaches the cookie ' +
-        'if it has one for that origin and the request is made with ' +
-        'credentials. Sign in to the server first. The api has no session ' +
-        'and no cookie jar, so this is a browser-only scheme.' },
-  { id: 'clientcert', label: 'TLS client certificate', type: 'tlsclientauth',
-    spec: 'RFC 8446 / RFC 5280',
-    sendsCredential: false, needsProof: false, scoped: false,
-    browser: true, backend: false,
-    what: 'Chosen during the TLS handshake and never in a header, so no ' +
-        'code here can put it there — the browser offers what its keychain ' +
-        'holds when the server asks. Nothing is added to the request; this ' +
-        'row exists so the page can say that rather than appear to have ' +
-        'left the scheme out.' }
-];
-
-// ---------------------------------------------------------------------------
-// THE ENDPOINTS. RFC 7644 sections 3.2 through 3.12.
-//
-// `need` is the scope the mock STS's access control policy asks for and is NOT
-// a claim about somebody else's server — it is what this page predicts, so that
-// a 403 can be shown beside the prediction that expected it. `discovery` needs
-// nothing anywhere: a client has to be able to read a ServiceProviderConfig
-// before it knows how to authenticate, which is the one bootstrapping problem
-// section 2 leaves to the reader.
-//
-// `query` lists the section 3.4.2 parameters each operation accepts. It is not
-// decorative: the page builds its query-string editor from it, so an operation
-// that does not accept `sortBy` does not offer one.
-// ---------------------------------------------------------------------------
-var QUERY_ALL = ['filter', 'sortBy', 'sortOrder', 'startIndex', 'count',
-                 'attributes', 'excludedAttributes'];
-var QUERY_ONE = ['attributes', 'excludedAttributes'];
-
-var OPERATIONS = [
-  { id: 'serviceProviderConfig', label: 'ServiceProviderConfig',
-    group: 'discovery', method: 'GET', path: '/ServiceProviderConfig',
-    need: 'none', body: null, query: [],
-    section: 'RFC 7644 section 4',
-    what: 'What this server supports: filtering, sorting, PATCH, bulk, ETag, ' +
-        'changePassword, and the authentication schemes it advertises. Read ' +
-        'it first — everything else on this page is a promise it made.' },
-  { id: 'resourceTypes', label: 'ResourceTypes', group: 'discovery',
-    method: 'GET', path: '/ResourceTypes', need: 'none', body: null,
-    query: [],
-    section: 'RFC 7644 section 4',
-    what: 'The resource types this server has, and for each one its endpoint ' +
-        'and the schema extensions it carries.' },
-  { id: 'resourceType', label: 'One ResourceType', group: 'discovery',
-    method: 'GET', path: '/ResourceTypes/{id}', need: 'none', body: null,
-    query: [], idLabel: 'Type name', idExample: 'User',
-    section: 'RFC 7644 section 4',
-    what: 'One of them, by name — "User" or "Group". Note the id here is a ' +
-        'NAME and not a resource id; that asymmetry is in the specification.' },
-  { id: 'schemas', label: 'Schemas', group: 'discovery', method: 'GET',
-    path: '/Schemas', need: 'none', body: null, query: [],
-    section: 'RFC 7643 section 7',
-    what: 'Every attribute this server knows, with its characteristics: ' +
-        'required, canonical values, mutability, returned, uniqueness. This ' +
-        'is the document that says whether a field you sent was ever going ' +
-        'to be stored.' },
-  { id: 'schema', label: 'One Schema', group: 'discovery', method: 'GET',
-    path: '/Schemas/{id}', need: 'none', body: null, query: [],
-    idLabel: 'Schema URN', idExample: USER_SCHEMA,
-    section: 'RFC 7643 section 7',
-    what: 'One schema by its URN.' },
-
-  { id: 'listUsers', label: 'List users', group: 'user', resourceType: 'User',
-    method: 'GET', path: '/Users', need: 'read', body: null, query: QUERY_ALL,
-    section: 'RFC 7644 section 3.4.2',
-    what: 'The list, filtered, sorted, paged and projected by the query ' +
-        'string. An empty filter means everybody, which is what count and ' +
-        'startIndex are for.' },
-  { id: 'createUser', label: 'Create user', group: 'user',
-    resourceType: 'User', method: 'POST', path: '/Users', need: 'write',
-    body: 'User', query: QUERY_ONE,
-    section: 'RFC 7644 section 3.3',
-    what: '201 with the created resource and a Location header. userName is ' +
-        'the one required attribute and the one with a uniqueness ' +
-        'constraint, so this is where a 409 comes from.' },
-  { id: 'searchUsers', label: 'Search users (POST /.search)', group: 'user',
-    resourceType: 'User', method: 'POST', path: '/Users/.search',
-    need: 'read', body: 'SearchRequest', query: [],
-    section: 'RFC 7644 section 3.4.3',
-    what: 'The same query as a POST body. It exists for a filter too long ' +
-        'for a URL and for one carrying something that should not be in a ' +
-        'server\'s access log.' },
-  { id: 'readUser', label: 'Read user', group: 'user', resourceType: 'User',
-    method: 'GET', path: '/Users/{id}', need: 'read', body: null,
-    query: QUERY_ONE,
-    section: 'RFC 7644 section 3.4.1',
-    what: 'One user by id. The id is opaque — do not build it, use the one ' +
-        'the create or the list gave you.' },
-  { id: 'replaceUser', label: 'Replace user (PUT)', group: 'user',
-    resourceType: 'User', method: 'PUT', path: '/Users/{id}', need: 'write',
-    body: 'User', query: QUERY_ONE,
-    section: 'RFC 7644 section 3.5.1',
-    what: 'Replaces the resource with what you send. Every attribute you ' +
-        'leave out is one you are asking to have removed — which is the ' +
-        'difference between this and PATCH and the mistake this operation ' +
-        'exists to let you make on purpose.' },
-  { id: 'modifyUser', label: 'Modify user (PATCH)', group: 'user',
-    resourceType: 'User', method: 'PATCH', path: '/Users/{id}',
-    need: 'write', body: 'PatchOp', query: QUERY_ONE,
-    section: 'RFC 7644 section 3.5.2',
-    what: 'add, replace and remove against a path — and the path grammar is ' +
-        'the part everybody gets wrong: emails[type eq "work"].value is a ' +
-        'path, not a property name. A PATCH that changes nothing answers ' +
-        '204 with no body.' },
-  { id: 'deleteUser', label: 'Delete user', group: 'user',
-    resourceType: 'User', method: 'DELETE', path: '/Users/{id}',
-    need: 'write', body: null, query: [],
-    section: 'RFC 7644 section 3.6',
-    what: '204 and no body. There is no soft delete in SCIM — active:false ' +
-        'is a different thing and does not do this.' },
-
-  { id: 'listGroups', label: 'List groups', group: 'group',
-    resourceType: 'Group', method: 'GET', path: '/Groups', need: 'read',
-    body: null, query: QUERY_ALL,
-    section: 'RFC 7644 section 3.4.2',
-    what: 'The list. A group\'s members come back as ids with a $ref.' },
-  { id: 'createGroup', label: 'Create group', group: 'group',
-    resourceType: 'Group', method: 'POST', path: '/Groups', need: 'write',
-    body: 'Group', query: QUERY_ONE,
-    section: 'RFC 7644 section 3.3',
-    what: 'displayName is the required attribute. Members may be sent at ' +
-        'creation or added afterwards with a PATCH.' },
-  { id: 'searchGroups', label: 'Search groups (POST /.search)',
-    group: 'group', resourceType: 'Group', method: 'POST',
-    path: '/Groups/.search', need: 'read', body: 'SearchRequest', query: [],
-    section: 'RFC 7644 section 3.4.3',
-    what: 'The same query as a POST body.' },
-  { id: 'readGroup', label: 'Read group', group: 'group',
-    resourceType: 'Group', method: 'GET', path: '/Groups/{id}', need: 'read',
-    body: null, query: QUERY_ONE,
-    section: 'RFC 7644 section 3.4.1',
-    what: 'One group by id, with its members resolved.' },
-  { id: 'replaceGroup', label: 'Replace group (PUT)', group: 'group',
-    resourceType: 'Group', method: 'PUT', path: '/Groups/{id}',
-    need: 'write', body: 'Group', query: QUERY_ONE,
-    section: 'RFC 7644 section 3.5.1',
-    what: 'Replaces it, membership included. Sending a group with no ' +
-        'members empties it.' },
-  { id: 'modifyGroup', label: 'Modify group (PATCH)', group: 'group',
-    resourceType: 'Group', method: 'PATCH', path: '/Groups/{id}',
-    need: 'write', body: 'PatchOp', query: QUERY_ONE,
-    section: 'RFC 7644 section 3.5.2',
-    what: 'How membership is normally changed: add or remove against the ' +
-        '"members" path. Membership is a fact about the GROUP, so it is ' +
-        'never changed through a User resource.' },
-  { id: 'deleteGroup', label: 'Delete group', group: 'group',
-    resourceType: 'Group', method: 'DELETE', path: '/Groups/{id}',
-    need: 'write', body: null, query: [],
-    section: 'RFC 7644 section 3.6',
-    what: '204. Deleting a group deletes the membership, not the members.' },
-
-  { id: 'searchAll', label: 'Search everything (POST /.search)',
-    group: 'query', method: 'POST', path: '/.search', need: 'read',
-    body: 'SearchRequest', query: [],
-    section: 'RFC 7644 section 3.4.3',
-    what: 'One query across BOTH resource types at once, which is the one ' +
-        'thing the per-type /.search cannot do. The ListResponse comes back ' +
-        'mixed, so read each entry\'s schemas to tell a User from a Group.' },
-  { id: 'bulk', label: 'Bulk', group: 'query', method: 'POST', path: '/Bulk',
-    need: 'write', body: 'BulkRequest', query: [],
-    section: 'RFC 7644 section 3.7',
-    what: 'Many operations in one request, each with a bulkId the later ones ' +
-        'can reference as bulkId:name. There is no read operation inside a ' +
-        'bulk, so it is a write however harmless the contents look.' },
-  { id: 'me', label: '/Me', group: 'query', method: 'GET', path: '/Me',
-    need: 'read', body: null, query: QUERY_ONE,
-    section: 'RFC 7644 section 3.11',
-    what: 'An alias for whoever the request authenticated as. A server with ' +
-        'no authenticated subject has nothing to alias, and this project\'s ' +
-        'mock answers 501 saying so — which is a more useful answer than a ' +
-        '404 or a guess.' }
-];
+var SCIM_TYPES = require("./catalog/scim_error_types.json");
+var AUTH_SCHEMES = require("./catalog/scim_auth_schemes.json");
+var OPERATIONS = require("./catalog/scim_operations.json");
 
 var OPERATIONS_BY_ID = (function () {
   var index = {};
@@ -1398,50 +1128,31 @@ function pickInt(rng, low, high) {
 }
 
 // ---------------------------------------------------------------------------
-// THE VOCABULARY the generator draws from.
-//
-// Deliberately BORING and deliberately ASCII. A generator that produced
-// realistic-looking names would put somebody's actual name in somebody's test
-// directory, and one that produced interesting Unicode would make every
-// failure a question about encoding rather than about SCIM. The characters RFC
-// 4514 reserves — the ones that cannot go in a DN unescaped — have their own
-// negative case in the scenarios instead, where the point is to be refused.
+// THE VOCABULARY the generator draws from: models/catalog/scim.tsp,
+// SCIM_USER_VOCABULARY, which says why it is boring and ASCII. Each list is
+// drawn from by index with the seeded generator, so its ORDER is data too.
 // ---------------------------------------------------------------------------
-var GIVEN_NAMES = ['Ada', 'Bram', 'Cleo', 'Dara', 'Emil', 'Fen', 'Gale',
-                   'Hana', 'Ivo', 'Juno', 'Kit', 'Lior', 'Mira', 'Nils',
-                   'Oona', 'Piet', 'Quin', 'Rune', 'Sena', 'Taro', 'Ulla',
-                   'Vera', 'Wim', 'Xan', 'Yuki', 'Zev'];
-var FAMILY_NAMES = ['Aalto', 'Bergman', 'Coelho', 'Dahl', 'Esposito',
-                    'Fournier', 'Garza', 'Haas', 'Ibarra', 'Jansen',
-                    'Kovac', 'Lindqvist', 'Moreau', 'Novak', 'Oyelaran',
-                    'Pereira', 'Quesada', 'Rasmussen', 'Silva', 'Tanaka',
-                    'Ustinov', 'Vogel', 'Weber', 'Xiong', 'Yilmaz', 'Zima'];
-var HONORIFIC_PREFIXES = ['Dr.', 'Prof.', 'Ms.', 'Mr.', 'Mx.'];
-var HONORIFIC_SUFFIXES = ['PhD', 'Jr.', 'III', 'MSc'];
-var TITLES = ['Systems Engineer', 'Directory Architect', 'Support Analyst',
-              'Security Lead', 'Product Manager', 'Data Steward',
-              'Field Technician', 'Compliance Officer'];
-var USER_TYPES = ['Employee', 'Contractor', 'Intern', 'Vendor', 'Partner'];
-var DEPARTMENTS = ['Engineering', 'Operations', 'Finance', 'Legal',
-                   'Research', 'Support'];
-var DIVISIONS = ['Platform', 'Directory', 'Identity', 'Infrastructure'];
-var ORGANIZATIONS = ['Example Corp', 'Example Holdings', 'Example Labs'];
-var COST_CENTERS = ['CC-1000', 'CC-2000', 'CC-3000', 'CC-4000'];
-var LOCALES = ['en-US', 'en-GB', 'de-DE', 'fr-FR', 'ja-JP', 'pt-BR'];
-var LANGUAGES = ['en', 'en-US', 'de', 'fr', 'ja', 'pt-BR'];
-var TIMEZONES = ['America/Los_Angeles', 'America/New_York', 'Europe/London',
-                 'Europe/Berlin', 'Asia/Tokyo', 'Australia/Sydney'];
-var STREETS = ['1 Directory Way', '42 Schema Street', '7 Bind Lane',
-               '100 Filter Road', '15 Attribute Close'];
-var LOCALITIES = ['Springfield', 'Riverton', 'Fairview', 'Ashford',
-                  'Kingsmere'];
-var REGIONS = ['CA', 'NY', 'TX', 'WA', 'IL'];
-var COUNTRIES = ['US', 'GB', 'DE', 'FR', 'JP', 'BR'];
-var IM_TYPES = ['aim', 'gtalk', 'icq', 'xmpp', 'msn', 'skype', 'qq', 'yahoo'];
-var PHOTO_TYPES = ['photo', 'thumbnail'];
-var GROUP_NOUNS = ['Engineering', 'Operations', 'Directory Admins',
-                   'Auditors', 'Support', 'Contractors', 'Reviewers',
-                   'Release Managers'];
+var VOCABULARY = require("./catalog/scim_user_vocabulary.json");
+var GIVEN_NAMES = VOCABULARY.givenNames;
+var FAMILY_NAMES = VOCABULARY.familyNames;
+var HONORIFIC_PREFIXES = VOCABULARY.honorificPrefixes;
+var HONORIFIC_SUFFIXES = VOCABULARY.honorificSuffixes;
+var TITLES = VOCABULARY.titles;
+var USER_TYPES = VOCABULARY.userTypes;
+var DEPARTMENTS = VOCABULARY.departments;
+var DIVISIONS = VOCABULARY.divisions;
+var ORGANIZATIONS = VOCABULARY.organizations;
+var COST_CENTERS = VOCABULARY.costCenters;
+var LOCALES = VOCABULARY.locales;
+var LANGUAGES = VOCABULARY.languages;
+var TIMEZONES = VOCABULARY.timezones;
+var STREETS = VOCABULARY.streets;
+var LOCALITIES = VOCABULARY.localities;
+var REGIONS = VOCABULARY.regions;
+var COUNTRIES = VOCABULARY.countries;
+var IM_TYPES = VOCABULARY.imTypes;
+var PHOTO_TYPES = VOCABULARY.photoTypes;
+var GROUP_NOUNS = VOCABULARY.groupNouns;
 
 // ---------------------------------------------------------------------------
 // A GENERATED USER, WITH EVERY OPTIONAL FIELD RFC 7643 SECTION 4.1 DEFINES.
@@ -1562,7 +1273,8 @@ function randomUser(options) {
     // `type`-selecting PATCH paths the scenarios exercise are on `emails` and
     // `phoneNumbers`, which keep theirs. tests/scim_engine.js pins this so
     // that re-adding a `type` here fails in node with the reason rather than
-    // as a 400 from whichever server is being debugged. See docs/scim.md.
+    // as a 400 from whichever server is being debugged. See
+    // docs/v0.9.5/scim.md.
     // ---------------------------------------------------------------------
     roles: [
       { value: pick(rng, ['reader', 'writer', 'approver']),
@@ -1873,6 +1585,7 @@ module.exports = {
   explainScimType: explainScimType,
   hashSeed: hashSeed,
   newRng: newRng,
+  VOCABULARY: VOCABULARY,
   randomUser: randomUser,
   canonicalTypesOf: canonicalTypesOf,
   fitTypes: fitTypes,

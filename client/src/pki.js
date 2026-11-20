@@ -31,8 +31,8 @@
 // three is an input to the single "Generate Key Pair & Issue Certificate"
 // button at the TOP of it. So a new block of fields belongs inside that pane
 // under a `.pki-group` heading rather than in a sixth pane; tests/pki_page.js
-// asserts the pane list by name, and docs/pki.md says what the merge bought
-// and what it costs when the layout that made it possible collapses.
+// asserts the pane list by name, and docs/v0.9.5/pki.md says what the merge
+// bought and what it costs when the layout that made it possible collapses.
 //
 // ---------------------------------------------------------------------------
 // WHY THERE IS NO "RUN THE TLS TEST IN THE BROWSER" OPTION
@@ -329,6 +329,9 @@ function currentKeyDescriptor() {
 
 function onKeyAlgChange() {
   log.debug("Entering onKeyAlgChange().");
+  // Which KeyUsage bits a key may carry depends on the key (issue #310), so
+  // the profile's KeyUsage is worked out again for the new algorithm.
+  applyKeyUsageDefaults(val('pki_profile'));
   saveState();
   refreshSignatureOptions();
   log.debug("Leaving onKeyAlgChange().");
@@ -910,10 +913,7 @@ function applyProfileDefaults(profileId) {
       ? '' : String(ext.basicConstraints.pathLen));
   setChecked('pki_ext_ku', ext.keyUsage.present);
   setChecked('pki_ku_critical', ext.keyUsage.critical);
-  x509.KEY_USAGE_BITS.forEach(function (bit) {
-    setChecked('pki_ku_' + bit.name,
-        ext.keyUsage.usages.indexOf(bit.name) >= 0);
-  });
+  applyKeyUsageDefaults(profileId);
   setChecked('pki_ext_eku', ext.extKeyUsage.present);
   setChecked('pki_eku_critical', ext.extKeyUsage.critical);
   Object.keys(x509.EKU_OIDS).forEach(function (name) {
@@ -924,6 +924,55 @@ function applyProfileDefaults(profileId) {
   setChecked('pki_ext_ocsp_nocheck', ext.ocspNoCheck.present);
   saveState();
   log.debug("Leaving applyProfileDefaults().");
+}
+
+// The profile's KeyUsage for the key algorithm in the key pane (issue #310):
+// the bits are set from x509.defaultKeyUsage(), which keeps what the key can
+// carry, maps what it has an equivalent of and drops the rest. Called when the
+// profile changes and when the key algorithm does.
+function applyKeyUsageDefaults(profileId) {
+  log.debug("Entering applyKeyUsageDefaults(). profile=" + profileId);
+  var usage = x509.defaultKeyUsage(profileId, currentKeyDescriptor());
+  x509.KEY_USAGE_BITS.forEach(function (bit) {
+    setChecked('pki_ku_' + bit.name, usage.usages.indexOf(bit.name) >= 0);
+  });
+  keyUsageDefaultNote = usage.note;
+  renderKeyUsageNote();
+  log.debug("Leaving applyKeyUsageDefaults().");
+}
+
+// What the last applyKeyUsageDefaults() changed about the profile's list, so
+// that renderKeyUsageNote() can keep saying it after a box is clicked.
+var keyUsageDefaultNote = '';
+
+// The KeyUsage bits ticked now that the key in the key pane may not carry.
+function keyUsageProblems() {
+  log.debug("Entering keyUsageProblems().");
+  if (!checked('pki_ext_ku')) {
+    log.debug("Leaving keyUsageProblems(). Extension off.");
+    return [];
+  }
+  var ticked = x509.KEY_USAGE_BITS.map(function (b) { return b.name; })
+    .filter(function (name) { return checked('pki_ku_' + name); });
+  var found = x509.keyUsageFindings(ticked, currentKeyDescriptor());
+  log.debug("Leaving keyUsageProblems(). " + found.length);
+  return found;
+}
+
+// The note under the KeyUsage boxes: what the defaults did for this key, then
+// any ticked bit this key may not carry. A bit ticked by hand is still issued,
+// because a certificate that is wrong in exactly one way is something this
+// page exists to make, but it is never issued without saying so.
+function renderKeyUsageNote() {
+  log.debug("Entering renderKeyUsageNote().");
+  var lines = [];
+  if (keyUsageDefaultNote) lines.push(keyUsageDefaultNote);
+  keyUsageProblems().forEach(function (f) {
+    lines.push('Not conformant: ' + f.reason);
+  });
+  setText('pki_ku_note', lines.join(' '));
+  show('pki_ku_note', lines.length > 0);
+  log.debug("Leaving renderKeyUsageNote(). " + lines.length + " line(s).");
 }
 
 // The subject CN follows the profile, until somebody types one of their own.
@@ -1415,9 +1464,13 @@ async function issue() {
           keys.KEY_ALGS[alt.algId].label + ' key and NO alternative ' +
           'signature, because the issuer has no alternative key.';
     }
+    var kuNote = keyUsageProblems().map(function (f) {
+      return ' Not conformant: ' + f.reason;
+    }).join('');
     status('Issued "' + result.subject + '", serial ' +
         result.serialHex.slice(0, 16) + '…, signed with ' +
-        x509.SIG_ALGS[result.signatureAlg].label + '.' + note + hybridNote);
+        x509.SIG_ALGS[result.signatureAlg].label + '.' + note + hybridNote +
+        kuNote);
     history.update(entryId, history.SUCCESS, result.subject);
   } catch (e) {
     log.error('issue: ' + e.message);
@@ -1596,6 +1649,9 @@ function detailTable(described) {
   described.extensions.forEach(function (ext) {
     body.appendChild(detailRow('Extension: ' + ext.name +
         (ext.critical ? ' (critical)' : ''), x509.extensionValueText(ext)));
+  });
+  (described.findings || []).forEach(function (finding) {
+    body.appendChild(detailRow('Finding', finding));
   });
   table.appendChild(body);
   log.debug("Leaving detailTable(). " + described.extensions.length +
@@ -2808,7 +2864,13 @@ window.onload = function () {
   // handler is the same for all of them, and a field added to the markup
   // without an attribute would otherwise be the one that silently does not
   // survive a reload.
-  document.addEventListener('change', function () { saveState(); });
+  document.addEventListener('change', function (event) {
+    var id = event && event.target ? event.target.id || '' : '';
+    if (id === 'pki_ext_ku' || id.indexOf('pki_ku_') === 0) {
+      renderKeyUsageNote();
+    }
+    saveState();
+  });
   // The store's own preference and this page's checkbox are the same setting,
   // and the checkbox is what restoreState() has just set — so push it into the
   // store rather than reading it back, or a cleared box would be forgotten by

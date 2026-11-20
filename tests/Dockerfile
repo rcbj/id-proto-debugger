@@ -56,6 +56,56 @@
 # ---------------------------------------------------------------------------
 # Staging stage 1 of 3. Not shipped: the final stage copies /usr/src out of it.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# THE NATIVE OID4VC WALLET (#364): rcbj/oid4vc-wallet, a Linux wallet whose
+# command line (`accept`, `present --approve|--refuse`, `credential`) redeems
+# an offer and answers an OpenID4VP request with no window, no session bus and
+# no desktop key ring. tests/vc_verifier_oid4vc_wallet.js runs it as a child
+# against the Verifier page. Built the way iya-sts's own tests image builds
+# it (its #694): the source archive at a pinned commit of `main`, checked by
+# sha256, so a bump is the commit and the archive's sha256 and nothing else.
+#   * libudev-dev and libpcsclite-dev are for the security-key code, linked
+#     whether or not a key is ever used; the final stage needs only libudev1
+#     and libpcsclite1.
+#   * rust-toolchain.toml says `stable`, which rustup would download over the
+#     1.97 this image carries, so it is removed before the build.
+#   * GIT_COMMIT and BUILD_NUMBER are what build.rs stamps into `--version`
+#     (an archive has no .git to read them from).
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# THE ANONCREDS WITNESS (#479): anoncreds-rs v0.2.3 and its node binding,
+# built into the private mirror (tests/anoncreds-witness/Dockerfile,
+# .github/image-mirror-builds.txt) so this build downloads nothing. The
+# AnonCreds jobs require @hyperledger/anoncreds-nodejs from
+# /usr/src/anoncreds-witness (tests/anoncreds_witness.js).
+# ---------------------------------------------------------------------------
+FROM anoncreds-witness:0.5.0-0.2.3 AS anoncreds-witness
+# THE GORDIAN ENVELOPE WITNESS (#480): Blockchain Commons' bc-envelope-cli
+# 0.35.0, built into the private mirror (tests/gordian-witness/Dockerfile).
+# tests/gordian_witness.js finds it at /usr/local/bin/bc-envelope.
+FROM gordian-witness:0.35.0 AS gordian-witness
+
+FROM rust:1.97-bookworm AS oid4vc-wallet
+ENV OID4VC_WALLET_COMMIT=7cf061a63e2c1f9814b404b0415e65765f1b979a
+ENV OID4VC_WALLET_SHA256=377c1c266d65492f084d04e37e98181c6840a6ca95d0ac971225ead9756b2c57
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends \
+      libudev-dev libpcsclite-dev pkg-config \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL --retry 5 --retry-all-errors -o /tmp/oid4vc-wallet.tgz \
+        https://github.com/rcbj/oid4vc-wallet/archive/${OID4VC_WALLET_COMMIT}.tar.gz \
+ && echo "${OID4VC_WALLET_SHA256}  /tmp/oid4vc-wallet.tgz" | sha256sum -c - \
+ && mkdir -p /usr/src && tar xzf /tmp/oid4vc-wallet.tgz -C /usr/src \
+ && cd /usr/src/oid4vc-wallet-${OID4VC_WALLET_COMMIT} \
+ && rm -f rust-toolchain.toml \
+ && GIT_COMMIT=${OID4VC_WALLET_COMMIT} BUILD_NUMBER=${OID4VC_WALLET_COMMIT} \
+      cargo build --release --locked --bin oid4vc-wallet \
+ && mkdir -p /out/licenses \
+ && cp target/release/oid4vc-wallet /out/ \
+ && cp LICENSE /out/licenses/oid4vc-wallet.LICENSE \
+ && echo "${OID4VC_WALLET_COMMIT}" > /out/COMMIT \
+ && /out/oid4vc-wallet --version
+
 FROM ubuntu:latest AS files1
 # Create app directory
 WORKDIR /usr/src/app
@@ -73,7 +123,8 @@ COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js
 # _engine suffix keeps them from colliding with client/src/rfc9068.js and
 # client/src/rp_metadata_choices.js in this flat directory.
 COPY tests/rfc9068_engine.js tests/rp_metadata_choices_engine.js \
-     tests/oauth_scope_engine.js tests/secret_storage_engine.js ./
+     tests/oauth_scope_engine.js tests/secret_storage_engine.js \
+     tests/no_direct_webcrypto_engine.js ./
 # The SAML 1.1 peers job: the page's Shibboleth AuthnRequest profile request
 # against iya-sts, and a Shibboleth IdP when SHIBBOLETH_IDP_URL names one.
 COPY tests/saml11_peers.js ./
@@ -146,6 +197,10 @@ COPY tests/sts_applications.js ./
 # require it. A shared module, with the same MODULE_NOT_FOUND failure as the
 # rest when this line is missing.
 COPY tests/authn_signin.js ./
+# desktop_user_agent.js is the User-Agent browser_flags.js gives Chrome and
+# sts_applications.js's authorizationCode() sends (#356). A shared module:
+# the same MODULE_NOT_FOUND failure as the rest when this line is missing.
+COPY tests/desktop_user_agent.js ./
 # kerberos_principals.js rebuilds what the Kerberos jobs read off iya-sts's
 # deleted /krb5/principals, from /admin-api (#595). A shared module: the
 # same MODULE_NOT_FOUND failure as the rest when this line is missing.
@@ -178,7 +233,7 @@ COPY tests/sts_sign_out.js ./
 COPY tests/console_signin.js ./
 
 # THE DOCUMENTATION SCREENSHOT HELPER, required by the OAuth2 / OIDC jobs that
-# photograph the screens docs/oauth2-oidc/ walks through (oauth2_*.js,
+# photograph the screens docs/v0.9.5/oauth2-oidc/ walks through (oauth2_*.js,
 # oidc_flows.js, oauth2_auth_style.js). It does nothing unless
 # DOC_SCREENSHOT_DIR is set, and nothing here sets it — but the require runs
 # on every job, so without this line all of them die with MODULE_NOT_FOUND in
@@ -249,7 +304,6 @@ COPY docker-compose-run-tests-external-sts.yml ./
 COPY docker-compose-run-tests-no-host-ports.yml ./
 COPY docker-compose-coverage.yml ./
 COPY docker-compose.yml ./
-COPY local-tests.yml ./
 COPY keycloak-tests.yml ./
 
 COPY tests/Dockerfile ./tests_Dockerfile
@@ -284,6 +338,9 @@ COPY common/generate_tls_cert.js ./
 # (wstrust_msg.js) and validates them against the derived XSD in ./schemas.
 COPY common/xmldsig.js ./
 COPY client/src/wstrust_msg.js client/src/jose_jwe.js client/src/edge_landing.js ./
+# jose_jwe.js requires ./jwe_kem and ./hpke (#312), so a flat jose_jwe.js
+# needs them flat beside it.
+COPY client/src/jwe_kem.js client/src/hpke.js ./
 # The SAML wire-format reader, loaded directly by
 # tests/saml_authnrequest_page.js and tests/saml_response_decoder_page.js to
 # BUILD the fixtures they then paste into the page — a real deflated, signed
@@ -340,12 +397,19 @@ COPY client/src/metadata_schema.js ./
 # vectors through the page, so BOTH tests fail at load without this file.
 COPY client/src/bbs.js ./
 COPY tests/bbs_vectors.json ./
-# The bbs-2023 cryptosuite, BOTH implementations, for tests/bbs2023_cryptosuite.js
-# — the wallet's and the STS's. They share a basename and this image copies flat,
-# so the STS's is renamed on the way in; the test resolves either layout.
+# The wallet's bbs-2023 cryptosuite, flat, for the browser jobs that load it
+# for its JSON-LD contexts (ldp_vc_presentation.js and
+# vc_presentation_protocols.js). It requires cbor, crypto_bytes, did and mdoc,
+# all flat beside it. tests/bbs2023_cryptosuite.js reads it from
+# /usr/src/source-tree instead, and its vectors — the W3C vc-di-bbs
+# specification's own — are the fixture below.
 # client/src/bbs2023.js does require("./contexts/..."), so the vendored JSON-LD
 # contexts come too: canonicalization must never depend on fetching one.
-COPY client/src/bbs2023.js ./
+# bbs2023.js takes its contexts and offline loader from jsonld_contexts.js
+# (#475) and the VC Data Integrity selective-disclosure functions from
+# di_selective.js (#476), both shared with the other cryptosuites; without
+# them beside the flat copy, bbs2023.js is a MODULE_NOT_FOUND at require.
+COPY client/src/bbs2023.js client/src/jsonld_contexts.js client/src/di_selective.js ./
 # (iya-sts's copy is NOT flattened here any more. It was, as ./sts_bbs2023.js,
 # on the grounds that it had no relative requires; since iya-sts v1.0.0 it
 # reads its JSON-LD contexts from ./contexts beside itself, which a flat copy
@@ -361,30 +425,88 @@ COPY client/src/contexts ./contexts
 # directly — they are what these two require at load time, and a missing one is
 # a MODULE_NOT_FOUND at require, i.e. a hard failure rather than a silent skip.
 COPY client/src/vci_wallet.js client/src/sd_jwt_vc.js ./
+# sd_jwt_vc.js reads the fourth format, ISO mdoc, through mdoc.js, which
+# requires vp_protocols.js for the certificate's key. Both go beside it: a
+# module this flat directory lacks is a MODULE_NOT_FOUND at require, and it
+# took sd_jwt_vc_engine.js, ldp_vc_issuance.js and ldp_vc_refresh.js down in
+# 0.1s on the first containerized run (2026-11-17). Everything else either
+# requires (cbor, cose, crypto_bytes, dpop, jws, jose_jwe, did,
+# metadata_client) is already copied flat elsewhere in this file.
+COPY client/src/mdoc.js client/src/vp_protocols.js ./
+# What those now require (#475): sd_jwt_vc.js, vci_metadata.js and
+# vp_protocols.js read the format table, and vp_protocols.js signs the
+# holder's VP through data_integrity.js; data_integrity_rdfc.js is what
+# registers RDFC-1.0 with it, and requires bbs_bls_2020.js (which needs
+# bbs_plus_2020.js) so the BbsBlsSignature2020 suites register too.
+COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js client/src/bbs_bls_2020.js client/src/bbs_plus_2020.js client/src/ecdsa_sd_2023.js client/src/vc_jose_cose.js client/src/jwp.js client/src/sd_cwt.js client/src/anoncreds.js client/src/anoncreds_wallet.js client/src/anoncreds_revocation.js client/src/anoncreds_w3c.js client/src/msgpack.js client/src/amcl_bn254.js client/src/client_auth.js client/src/vc_client_auth_pane.js client/src/cborld.js client/src/vc_barcodes.js client/src/pdf417.js client/src/gordian_envelope.js client/src/acdc.js client/src/gordian_envelope_crypto.js client/src/sskr.js client/src/bc_ur.js client/src/acdc_threshold.js client/src/acdc_schema.js client/src/vp_query.js ./
 # The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
 # and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
 # directory is flat and the last COPY wins, so a test of that name would
 # silently replace the module it drives. It needs its own line because the
 # `tests/sd_jwt_vc_*` files above are named individually rather than globbed.
 COPY tests/sd_jwt_vc_engine.js ./
-# The Encryption / Decryption page's cryptography, loaded directly by
-# tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
-# browser. All three, because the closure matters: symmetric_crypto.js requires
-# ./crypto_bytes and pk_encryption.js requires both — and an uncopied one is a
-# MODULE_NOT_FOUND at require rather than a silently smaller run.
+# The presentation PROTOCOLS: HAIP 1.0 and SIOPv2 through the pages against
+# iya-sts, and their engine (client/src/vp_protocols.js, read from
+# /usr/src/source-tree) in node.
+COPY tests/vc_presentation_protocols.js tests/vp_protocols_engine.js ./
+# The debugger as an OpenID4VP Verifier (client/src/vp_verifier.js, read
+# from /usr/src/source-tree); it also requires mdoc_test_issuer.js, copied
+# below.
+COPY tests/vp_verifier_engine.js ./
+# The Data Integrity and Linked Data proof engine (client/src/
+# data_integrity.js, read from /usr/src/source-tree), held to Digital
+# Bazaar's and Blockcerts' released implementations and to jose (#475).
+# And tests/client_module_bindings.js: every name the browser bundles use is
+# bound (client/src and the staged common/ modules, read from
+# /usr/src/source-tree).
+COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js tests/holder_key_algs.js tests/ldp_vc_whole_presentation.js tests/ecdsa_sd_2023_engine.js tests/vc_jose_cose_engine.js tests/vc_jose_cose_presentation.js tests/jwp_engine.js tests/sd_cwt_engine.js tests/jwp_sd_cwt_presentation.js tests/anoncreds_engine.js tests/anoncreds_witness.js tests/anoncreds_presentation.js tests/client_auth_engine.js tests/vc_issuance_client_auth.js tests/vc_barcodes_engine.js tests/vc_barcodes_browser.js tests/gordian_envelope_engine.js tests/gordian_witness.js tests/gordian_envelope_browser.js tests/acdc_engine.js tests/acdc_browser.js tests/acdc_keri_ts.js tests/acdc_keri_ts_lib.mjs tests/vp_query_engine.js tests/vc_predicates_browser.js ./
+# The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
+# browser, with node playing the wallet.
+COPY tests/vc_verifier_page.js ./
+# And the same Verifier page against rcbj/oid4vc-wallet, whose binary is
+# copied in at the end of this file.
+COPY tests/vc_verifier_oid4vc_wallet.js ./
+COPY tests/vc_presentation_polaris.js ./
+# ISO mdoc: the engine test and the test issuer it and
+# vc_presentation_protocols.js require (a shared module, scheduled by nothing).
+COPY tests/mdoc_engine.js tests/mdoc_test_issuer.js ./
+# A credential collected through the wallet's own issuance pages from an
+# offer made on iya-sts's portal: shared by vc_presentation_protocols.js and
+# vc_presentation_polaris.js, and scheduled by nothing.
+COPY tests/wallet_issuance.js ./
+# The test-stack CORS proxy and its node job (#431). The proxy lands FLAT as
+# cors-proxy.js (hyphen) beside cors_proxy_engine.js (underscore), so the two
+# never collide; the job finds it here or in tests/cors-proxy/ on a host run.
+COPY tests/cors_proxy_engine.js tests/cors-proxy/cors-proxy.js ./
+# The deferred and QR-image pre-authorized offers through the wallet pages
+# (#365); it collects with wallet_issuance.js above.
+COPY tests/vci_offer_modes.js tests/vci_configuration_chooser.js ./
+# common/crypto/ — the central crypto module of #463: crypto_bytes,
+# hash_tools, symmetric_crypto, pk_encryption, pqc, hbs and the facade beside
+# them. The WHOLE directory, twice, and both copies are load-bearing:
 #
-# Note the NAMES. tests/crypto_engines.js is called that, rather than
-# encryption.js or crypto_bytes.js, precisely because these land FLAT beside
-# the test scripts: a test sharing a name with a module here means whichever
-# COPY ran last wins, silently. Same trap as jwk_pem.js above.
-COPY client/src/crypto_bytes.js client/src/symmetric_crypto.js ./
-COPY client/src/pk_encryption.js ./
-# The post-quantum registry, loaded directly by tests/pqc_engines.js and
-# required by client/src/jws.js for the thirteen PQ `alg` values. Note the
-# name trap called out above applies here too: the TEST is pqc_engines.js and
-# the MODULE is pqc.js, deliberately different, because these land flat beside
-# each other and whichever COPY ran last would win silently.
-COPY client/src/pqc.js ./
+#  * FLAT, beside the test scripts, because the flat client modules copied
+#    elsewhere in this file (jws.js, jose_jwe.js, key_material.js, dpop.js,
+#    mdoc.js, ...) require('./pqc') and friends, and so do the engines
+#    themselves (pk_encryption.js requires ./crypto_bytes, ./pqc and
+#    ./symmetric_crypto). This is the image's equivalent of the staging
+#    client/build.js and client/Dockerfile do.
+#  * At /usr/src/common/crypto, where ../common/crypto from /usr/src/app
+#    points, exactly as in a checkout. tests/hash_engine.js and
+#    tests/hbs_signatures.js load their subject from there by path, and
+#    common/crypto_resolve.js (installed by tests/module_paths.js) sends a
+#    failed `./pqc` from the /usr/src/client/src tree there too.
+#
+# Note the NAMES. tests/crypto_engines.js, pqc_engines.js, hash_engine.js and
+# hbs_signatures.js are called that, rather than crypto_bytes.js, pqc.js,
+# hash_tools.js or hbs.js, precisely because the modules land FLAT beside the
+# test scripts: a test sharing a name with a module here means whichever COPY
+# ran last wins, silently. Same trap as jwk_pem.js above.
+COPY common/crypto/ ./
+COPY common/crypto/ /usr/src/common/crypto/
+COPY common/crypto_resolve.js /usr/src/common/crypto_resolve.js
+# The facade, common/crypto/crypto_provider.js, against node's own crypto.
+COPY tests/crypto_provider_engine.js ./
 # DPoP (RFC 9449), loaded directly by tests/dpop_vectors.js so the thumbprint, htu, ath and
 # proof can be checked against the RFCs' own published vectors without a browser.
 # Omit this COPY and that test vanishes from the image rather than failing, which is
@@ -397,6 +519,10 @@ COPY client/src/dpop.js ./
 # with the same code the pages use.
 COPY client/src/did.js ./
 COPY client/src/metadata_client.js client/src/vci_metadata.js client/src/op_metadata.js ./
+# The protocol catalogues those modules (and ssf_events.js, scim_client.js)
+# require as "./catalog/<name>.json" — generated from models/catalog/, and a
+# sibling path precisely so that a flat copy like these can resolve it.
+COPY client/src/catalog ./catalog
 # The Kerberos v5 codec, loaded directly by tests/krb5_crypto_vectors.js so the
 # RFC 3961/3962/8009 vectors can be checked with no browser and no KDC.
 #
@@ -476,11 +602,25 @@ COPY tests/krb5_field_naming.js ./
 # krb5 block above already copies flat beside the codec it requires.
 COPY tests/krb5_ticket_history.js ./
 COPY client/src/kerberos_panes.js ./
+# kerberos_panes.js requires ./kerberos_hex inside a function, so a flat copy
+# that reached that path without it would fail when called (#429).
+COPY client/src/kerberos_hex.js ./
 # The Operations History pane. It loads client/src/kerberos_history.js, which
 # requires client/src/op_history.js — the store the SAML, WS-Trust and
 # WS-Federation logs share — so both come in flat.
 COPY tests/krb5_operation_history.js ./
 COPY client/src/kerberos_history.js client/src/op_history.js ./
+
+# ---------------------------------------------------------------------------
+# Staging stage 1b. Split off the end of stage 1 on 2026-11-16, when the
+# merges of that day took stage 1 to 101 layer instructions against the
+# budget of 100 (everyDockerfileStaysUnderTheLayerLimit() in
+# tests/jwk_pem_encoding.js). Same rules as stage 1. The final image copies it
+# immediately after stage 1, so every line below lands in the order it always
+# did and a basename collision still resolves the same way.
+# ---------------------------------------------------------------------------
+FROM ubuntu:latest AS files1b
+WORKDIR /usr/src/app
 #
 # THE WIRING HALF OF BOTH PANE TESTS reads the five pages, their bundles and the
 # two partials as TEXT — a page that includes a pane and never mount()s it
@@ -519,6 +659,14 @@ COPY client/public/css/kerberos.css /usr/src/client/public/css/
 COPY client/src/spnego.js /usr/src/client/src/
 COPY client/public/spnego.html /usr/src/client/public/
 COPY tests/captures ./captures
+# The W3C vc-di-bbs test vectors tests/bbs2023_cryptosuite.js asserts
+# against (#470, B1), and the vc-di-ecdsa ecdsa-sd-2023 ones
+# tests/ecdsa_sd_2023_engine.js does (#476). Here rather than beside bbs2023.js in files1, which is
+# at this suite's layer budget.
+COPY tests/fixtures/vc_di_bbs_vectors.json tests/fixtures/vc_di_ecdsa_sd_vectors.json tests/fixtures/jwp_jpa15_vectors.json tests/fixtures/sd_cwt_09_vectors.json tests/fixtures/acdc_vectors.json ./fixtures/
+# The walk through docs/v0.9.5/vc/'s tutorials. Here rather than beside
+# vci_offer_modes.js in files1, which is at this suite's layer budget.
+COPY tests/vc_user_guide.js tests/saml_wstrust_user_guide.js ./
 
 # ---------------------------------------------------------------------------
 # Staging stage 2 of 3. Same rules as stage 1; see the header. It starts a
@@ -599,8 +747,8 @@ COPY tests/api_ldap.js tests/ldap_page.js ./
 # and say so rather than skipping if it is absent.
 COPY client/src/x509.js client/src/key_material.js client/src/pki_store.js ./
 # The post-quantum X.509 layer, which key_material.js and x509.js both require
-# now. `client/src/pqc.js` is ALREADY copied further up for tests/pqc_engines.js
-# — it lands flat as `pqc.js` and this module requires `./pqc`, so it resolves —
+# now. `common/crypto/pqc.js` is ALREADY copied further up, flat as `pqc.js`,
+# and this module requires `./pqc`, so it resolves —
 # and this file adds nothing but the PKIX binding of it. The name trap called
 # out around pqc.js applies here too: the TEST is pki_pqc_x509.js and the MODULE
 # is pqc_x509.js, deliberately different, because both land flat in this
@@ -652,6 +800,9 @@ COPY infra/edge/edge_common.js ./
 # not — so it is useful here without the whole api tree being staged.
 COPY api/ssrf_guard.js ./
 COPY api/connect_timeout.js ./
+# #434: the one reading of a request's sslValidate, unit-tested by the same
+# job.
+COPY api/ssl_validate.js ./
 # The debugger embedded in the mock STS (embedded/CLAUDE.md). The test reads
 # the socket listener and the two embedded configurations; the two env files
 # arrive RENAMED, because this directory is flat and both are `embedded.js`.
@@ -678,8 +829,8 @@ COPY tests/schemas ./schemas
 # (Moved here from files1 on 2026-11-13, when that stage reached 105 layer
 # instructions against the budget of 100.)
 # Where the stacks' images come from: tests/image_mirror_coverage.js checks
-# that every image the four stack compose files (docker-compose-run-tests.yml,
-# docker-compose.yml, local-tests.yml, keycloak-tests.yml, all copied above)
+# that every image the three stack compose files (docker-compose-run-tests.yml,
+# docker-compose.yml, keycloak-tests.yml, all copied above)
 # pull, and every FROM in the six Dockerfiles they build, is covered by the
 # ghcr.io mirror — iya-sts's release image included. It needs the list and
 # those Dockerfiles, renamed flat because this directory is flat.
@@ -698,6 +849,8 @@ COPY .github/image-mirror-builds.txt .github/workflows/terraform.yml \
      .github/workflows/website-deploy.yml .github/workflows/dockerimage.yml \
      deploy/deploy-local.sh infra/terraform-local.sh ./
 COPY shibboleth-idp/dist/Dockerfile ./shibboleth-idp-dist_Dockerfile
+COPY tests/anoncreds-witness/Dockerfile ./tests-anoncreds-witness_Dockerfile
+COPY tests/gordian-witness/Dockerfile ./tests-gordian-witness_Dockerfile
 COPY infra/Dockerfile ./infra_Dockerfile
 COPY deploy/Dockerfile ./deploy_Dockerfile
 COPY embedded/Dockerfile ./embedded_Dockerfile
@@ -747,12 +900,12 @@ COPY client/server.js /usr/src/client/server.js
 # The Hashing / Encoding Tools page's hashing, in node against OpenSSL, NIST's
 # own sample values and `openssl mac`'s KMAC. It needs NO flat copy of its
 # subject and that is why it sits here rather than in the list of client
-# modules above: it loads client/src/hash_tools.js and reads
-# client/public/encoding_tools.html out of the TREE the three COPY lines above
-# have just staged, exactly as rfc9700_client.js does. Adding a flat copy would
-# be worse than useless — hash_tools.js would then exist twice in this image,
-# and which one the test loaded would depend on the resolution order rather
-# than on the change under test.
+# modules above: it loads /usr/src/common/crypto/hash_tools.js and reads
+# client/public/encoding_tools.html out of the TREES staged above, exactly as
+# rfc9700_client.js does. There IS a flat hash_tools.js too (the whole of
+# common/crypto/ is copied flat, for the modules that require it as a
+# sibling), which is why the test names the tree copy by its full path
+# rather than leaving the choice to the resolution order.
 COPY tests/hash_engine.js ./
 # The XACML editor and decision test, in node. Same shape as the
 # hashing job above: the subject is the client source tree this image
@@ -787,24 +940,32 @@ COPY tests/gnap_live.js tests/gnap_protocol.js tests/api_gnap.js \
 # a flat copy of that module. A second copy would make the job load
 # whichever file resolution order found.
 COPY tests/smartcard_engine.js tests/smartcard_page.js \
-     tests/smartcard_recorded.json ./
+     tests/smartcard_recorded.json tests/smartcard_card_vectors.json ./
 # The three api modules the engine job loads. They decide and do not
 # pull axios. Flat, beside the test, because this image has no api
 # tree. Do not also flat-copy the client codecs: the job reads those
 # from the client/src tree staged above.
 COPY api/otp_verify.js api/smartcard_reader.js api/otp_hid.js ./
 # The stateful hash-based signature job and its vendored vectors. Like
-# hash_engine.js it needs no flat copy of its subject — it loads
-# client/src/hbs.js out of the tree the three COPY lines above stage — but the
+# hash_engine.js it loads its subject by full path —
+# /usr/src/common/crypto/hbs.js, copied with the rest of common/crypto/ —
+# but the
 # VECTORS are data beside the test and have to be here, and their absence
 # would not fail the build: the job would fail at load with ENOENT naming a
 # JSON file, in a tenth of a second, on every containerized run while passing
 # on every host one.
 COPY tests/hbs_signatures.js tests/hbs_vectors.json ./
+# Post-quantum and HPKE JWE (#312). Like the job above it loads its
+# subjects (hpke.js, jwe_kem.js, jose_jwe.js) from the client tree
+# `COPY client/src` stages and pqc.js from common/crypto/; the three vector
+# files are data beside the test.
+COPY tests/hpke_jwe_engine.js tests/hpke_pq_vectors.json \
+     tests/hybrid_kem_vectors.json tests/jose_hpke_vectors.json ./
 # POST-QUANTUM XML SIGNATURE. Like the two above it needs no flat copy of its
 # subjects: `common/xmldsig.js` is already flat as `xmldsig.js`,
-# `client/src/pqc.js` is already flat as `pqc.js`, and `client/src/hbs.js` and
-# `client/src/xmldsig_pqc.js` are both in the tree `COPY client/src` stages.
+# `common/crypto/pqc.js` and `common/crypto/hbs.js` are already flat as
+# `pqc.js` and `hbs.js`, and `client/src/xmldsig_pqc.js` is in the tree
+# `COPY client/src` stages.
 #
 # THE TEST AND THE BRIDGE SHARE A BASENAME AND THAT IS HANDLED RATHER THAN
 # RISKED. This directory is flat and the last COPY wins, so a flat copy of
@@ -863,6 +1024,10 @@ COPY tests/run-report.js ./
 # rather than this line. Both scim_client.js and scim_scenarios.js are ALSO
 # browser bundle source, so a rename on either side has to be made here too.
 COPY client/src/scim_client.js client/src/scim_scenarios.js ./
+# scim_client.js requires ./rfc6750 (Copy Token's credentials), and a flat
+# copy resolves that beside itself. Found by flatCopiedModulesCarryTheirRequires()
+# in jwk_pem_encoding.js (#429).
+COPY client/src/rfc6750.js ./
 COPY api/scim_proxy.js ./
 COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 # ---------------------------------------------------------------------------
@@ -891,7 +1056,22 @@ COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 COPY client/src/ssf_client.js client/src/ssf_events.js ./
 COPY client/src/ssf_history.js client/src/caep_session.js ./
 COPY client/src/risc_account.js ./
+# Both caep_session.js and risc_account.js require ./session_handoff, which
+# a flat copy resolves beside itself (#429).
+COPY client/src/session_handoff.js ./
 COPY api/ssf_proxy.js api/ssf_receiver.js ./
+# The OpenID4VP relay (POST /oid4vp/call) and its engine test. The module
+# requires ssf_proxy.js, copied flat on the line above.
+COPY api/oid4vp_proxy.js tests/api_oid4vp_proxy.js ./
+# The Verifier role's sessions (#364): the module, decision-only like the
+# two above, and its test, which drives it flat and the routes over HTTP.
+COPY api/oid4vp_verifier.js tests/api_oid4vp_verifier.js ./
+# api/server.js, as TEXT for api_oid4vp_proxy.js's route checks (that the
+# handler sets every outbound cap and uses both guarded agents), so they run
+# in the image and in CI and not only in a checkout. Renamed off .js so
+# nothing loads it and jwk_pem_encoding.js's in-image require check does
+# not try to resolve the api's own modules beside it.
+COPY api/server.js ./api_server.js.txt
 COPY tests/ssf_engine.js tests/ssf_protocol.js ./
 COPY tests/api_ssf.js tests/ssf_page.js ./
 # CAEP is a VOCABULARY over SSF rather than a family of its own, so it adds one
@@ -970,6 +1150,22 @@ COPY common/tests.js /usr/src/common/tests.js
 COPY common/sp_keypair.js /usr/src/common/sp_keypair.js
 # Centralized test config (waitTime, etc.); selected via CONFIG_FILE.
 COPY tests/env ./env
+# THE ABSTRACT DATA MODEL (models/CLAUDE.md). data_model.js holds
+# common/model/ to models/ (`generate.mjs --check`, plus a mutation of a copy),
+# every api and client env file to its schema, and the validator's
+# strictness; api_model_wire.js replays every recorded api answer against the
+# running api and holds each to the API document. Both load
+# api/model_validate.js, copied flat like ssf_proxy.js, which reads the
+# generated files from ../common/model — /usr/src/common/model here. The
+# model's sources, with api/env, go into /usr/src/source-tree (below), and
+# models/'s own TypeSpec install is made there in the final stage.
+COPY tests/data_model.js tests/api_model_wire.js tests/api_model_gaps.js \
+     tests/storage_keys_recorded.js \
+     tests/storage_inventory.js ./
+COPY api/model_validate.js ./
+COPY tests/fixtures/api_model ./fixtures/api_model
+COPY common/model/ /usr/src/common/model/
+COPY common/model_config.js /usr/src/common/model_config.js
 # ---------------------------------------------------------------------------
 # tests/tools — NOT test scripts, and a DIRECTORY rather than a flat copy.
 #
@@ -1010,6 +1206,19 @@ COPY common /usr/src/source-tree/common
 # rfc9068_engine.js and rp_metadata_choices_engine.js also read the pages
 # their modules are wired into, so the HTML is staged beside client/src.
 COPY client/public/*.html /usr/src/source-tree/client/public/
+# The abstract data model's sources and the api's configurations, for
+# data_model.js: it compiles models/ (its node_modules are installed in the
+# final stage, beside the test modules) and holds api/env/*.js to ApiConfig.
+COPY models /usr/src/source-tree/models
+COPY api/env /usr/src/source-tree/api/env
+# The documents the generator writes a region of (models/tools/generate.mjs,
+# REGIONS), so `--check` can compare them.
+COPY embedded/CLAUDE.md /usr/src/source-tree/embedded/CLAUDE.md
+# embedded_deployment.js holds the embedded tree's staging of the central
+# crypto module (#463) to what xmldsig.js requires, in both places that
+# stage the api: the embedded build and the api image.
+COPY embedded/build.sh /usr/src/source-tree/embedded/build.sh
+COPY api/Dockerfile /usr/src/source-tree/api/Dockerfile
 
 # ---------------------------------------------------------------------------
 # The image itself. Keep this stage SHORT — it is the only one whose layers
@@ -1095,7 +1304,18 @@ RUN apt-get update \
         unzip \
         util-linux \
         bsdextrautils \
-        krb5-user
+        krb5-user \
+        libudev1 \
+        libpcsclite1
+
+# rcbj/oid4vc-wallet's command line (#364), built in the oid4vc-wallet stage
+# above. libudev1 and libpcsclite1 are the two libraries it needs at run
+# time; the window's X11 and GL are opened only by `--ui`, which no job
+# passes.
+COPY --from=oid4vc-wallet /out/ /opt/oid4vc-wallet/
+COPY --from=anoncreds-witness /anoncreds/ /usr/src/anoncreds-witness/
+COPY --from=gordian-witness /envelope/envelope /usr/local/bin/bc-envelope
+ENV OID4VC_WALLET_BIN=/opt/oid4vc-wallet/oid4vc-wallet
  
 # Create app directory
 WORKDIR /usr/src/app
@@ -1175,6 +1395,7 @@ RUN CFT=https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing && \
 # /usr/src/client and /usr/src/common are the repository-shaped layout several
 # tests resolve as ../client and ../common.
 COPY --from=files1 /usr/src /usr/src
+COPY --from=files1b /usr/src /usr/src
 COPY --from=files2 /usr/src /usr/src
 COPY --from=files3 /usr/src /usr/src
 
@@ -1182,8 +1403,12 @@ COPY --from=files3 /usr/src /usr/src
 RUN ls
 RUN . $NVM_DIR/nvm.sh && npm install chromedriver
 
-# Install modules needed for the test scripts
-RUN . $NVM_DIR/nvm.sh && npm install
+# Install modules needed for the test scripts, and the abstract data model's
+# TypeSpec compiler, which data_model.js runs from /usr/src/source-tree/models.
+# One RUN for both: this stage's layers count against the 125 the header
+# describes.
+RUN . $NVM_DIR/nvm.sh && npm install \
+    && cd /usr/src/source-tree/models && npm ci --no-audit --no-fund
 
 # EVERY SCHEDULED SCRIPT IS IN THE IMAGE, or the build stops here naming the
 # ones that are not. A job added to run-report.js without a COPY above used to

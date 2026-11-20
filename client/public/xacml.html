@@ -66,32 +66,44 @@
     Creating or loading one opens it in the Editor pane.</p>
   </details>
   <div class="saml-row">
-    <label title="The name the new policy is kept under in this browser's repository. Not the PolicyId.">Name
-      <input type="text" id="xacml_name" size="20" value="policy"
-             title="The name the new policy is kept under in this browser's repository. Not the PolicyId.">
-    </label>
-    <label title="Policy holds Rules; PolicySet holds Policies and other PolicySets.">Kind
-      <select id="xacml_kind"
-              title="Policy holds Rules; PolicySet holds Policies and other PolicySets.">
-        <option value="policy">Policy</option>
-        <option value="policyset">PolicySet</option>
-      </select>
-    </label>
+    <div class="tooltip xacml-tip">
+      <label>Name
+        <input type="text" id="xacml_name" size="20" value="policy">
+      </label>
+      <span class="tooltiptext">The name the new policy is kept
+      under in this browser's repository. Not the PolicyId.</span>
+    </div>
+    <div class="tooltip xacml-tip">
+      <label>Kind
+        <select id="xacml_kind">
+          <option value="policy">Policy</option>
+          <option value="policyset">PolicySet</option>
+        </select>
+      </label>
+      <span class="tooltiptext">Policy holds Rules. PolicySet holds
+      Policies and other PolicySets.</span>
+    </div>
     <button type="button" title="Create an empty policy of this kind and name, and open it in the Editor."
             onclick="return xacml.createBlank();">Create blank</button>
     <button type="button" title="Load the one-rule sample (permits alice, denies everyone else) and open it in the Editor."
             onclick="return xacml.loadSample();">Load sample</button>
   </div>
   <div class="saml-field">
-    <label for="xacml_import_name" title="The repository name for the imported document. Empty uses its PolicyId or PolicySetId.">Import as</label>
+    <div class="tooltip xacml-tip">
+      <label for="xacml_import_name">Import as</label>
+      <span class="tooltiptext">The repository name for the imported
+      document. Empty uses its PolicyId or PolicySetId.</span>
+    </div>
     <input type="text" id="xacml_import_name"
-           placeholder="defaults to the policy id"
-           title="The repository name for the imported document. Empty uses its PolicyId or PolicySetId.">
+           placeholder="defaults to the policy id">
   </div>
   <div class="saml-field">
-    <label for="xacml_import" title="An XACML 3.0 Policy or PolicySet document, or ALFA source, to add to the repository.">XACML XML or ALFA</label>
-    <textarea id="xacml_import" rows="4"
-              title="An XACML 3.0 Policy or PolicySet document, or ALFA source, to add to the repository."></textarea>
+    <div class="tooltip xacml-tip">
+      <label for="xacml_import">XACML XML or ALFA</label>
+      <span class="tooltiptext">An XACML 3.0 Policy or PolicySet
+      document, or ALFA source, to add to the repository.</span>
+    </div>
+    <textarea id="xacml_import" rows="4"></textarea>
   </div>
   <div class="saml-row">
     <button type="button" title="Parse the document above and add it to the repository."
@@ -114,21 +126,28 @@
     unformatted has no whitespace between elements.</p>
   </details>
   <div class="saml-row">
-    <label title="An XACML 3.0 Policy or PolicySet document (.xml), or ALFA source, to add to the repository.">File
-      <input type="file" id="xacml_upload" accept=".xml,.alfa,.txt,application/xml,text/xml,text/plain"
-             title="An XACML 3.0 Policy or PolicySet document (.xml), or ALFA source, to add to the repository.">
-    </label>
+    <div class="tooltip xacml-tip">
+      <label>File
+        <input type="file" id="xacml_upload"
+               accept=".xml,.alfa,.txt,application/xml,text/xml,text/plain">
+      </label>
+      <span class="tooltiptext">An XACML 3.0 Policy or PolicySet
+      document (.xml), or ALFA source, to add to the repository.</span>
+    </div>
     <button type="button" title="Read the chosen file and add it to the repository."
             onclick="return xacml.uploadPolicy();">Upload</button>
   </div>
   <div class="saml-row">
-    <label title="Formatted: indented as the editor writes it. Unformatted: no whitespace between elements.">Layout
-      <select id="xacml_export_layout"
-              title="Formatted: indented as the editor writes it. Unformatted: no whitespace between elements.">
-        <option value="formatted">Formatted</option>
-        <option value="unformatted">Unformatted</option>
-      </select>
-    </label>
+    <div class="tooltip xacml-tip">
+      <label>Layout
+        <select id="xacml_export_layout">
+          <option value="formatted">Formatted</option>
+          <option value="unformatted">Unformatted</option>
+        </select>
+      </label>
+      <span class="tooltiptext">Formatted: indented as the editor
+      writes it. Unformatted: no whitespace between elements.</span>
+    </div>
     <button type="button" title="Save the policy open in the Editor as an .xml file."
             onclick="return xacml.downloadPolicy();">Download</button>
     <button type="button" title="Copy the policy open in the Editor to the clipboard."
@@ -151,16 +170,23 @@
     of when "Try a decision" names no other.</p>
   </details>
   <div class="saml-row">
-    <label title="The policy shown in the editor below.">Open
-      <select id="xacml_open" title="The policy shown in the editor below."
-              onchange="return xacml.openPolicy();"></select>
-    </label>
-    <label title="Only an enabled policy takes part in a decision.">
-      <input type="checkbox" id="xacml_enabled"
-             title="Only an enabled policy takes part in a decision."
-             onchange="return xacml.toggleEnabled();">
-      Enabled
-    </label>
+    <div class="tooltip xacml-tip">
+      <label>Open
+        <select id="xacml_open"
+                onchange="return xacml.openPolicy();"></select>
+      </label>
+      <span class="tooltiptext">The policy shown in the editor
+      below.</span>
+    </div>
+    <div class="tooltip xacml-tip">
+      <label>
+        <input type="checkbox" id="xacml_enabled"
+               onchange="return xacml.toggleEnabled();">
+        Enabled
+      </label>
+      <span class="tooltiptext">Only an enabled policy takes part
+      in a decision.</span>
+    </div>
     <span id="xacml_is_root"></span>
     <button type="button" title="Make the open policy the one a request is decided against by default."
             onclick="return xacml.makeRoot();">Make decision root</button>
@@ -185,23 +211,35 @@
     says the root.</p>
   </details>
   <div class="saml-row">
-    <label title="The policy the request is decided against. The root entry means the decision root.">Policy
-      <select id="xacml_decide_policy"
-              title="The policy the request is decided against. The root entry means the decision root."></select>
-    </label>
-    <label title="The subject-id attribute (access-subject category).">Subject
-      <input type="text" id="xacml_subject" size="14" value="alice"
-             title="The subject-id attribute (access-subject category).">
-    </label>
-    <label title="The action-id attribute (action category).">Action
-      <input type="text" id="xacml_action" size="8" value="GET"
-             title="The action-id attribute (action category).">
-    </label>
-    <label title="The resource-id attribute (resource category).">Resource
-      <input type="text" id="xacml_resource" size="26"
-             value="https://example.com/a"
-             title="The resource-id attribute (resource category).">
-    </label>
+    <div class="tooltip xacml-tip">
+      <label>Policy
+        <select id="xacml_decide_policy"></select>
+      </label>
+      <span class="tooltiptext">The policy the request is decided
+      against. The root entry means the decision root.</span>
+    </div>
+    <div class="tooltip xacml-tip">
+      <label>Subject
+        <input type="text" id="xacml_subject" size="14" value="alice">
+      </label>
+      <span class="tooltiptext">The subject-id attribute
+      (access-subject category).</span>
+    </div>
+    <div class="tooltip xacml-tip">
+      <label>Action
+        <input type="text" id="xacml_action" size="8" value="GET">
+      </label>
+      <span class="tooltiptext">The action-id attribute
+      (action category).</span>
+    </div>
+    <div class="tooltip xacml-tip xacml-tip-left">
+      <label>Resource
+        <input type="text" id="xacml_resource" size="26"
+               value="https://example.com/a">
+      </label>
+      <span class="tooltiptext">The resource-id attribute
+      (resource category).</span>
+    </div>
   </div>
   <div id="xacml_attributes"></div>
   <div class="saml-row">
@@ -209,9 +247,13 @@
             onclick="return xacml.addAttribute();">Add attribute</button>
   </div>
   <div class="saml-field">
-    <label for="xacml_request" title="An XACML 3.0 Request document or a JSON Profile request. When not empty it is used instead of the fields above.">Request XML or JSON Profile</label>
-    <textarea id="xacml_request" rows="4"
-              title="An XACML 3.0 Request document or a JSON Profile request. When not empty it is used instead of the fields above."></textarea>
+    <div class="tooltip xacml-tip">
+      <label for="xacml_request">Request XML or JSON Profile</label>
+      <span class="tooltiptext">An XACML 3.0 Request document or a
+      JSON Profile request. When not empty it is used instead of
+      the fields above.</span>
+    </div>
+    <textarea id="xacml_request" rows="4"></textarea>
   </div>
   <div class="saml-row">
     <button type="button" title="Evaluate the request against the chosen policy and show the decision."

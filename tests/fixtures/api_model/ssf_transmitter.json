@@ -1,0 +1,446 @@
+{
+  "family": "ssf_transmitter",
+  "about": "The hosted SSF transmitter (#363): the page's four routes and the receiver's thirteen. A transmitter's id, issuer, owner key and receiver credential are generated, so every case past creation reaches one by an id that was never created; the create asks for a 1 ms idle lifetime so it is gone by the next request and replaying this file never reaches ssfTransmitterMaxInstancesPerCaller. The whole lifecycle — discovery, streams, push into the api's own inbox, poll, pause and release, verification, subjects, every credential refusal — is driven by tests/api_ssf.js.",
+  "cases": [
+    {
+      "name": "ssf transmitter: an empty body is refused for its JWK Set",
+      "method": "POST",
+      "path": "/ssf/transmitter",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "jwks must be a JWK Set — { \"keys\": [ … ] } — with at least one key: the public half of the key the page signs with. A receiver verifies every SET against it."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: a JWK Set with a private member is refused",
+      "method": "POST",
+      "path": "/ssf/transmitter",
+      "body": {
+        "jwks": {
+          "keys": [
+            {
+              "d": "jpsQnnGQmL-YBIffH1136cspYG6-0iY7X1fCE9-E9LI",
+              "kty": "EC",
+              "crv": "P-256",
+              "kid": "wire-1",
+              "use": "sig",
+              "alg": "ES256",
+              "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+              "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "jwks.keys[0] carries d, which only a PRIVATE key has. This service publishes what it is given at jwks_uri, so it takes the public half only — the page keeps the private one and signs."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: eventsSupported that is not an array is refused",
+      "method": "POST",
+      "path": "/ssf/transmitter",
+      "body": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "kid": "wire-1",
+              "use": "sig",
+              "alg": "ES256",
+              "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+              "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+            }
+          ]
+        },
+        "eventsSupported": "all"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "eventsSupported must be an array of at most 100 event type URIs."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: a receiver credential with whitespace is refused",
+      "method": "POST",
+      "path": "/ssf/transmitter",
+      "body": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "kid": "wire-1",
+              "use": "sig",
+              "alg": "ES256",
+              "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+              "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+            }
+          ]
+        },
+        "receiverCredential": "has a space in it and more"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "receiverCredential must be 16 to 512 characters with no whitespace — it is a bearer token the receiver presents. Leave it out and one is generated."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: an idle lifetime above the ceiling is refused",
+      "method": "POST",
+      "path": "/ssf/transmitter",
+      "body": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "kid": "wire-1",
+              "use": "sig",
+              "alg": "ES256",
+              "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+              "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+            }
+          ]
+        },
+        "idleTtlMs": 999999999
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "idleTtlMs 999999999 is above this service's ceiling, 1800000. A page may ask for less, never more."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: a well-formed create, with a 1 ms idle lifetime so it is gone by the next case",
+      "method": "POST",
+      "path": "/ssf/transmitter",
+      "body": {
+        "label": "wire",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "EC",
+              "crv": "P-256",
+              "kid": "wire-1",
+              "use": "sig",
+              "alg": "ES256",
+              "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+              "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+            }
+          ]
+        },
+        "eventsSupported": [
+          "https://schemas.openid.net/secevent/caep/event-type/session-revoked"
+        ],
+        "idleTtlMs": 1
+      },
+      "volatile": [
+        "transmitter.id",
+        "transmitter.issuer",
+        "transmitter.discoveryUrl",
+        "transmitter.metadata",
+        "transmitter.createdAt",
+        "transmitter.expiresAt",
+        "ownerKey",
+        "receiverCredential"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "ok": true,
+          "transmitter": {
+            "id": "f613644b91bd5be6151f033df8315c2c",
+            "label": "wire",
+            "issuer": "https://localhost:4998/ssf/transmitter/f613644b91bd5be6151f033df8315c2c",
+            "discoveryUrl": "https://localhost:4998/.well-known/ssf-configuration/ssf/transmitter/f613644b91bd5be6151f033df8315c2c",
+            "metadata": {
+              "spec_version": "1_0",
+              "issuer": "https://localhost:4998/ssf/transmitter/f613644b91bd5be6151f033df8315c2c",
+              "jwks_uri": "https://localhost:4998/ssf/transmitter/f613644b91bd5be6151f033df8315c2c/jwks",
+              "delivery_methods_supported": [
+                "urn:ietf:rfc:8935",
+                "urn:ietf:rfc:8936"
+              ],
+              "configuration_endpoint": "https://localhost:4998/ssf/transmitter/f613644b91bd5be6151f033df8315c2c/stream",
+              "status_endpoint": "https://localhost:4998/ssf/transmitter/f613644b91bd5be6151f033df8315c2c/status",
+              "add_subject_endpoint": "https://localhost:4998/ssf/transmitter/f613644b91bd5be6151f033df8315c2c/subjects/add",
+              "remove_subject_endpoint": "https://localhost:4998/ssf/transmitter/f613644b91bd5be6151f033df8315c2c/subjects/remove",
+              "verification_endpoint": "https://localhost:4998/ssf/transmitter/f613644b91bd5be6151f033df8315c2c/verify",
+              "authorization_schemes": [
+                {
+                  "spec_urn": "urn:ietf:rfc:6750"
+                }
+              ],
+              "default_subjects": "NONE"
+            },
+            "jwks": {
+              "keys": [
+                {
+                  "kty": "EC",
+                  "crv": "P-256",
+                  "kid": "wire-1",
+                  "use": "sig",
+                  "alg": "ES256",
+                  "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                  "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+                }
+              ]
+            },
+            "eventsSupported": [
+              "https://schemas.openid.net/secevent/caep/event-type/session-revoked"
+            ],
+            "createdAt": "2026-11-17T18:32:55.087Z",
+            "expiresAt": "2026-11-17T18:32:55.088Z",
+            "streams": [],
+            "pendingVerifications": [],
+            "log": []
+          },
+          "ownerKey": "-YuBoFU0zy9sUVGtHUDsQDibpPPUBEqCAs01emK4pkE",
+          "receiverCredential": "gKWUtTQsG7j2dyDHfBj-fnfjJrc8x7VLIVWsWw5qJ_A",
+          "note": "Point the receiver at the issuer; it discovers the rest at discoveryUrl. Give it receiverCredential as its bearer token for the stream management API. Keep ownerKey: it is how this page reads, delivers through and deletes this transmitter, and neither is shown again."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: reading one nobody created is a 404",
+      "method": "GET",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no transmitter with that id here. Either it was never created, it has been deleted, or it expired (ssfTransmitterTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: deleting one nobody created is a 404",
+      "method": "DELETE",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no transmitter with that id here. Either it was never created, it has been deleted, or it expired (ssfTransmitterTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: delivering through one nobody created is a 404",
+      "method": "POST",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/deliver",
+      "body": {
+        "stream_id": "x",
+        "token": "a.b.c"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no transmitter with that id here. Either it was never created, it has been deleted, or it expired (ssfTransmitterTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: no configuration metadata for one nobody created",
+      "method": "GET",
+      "path": "/.well-known/ssf-configuration/ssf/transmitter/0123456789abcdef0123456789abcdef",
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: no JWKS for one nobody created",
+      "method": "GET",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/jwks",
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: creating a stream at one nobody created is a 404",
+      "method": "POST",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/stream",
+      "body": {
+        "delivery": {
+          "method": "urn:ietf:rfc:8936"
+        }
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here; it may have expired."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: reading streams at one nobody created is a 404",
+      "method": "GET",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/stream",
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here; it may have expired."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: updating a stream at one nobody created is a 404",
+      "method": "PATCH",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/stream",
+      "body": {
+        "stream_id": "x"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here; it may have expired."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: replacing a stream at one nobody created is a 404",
+      "method": "PUT",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/stream",
+      "body": {
+        "stream_id": "x"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here; it may have expired."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: deleting a stream at one nobody created is a 404",
+      "method": "DELETE",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/stream?stream_id=x",
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here; it may have expired."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: reading a status at one nobody created is a 404",
+      "method": "GET",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/status?stream_id=x",
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here; it may have expired."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: changing a status at one nobody created is a 404",
+      "method": "POST",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/status",
+      "body": {
+        "stream_id": "x",
+        "status": "paused"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here; it may have expired."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: adding a subject at one nobody created is a 404",
+      "method": "POST",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/subjects/add",
+      "body": {
+        "stream_id": "x",
+        "subject": {
+          "format": "opaque",
+          "id": "y"
+        }
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here; it may have expired."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: removing a subject at one nobody created is a 404",
+      "method": "POST",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/subjects/remove",
+      "body": {
+        "stream_id": "x",
+        "subject": {
+          "format": "opaque",
+          "id": "y"
+        }
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here; it may have expired."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: asking one nobody created for verification is a 404",
+      "method": "POST",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/verify",
+      "body": {
+        "stream_id": "x",
+        "state": "s"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here; it may have expired."
+        }
+      }
+    },
+    {
+      "name": "ssf transmitter: polling one nobody created is a 404",
+      "method": "POST",
+      "path": "/ssf/transmitter/0123456789abcdef0123456789abcdef/poll/x",
+      "body": {
+        "returnImmediately": true
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "not_found",
+          "description": "There is no transmitter with that id here; it may have expired."
+        }
+      }
+    }
+  ]
+}

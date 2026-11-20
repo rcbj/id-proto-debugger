@@ -11,8 +11,8 @@
 // its address and port policy, times the call and hands the reply back. The
 // password never leaves this page, no key is derived anywhere but here, and every
 // pane can honestly say "these are the bytes that went on the wire" because this
-// file produced them. See docs/kerberos-plan.md for why that shape was chosen over
-// protocol-aware endpoints.
+// file produced them. See docs/v0.9.5/kerberos-plan.md for why that shape was
+// chosen over protocol-aware endpoints.
 //
 // **This page cannot work on the static deployments**, and says so on arrival
 // rather than by failing. Kerberos needs a TCP socket to port 88; a browser has
@@ -946,12 +946,8 @@ function reportEnvironment() {
     return;
   }
 
-  if (!(window.crypto && window.crypto.subtle)) {
-    note.appendChild(make("p", "krb-note krb-bad",
-      "This page is not in a secure context, so Web Crypto is unavailable " +
-          "and no key can be " +
-      "derived. Load it over https, or from localhost."));
-  }
+  // No secure-context warning: key derivation is crypto_provider.js's, pure
+  // JS, since #463.
 
   // What the relay will and will not do, fetched so the page can say so before
   // a call fails rather than reporting its own limits as the KDC's fault.

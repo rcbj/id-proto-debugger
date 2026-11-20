@@ -46,7 +46,7 @@ gets an accepted too, and this page says so.</p>
 
 <script type="text/javascript">
 function vpSetAllPanes(expand) {
-  var fieldsets = ['sent_fieldset', 'recheck_fieldset', 'verifier_fieldset', 'vc_tools_fieldset'];
+  var fieldsets = ['sent_fieldset', 'answer_fieldset', 'recheck_fieldset', 'verifier_fieldset', 'vc_tools_fieldset'];
   for (var i = 0; i < fieldsets.length; i++) {
     var fs = document.getElementById(fieldsets[i]);
     if (fs) fs.style.display = expand ? 'block' : 'none';
@@ -119,6 +119,28 @@ function vpSetAllPanes(expand) {
 </div>
 
 <!-- ============ Pane 3: what the verifier answered ============ -->
+<!-- ============ The answer around the presentation ============ -->
+<div class="step0 dbg-pane" id="pane_answer">
+  <legend class="dbg-legend" id="answer_expand_button" onclick="return vcpresentation3.togglePane('answer_fieldset');">How It Was Answered</legend>
+  <fieldset name="answer_fieldset" id="answer_fieldset" style="display: block;">
+    <p class="vc-note">The protocol the answer was given under, how it travelled, and &mdash; re-checked here from
+    the bytes that went &mdash; the self-issued ID Token and the encryption around the response, when there were
+    any.</p>
+    <div class="vc-status" id="vp_answer_status">&nbsp;</div>
+    <table class="vc-token-table">
+      <tbody>
+        <tr><td><label>Protocol</label></td><td><code id="vp_answer_protocol">&mdash;</code></td></tr>
+        <tr><td><label>response_type / mode</label></td><td><code id="vp_answer_mode">&mdash;</code></td></tr>
+        <tr><td><label>Holder binding</label></td><td><code id="vp_answer_binding">&mdash;</code></td></tr>
+        <tr><td><label>ID Token</label></td><td><pre class="vc-json" id="vp_answer_id_token">&mdash;</pre></td></tr>
+        <tr><td><label>JWE header</label></td><td><pre class="vc-json" id="vp_answer_jwe_header">&mdash;</pre></td></tr>
+        <tr><td><label>What was encrypted</label></td><td><pre class="vc-json" id="vp_answer_plaintext">&mdash;</pre></td></tr>
+      </tbody>
+    </table>
+    <table class="vc-table" id="vp_answer_checks"><tbody></tbody></table>
+  </fieldset>
+</div>
+
 <div class="step0 dbg-pane" id="pane_verifier">
   <legend class="dbg-legend" id="verifier_expand_button" onclick="return vcpresentation3.togglePane('verifier_fieldset');">What The Verifier Answered</legend>
   <fieldset name="verifier_fieldset" id="verifier_fieldset" style="display: block;">

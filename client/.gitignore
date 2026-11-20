@@ -11,3 +11,37 @@ public/version.json
 # too, which is how 38 generated files come to be sitting in a working tree.
 # Committing one would pin a bundle built from some other revision of src/.
 public/js/
+# Transient copies of common/crypto/*.js (#463) staged flat into src/ by
+# build.js and removed in its `finally`. Listed by name rather than as a glob
+# because src/ is otherwise all tracked source; a module added to
+# common/crypto/ gets a line here as well.
+src/crypto_bytes.js
+src/hash_tools.js
+src/symmetric_crypto.js
+src/pk_encryption.js
+src/pqc.js
+src/hbs.js
+src/crypto_keys.js
+src/crypto_provider.js
+src/crypto_webcrypto.js
+# The other copies build.js stages into src/ and removes again: common/krb5,
+# common/spiffe and common/xmldsig.js, named for the same reason. Until
+# 2026-11-17 thirteen krb5 copies were TRACKED here, three of them drifted
+# from common/krb5, and every embedded build overwrote and then deleted them;
+# tests/jwk_pem_encoding.js now fails on a tracked or unlisted staged copy.
+src/krb5_asn1.js
+src/krb5_client.js
+src/krb5_crypto.js
+src/krb5_describe.js
+src/krb5_field_names.js
+src/krb5_gss.js
+src/krb5_keytab.js
+src/krb5_messages.js
+src/krb5_ndr.js
+src/krb5_pac.js
+src/krb5_primitives.js
+src/krb5_ranges.js
+src/krb5_spnego.js
+src/spiffe_bundle.js
+src/spiffe_id.js
+src/xmldsig.js

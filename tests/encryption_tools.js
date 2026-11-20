@@ -54,7 +54,7 @@ var keyWait = Math.max(waitTime * 15, 60000);
 var cryptoWait = Math.max(waitTime * 4, 15000);
 
 const browserFlags = require("./browser_flags.js");
-const { loadPage } = require("./page_load.js");
+const { loadPage, loadUrl } = require("./page_load.js");
 const waitForContent = require("./wait_for.js");
 
 // ---------------------------------------------------------------------------
@@ -107,6 +107,40 @@ function fieldId(prefix, name) {
   log.debug("Entering fieldId().");
   log.debug("Leaving fieldId().");
   return 'enc_' + prefix + '_' + name;
+}
+
+// THE PLAINTEXT BOX'S "hex" CHECKBOX IS STATE THE PAGE CHANGES ON ITS OWN.
+// plaintextOut() ticks it whenever a decryption is not valid UTF-8, so the
+// next Encrypt reads the plaintext box as HEX. A wrong-key decryption that
+// happens to carry the 0x01 marker (about one time in 256, in an
+// unauthenticated mode) is exactly such a decryption — and on 2026-11-16 it
+// left the ffc box ticked, so elgamalSpecifics() pasted 300 'A's, the page
+// read 150 bytes, and a message that had to be refused was encrypted (#428).
+//
+// Sets the box, fires its change event, and returns what it was before, or
+// null when the pane has no such box.
+async function setHexBox(driver, prefix, on) {
+  log.debug("Entering setHexBox(). " + prefix + " " + on);
+  const before = await driver.executeScript(
+    "var box = document.getElementById(arguments[0]);" +
+    "if (!box) return null;" +
+    "var was = box.checked;" +
+    "if (was !== arguments[1]) {" +
+    "  box.checked = arguments[1];" +
+    "  box.dispatchEvent(new Event('change'));" +
+    "}" +
+    "return was;", fieldId(prefix, 'hex'), !!on);
+  log.debug("Leaving setHexBox(). Was " + before);
+  return before;
+}
+
+async function hexBoxIsOn(driver, prefix) {
+  log.debug("Entering hexBoxIsOn(). " + prefix);
+  const on = await driver.executeScript(
+    "var box = document.getElementById(arguments[0]);" +
+    "return !!(box && box.checked);", fieldId(prefix, 'hex'));
+  log.debug("Leaving hexBoxIsOn(). " + on);
+  return on;
 }
 
 async function setField(driver, prefix, name, text) {
@@ -958,11 +992,19 @@ async function anotherKeyDoesNotOpenIt(driver, pane, combination) {
     await pasteField(driver, pane.prefix, name, held[name]);
   }
   await setField(driver, pane.prefix, 'plaintext', "");
+  const hexBefore = await hexBoxIsOn(driver, pane.prefix);
   await clickButton(driver, pane.pane, 'Decrypt');
   const wrongKey = await waitForSettled(driver, pane.prefix,
     pane.name + " " + label + ": decrypting under the wrong key produced no " +
     "status", cryptoWait);
   const recovered = await getField(driver, pane.prefix, 'plaintext');
+  // Put the hex box back the way it was: a noise "decryption" ticks it (see
+  // setHexBox()), and a later section must not inherit that (#428).
+  const hexAfter = await setHexBox(driver, pane.prefix, hexBefore);
+  if (hexAfter !== null && hexAfter !== hexBefore) {
+    log.info("[" + pane.prefix + "] " + label + ": the page ticked the hex " +
+             "box for the wrong-key result; put it back.");
+  }
 
   if (authenticated) {
     assert.ok(/did not verify|length marker|error/i.test(wrongKey),
@@ -1011,6 +1053,12 @@ async function elgamalSpecifics(driver) {
 
   await clickButton(driver, 'pane_ffc', 'Generate Keys');
   await waitForSettled(driver, 'ffc', "no finite-field key pair", keyWait);
+  // 300 bytes of TEXT: the hex box off, whatever an earlier section left
+  // (#428 — ticked, the same 300 characters are 150 bytes, which fit).
+  await setHexBox(driver, 'ffc', false);
+  assert.strictEqual(await hexBoxIsOn(driver, 'ffc'), false,
+    "the ffc pane's hex box would not clear, so a 300-character message " +
+    "would be read as 150 bytes");
   await pasteField(driver, 'ffc', 'plaintext', 'A'.repeat(300));
   await clickButton(driver, 'pane_ffc', 'Encrypt');
   const tooLong = await waitForSettled(driver, 'ffc',
@@ -1035,11 +1083,15 @@ async function elgamalSpecifics(driver) {
 // ===========================================================================
 async function jwePane(driver) {
   log.debug("Entering jwePane().");
-  log.info("[jwe] Compact serialization, RSA and ECDH-ES.");
+  log.info("[jwe] Compact serialization, RSA, ECDH-ES, ML-KEM and HPKE.");
   await expand(driver, 'pane_jwe');
 
+  // The last five are #312's: ML-KEM direct and key wrap
+  // (draft-ietf-jose-pqc-kem-05), and HPKE over P-256 and over X-Wing in both
+  // Key Encryption and Integrated forms.
   const algs = ['RSA-OAEP-256', 'RSA-OAEP', 'ECDH-ES', 'ECDH-ES+A128KW',
-                'ECDH-ES+A256KW'];
+                'ECDH-ES+A256KW', 'ML-KEM-768', 'ML-KEM-1024+A256KW',
+                'HPKE-0-KE', 'HPKE-10-KE', 'HPKE-10'];
   const offered = await optionsOf(driver, 'enc_jwe_alg');
   algs.forEach(function (alg) {
     assert.ok(offered.indexOf(alg) !== -1,
@@ -1073,7 +1125,20 @@ async function jwePane(driver) {
     assert.strictEqual(header.alg, alg,
       "the JWE's protected header says alg=" + header.alg + " for a token " +
       "encrypted with " + alg);
-    assert.strictEqual(header.enc, 'A256GCM');
+    if (/^HPKE-[0-9]+$/.test(alg)) {
+      // Integrated Encryption: no enc, no ek, empty IV and tag segments.
+      assert.strictEqual(header.enc, undefined,
+        alg + " is HPKE Integrated Encryption and must write no enc");
+      assert.strictEqual(compact.split(".")[2], "", alg + ": empty IV");
+      assert.strictEqual(compact.split(".")[4], "", alg + ": empty tag");
+    } else {
+      assert.strictEqual(header.enc, 'A256GCM');
+    }
+    if (alg.indexOf('ML-KEM') === 0 || /-KE$/.test(alg)) {
+      assert.ok(typeof header.ek === 'string' && header.ek.length > 0,
+        alg + " produced no ek header, so the recipient has no KEM " +
+        "ciphertext to decapsulate");
+    }
     if (alg.indexOf('ECDH-ES') === 0) {
       assert.ok(header.epk && header.epk.kty === 'EC',
         alg + " produced no epk in the header, so the recipient has nothing " +
@@ -1110,8 +1175,9 @@ async function jwePane(driver) {
     JSON.stringify(refused));
   assert.strictEqual(await getField(driver, 'jwe', 'plaintext'), "",
     "a modified JWE was decrypted anyway");
-  log.info("[jwe] OK — five algs round-trip, the header names what was " +
-           "used, ECDH-ES carries an epk, and a modified token is refused.");
+  log.info("[jwe] OK — " + algs.length + " algs round-trip, the header " +
+           "names what was used, ECDH-ES carries an epk, ML-KEM and HPKE an " +
+           "ek, and a modified token is refused.");
   log.debug("Leaving jwePane().");
 }
 
@@ -1331,11 +1397,43 @@ async function navigation(driver) {
       .getAttribute("href");
   assert.ok(fallback.indexOf("evil.example") === -1,
     "an unknown ?from= reached the return link's href: " + fallback);
-  assert.ok(fallback.indexOf("oauth2_oidc_1.html") !== -1,
-    "an unknown ?from= did not fall back to the debugger: " + fallback);
+  assert.ok(new URL(fallback).pathname === "/",
+    "an unknown ?from= did not fall back to the landing page: " + fallback);
+
+  // FROM THE LANDING CARD there is no ?from=, and the link used to lead into
+  // the OAuth workflow, somewhere the visitor had never been. It reads
+  // "Return to Home" and goes back to the landing page now, for both of the
+  // tool pages that have a card.
+  for (const page of ["encryption_tools.html", "digital_signature.html"]) {
+    await loadUrl(driver, baseUrl + "/", { timeout: waitTime * 6 });
+    const card = await driver.wait(until.elementLocated(
+      By.css("a.landing-card[href='/" + page + "']")), waitTime * 3,
+      "the landing page has no card for " + page);
+    await driver.executeScript(
+      "arguments[0].scrollIntoView({block:'center'});", card);
+    await card.click();
+    await driver.wait(until.urlContains(page), waitTime * 3,
+      "the landing card did not reach " + page);
+    await waitForContent.waitForPageBundle(driver,
+      "the " + page + " bundle never finished loading");
+    const back = await driver.findElement(By.id("return_link"));
+    const href = await back.getAttribute("href");
+    const text = (await back.getText()).trim();
+    assert.ok(new URL(href).pathname === "/",
+      "arriving at " + page + " from its landing card, the return link " +
+      "points at " + href + " rather than the landing page");
+    assert.ok(/Return to Home/.test(text),
+      "arriving at " + page + " from its landing card, the return link " +
+      "reads \"" + text + "\"");
+    await back.click();
+    await driver.wait(until.elementLocated(By.css("a.landing-card")),
+      waitTime * 3, "the return link on " + page + " did not reach the " +
+      "landing page");
+  }
   log.info("[navigation] OK — both Tools panes link here, the return link " +
-           "follows ?from=, and an unknown one falls back rather than being " +
-           "reflected.");
+           "follows ?from=, an unknown one falls back rather than being " +
+           "reflected, and arriving from either landing card it returns " +
+           "to Home.");
   log.debug("Leaving navigation().");
 }
 

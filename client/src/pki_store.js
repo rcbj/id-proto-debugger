@@ -42,7 +42,7 @@
 // READS storage, exactly as tests/keypair_storage_optout.js does for the other
 // four protocols — this failure is silent in the reassuring direction, and
 // nothing on screen distinguishes a working guard from a broken one. See
-// docs/pki.md.
+// docs/v0.9.5/pki.md.
 // ---------------------------------------------------------------------------
 
 var bunyan = require("bunyan");

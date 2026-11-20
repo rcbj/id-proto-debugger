@@ -409,7 +409,7 @@ async function test() {
         "b.click();");
     await driver.sleep(800);
 
-    log.info("=== Step 2: selection is over canonical statements ===");
+    log.info("=== Step 2: selection is by JSON pointer ===");
     await loadUrl(driver, baseUrl + "/vc-presentation-2.html");
     await pageBundleReady(driver);
     await addTheIssuersContexts(driver, held.credential);
@@ -421,31 +421,43 @@ async function test() {
     const rows = await driver.executeScript(
       "return document.querySelectorAll('#vp_disclosures_table tbody " +
           "tr').length;");
+    const chosen = await driver.executeScript(
+      "return document.querySelectorAll('#vp_disclosures_table tbody " +
+          "input:checked').length;");
     assert.ok(rows > 4,
-      "the table should list the credential's canonical statements; got " +
+      "the table should list the credential's values by JSON pointer; got " +
           rows);
     const summary = await text(driver, "vp_selection_summary");
-    assert.ok(/statement/i.test(summary) && /bbs-2023/.test(summary),
-      "step 2 must say the unit of disclosure is the statement. Said: " +
+    assert.ok(/JSON pointer/i.test(summary) && /bbs-2023/.test(summary),
+      "step 2 must say the unit of disclosure is the JSON pointer. Said: " +
           summary);
     assert.ok(/link/i.test(summary),
       "and that presentations are unlinkable — the reason to use this " +
           "format. Said: " + summary);
 
-    const parsed = JSON.parse(envelope);
-    assert.strictEqual(parsed.cryptosuite, "bbs-2023",
-                       "the envelope names the cryptosuite.");
-    assert.ok(parsed.proof && parsed.disclosedStatements.length,
-      "and carries the derived proof plus the statements it discloses.");
-    assert.ok(parsed.disclosedStatements.length < rows,
-      "a selective disclosure should send FEWER statements than the " +
-          "credential has: " +
-      parsed.disclosedStatements.length + " of " + rows +
-          ". Sending all of them would mean the " +
-      "selection is not working.");
-    log.info("[step2] OK — " + parsed.disclosedStatements.length + " of " +
-             rows +
-             " statements chosen, proof derived without a holder key.");
+    // A W3C bbs-2023 presentation is a reveal document with a derived proof
+    // (CBOR tag 0xd95d03, "u2V0D" once base64url'd), inside a VP when the
+    // request needs holder binding.
+    const revealedOf = function revealedOf(text) {
+      log.debug("Entering revealedOf().");
+      const p = JSON.parse(text);
+      log.debug("Leaving revealedOf().");
+      return [].concat(p.type || []).indexOf("VerifiablePresentation") !== -1
+        ? [].concat(p.verifiableCredential || [])[0] || {} : p;
+    };
+    const parsed = revealedOf(envelope);
+    assert.strictEqual((parsed.proof || {}).cryptosuite, "bbs-2023",
+                       "the reveal document's proof names the cryptosuite.");
+    assert.ok(/^u2V0D/.test((parsed.proof || {}).proofValue || ""),
+      "and is a W3C bbs-2023 DERIVED proof (0xd95d03): " +
+          JSON.stringify(parsed.proof));
+    assert.ok(chosen < rows,
+      "a selective disclosure should send FEWER values than the " +
+          "credential has: " + chosen + " of " + rows +
+          ". Sending all of them would mean the selection is not working.");
+    log.info("[step2] OK — " + chosen + " of " + rows +
+             " values chosen, reveal document derived without a holder " +
+             "key.");
 
     log.info("=== Step 3: the verifier's verdict ===");
     await driver.executeScript(
@@ -489,7 +501,8 @@ async function test() {
     const envelope2 = await waitForValue(driver, "vp_presentation",
       function (v) { return v.trim().length > 100; }, "the second derivation",
                 stepWait);
-    assert.notStrictEqual(JSON.parse(envelope2).proof, parsed.proof,
+    assert.notStrictEqual(revealedOf(envelope2).proof.proofValue,
+      parsed.proof.proofValue,
       "two presentations of the same credential must produce DIFFERENT proof " +
           "bytes. This is the " +
       "property neither dc+sd-jwt nor jwt_vc_json can offer: they replay the " +

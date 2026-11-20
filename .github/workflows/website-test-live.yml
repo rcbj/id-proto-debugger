@@ -38,6 +38,24 @@ on:
     workflows: ["Deploy Static Site (test.idptools.com)"]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      # The iya-sts release to run against, for a manual run only. The
+      # checkout below is the commit the site was built from, so its compose
+      # defaults name that commit's release; these replace them, which is how
+      # a candidate (iya-sts:1.1.0-candidate) is tried against the live site.
+      # Empty keeps the deployed commit's defaults.
+      iya_sts_image:
+        description: >-
+          IYA_STS_IMAGE, e.g.
+          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts:1.1.0-candidate
+        type: string
+        default: ""
+      iya_sts_companion_image:
+        description: >-
+          IYA_STS_COMPANION_IMAGE, e.g.
+          ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts-companion:v1.1.0-candidate
+        type: string
+        default: ""
   # Nightly, after the containerized "Selenium Tests" suite (10:00 UTC).
   schedule:
     - cron: '0 11 * * *'
@@ -144,7 +162,20 @@ jobs:
       # input. It exits non-zero when a test fails: run-report.js exits 1 and
       # check_return_code propagates it.
       - name: Run the suite against the live test site
-        run: ./remote-run-tests.sh https://test.idptools.com
+        env:
+          IYA_STS_IMAGE_INPUT: ${{ inputs.iya_sts_image }}
+          IYA_STS_COMPANION_INPUT: ${{ inputs.iya_sts_companion_image }}
+        run: |
+          set -euo pipefail
+          if [ -n "${IYA_STS_IMAGE_INPUT}" ]; then
+            export IYA_STS_IMAGE="${IYA_STS_IMAGE_INPUT}"
+            echo "iya-sts: ${IYA_STS_IMAGE}"
+          fi
+          if [ -n "${IYA_STS_COMPANION_INPUT}" ]; then
+            export IYA_STS_COMPANION_IMAGE="${IYA_STS_COMPANION_INPUT}"
+            echo "iya-sts companion: ${IYA_STS_COMPANION_IMAGE}"
+          fi
+          ./remote-run-tests.sh https://test.idptools.com
 
       # The script deliberately leaves the stack up for fast local re-runs. A
       # runner is thrown away, but tearing down keeps the log honest about what

@@ -46,8 +46,26 @@ var log = bunyan.createLogger({
 });
 
 var metadataClient = require("./metadata_client");
+// Digests by crypto_provider.js (#463): pure JS, on every deployment.
+var provider = require("./crypto_provider");
 var jws = require("./jws");
 var sdJwtVc = require("./sd_jwt_vc");
+var vpProtocols = require("./vp_protocols");
+var mdoc = require("./mdoc");
+// The JWS a holder key signs with (#475): not always ES256 any more, since
+// the holder key is whatever kind the issuer accepted.
+var vcFormats = require("./vc_formats");
+// W3C VC-JOSE-COSE presentations (#477).
+var vcJoseCose = require("./vc_jose_cose");
+var bytes = require("./crypto_bytes");
+// JPT and SD-CWT presentations (#478).
+var jwpLib = require("./jwp");
+var sdCwt = require("./sd_cwt");
+// AnonCreds presentations (#479).
+var anoncredsWallet = require("./anoncreds_wallet");
+// Predicate queries: Presentation Exchange (OpenID4VP drafts) and the
+// debugger's DCQL predicate extension (#474).
+var vpQuery = require("./vp_query");
 
 var KEYS = {
   // Which way the presentation is being started (see USE_CASES).
@@ -61,8 +79,9 @@ var KEYS = {
   // The presentation that was built and sent: { presentation, kbJwt, sdHash,
   // sentAt, responseUri, vpToken, response }.
   PRESENTATION: "sdjwtvp_presentation",
-  // What the Verifier said: its verdict document, fetched from its result
-  // endpoint, plus the wallet's own re-check.
+  // What the Verifier answered: the HTTP answer to the response (a real
+  // Verifier reports its decision to its operator, not to the wallet), plus
+  // the wallet's own re-check.
   RESULT: "sdjwtvp_result",
   // Where this wallet looks for the Verifier's keys when a request is signed.
   // A pre-registered client's key is known out of band; for this workflow that
@@ -76,7 +95,23 @@ var KEYS = {
   // The Verifier's WEBSITE: the page where a person starts a verification,
   // which the three flows on step 0 link to. Any Verifier's, not only this
   // suite's; set on step 0.
-  VERIFIER_SITE_URL: "sdjwtvp_verifier_site_url"
+  VERIFIER_SITE_URL: "sdjwtvp_verifier_site_url",
+  // The protocol (OpenID4VP, HAIP, SIOPv2) and the trust anchor for x509
+  // Client Identifiers. Named in vp_protocols.js, which owns them.
+  PROTOCOL: vpProtocols.KEYS.PROTOCOL,
+  X509_TRUST_ANCHOR: vpProtocols.KEYS.X509_TRUST_ANCHOR,
+  SIOP_SUBJECT_SYNTAX: vpProtocols.KEYS.SUBJECT_SYNTAX,
+  // Pairwise self-issued subjects: { client_id: private JWK }. KEY MATERIAL,
+  // so it is kept only while SIOP_SAVE_PAIRWISE is not "0", and removed the
+  // moment it is (the rule every key-pair pane in this tree follows).
+  SIOP_PAIRWISE_KEYS: "sdjwtvp_siop_pairwise_keys",
+  // "1" to reach the Verifier through the debugger's api (POST
+  // /oid4vp/call) rather than straight from the browser, for a Verifier that
+  // sends no CORS headers; and "0" to skip TLS certificate checks on that
+  // route, as the OAuth pages offer for a self-signed test server.
+  VIA_API: "sdjwtvp_via_api",
+  API_SSL_VALIDATE: "sdjwtvp_api_ssl_validate",
+  SIOP_SAVE_PAIRWISE: "sdjwtvp_siop_save_pairwise"
 };
 
 var STEP1_URL = "/vc-presentation-1.html";
@@ -194,6 +229,43 @@ function setUseCase(id) {
   return uc;
 }
 
+// ---------------------------------------------------------------------------
+// The PROTOCOL the request is answered under (vp_protocols.js), orthogonal to
+// the flow above except in one place: HAIP 1.0 has no request by value, so
+// that flow is unavailable while HAIP is chosen.
+// ---------------------------------------------------------------------------
+function currentProtocol() {
+  log.debug("Entering currentProtocol().");
+  log.debug("Leaving currentProtocol().");
+  return vpProtocols.protocolById(sdJwtVc.get(vpProtocols.KEYS.PROTOCOL)) ||
+         vpProtocols.protocolById(vpProtocols.DEFAULT_PROTOCOL);
+}
+
+function setProtocol(id) {
+  log.debug("Entering setProtocol(). id=" + id);
+  var p = vpProtocols.protocolById(id);
+  if (!p) {
+    log.debug("Leaving setProtocol(). Unknown.");
+    return null;
+  }
+  sdJwtVc.set(vpProtocols.KEYS.PROTOCOL, p.id);
+  if (p.id === vpProtocols.PROTOCOL_HAIP &&
+      !useCaseAllowed(currentUseCase(), p)) {
+    sdJwtVc.set(KEYS.USE_CASE, "same-device-signed");
+  }
+  log.debug("Leaving setProtocol().");
+  return p;
+}
+
+// Whether a flow can be used under a protocol, and if not why.
+function useCaseAllowed(uc, protocol) {
+  log.debug("Entering useCaseAllowed(). " + (uc && uc.id));
+  var ok = !(protocol && protocol.id === vpProtocols.PROTOCOL_HAIP &&
+             uc && uc.id === "same-device");
+  log.debug("Leaving useCaseAllowed(). " + ok);
+  return ok;
+}
+
 // Which way this presentation is being made, in the step indicator every page
 // includes.
 function renderUseCaseBadge() {
@@ -205,19 +277,144 @@ function renderUseCaseBadge() {
     return null;
   }
   var uc = currentUseCase();
+  var protocol = currentProtocol();
   var existing = document.getElementById("vp_use_case_badge");
   if (existing) existing.parentNode.removeChild(existing);
   var badge = document.createElement("p");
   badge.id = "vp_use_case_badge";
   badge.className = "vc-use-case-badge";
-  badge.innerHTML = 'Flow: <strong>' + metadataClient.escapeHtmlText(uc.spec) +
-      ' &middot; ' +
+  badge.innerHTML = 'Protocol: <strong>' +
+                    metadataClient.escapeHtmlText(protocol.label) +
+                    '</strong> &middot; Flow: <strong>' +
+                    metadataClient.escapeHtmlText(uc.spec) + ' &middot; ' +
                     metadataClient.escapeHtmlText(uc.label) + '</strong> — ' +
                     metadataClient.escapeHtmlText(uc.mechanics) +
                     ' <a href="/vc-presentation-0.html">change</a>';
   host.parentNode.insertBefore(badge, host.nextSibling);
   log.debug("Leaving renderUseCaseBadge().");
   return uc;
+}
+
+// ---------------------------------------------------------------------------
+// REACHING THE VERIFIER. Every call the wallet makes to a Verifier — the
+// Request Object (GET, or POST under request_uri_method=post), its JWKS, and
+// every answer posted — goes through here, so the one choice between the two
+// routes is made once:
+//
+//   * straight from the browser (the default, and the only route on a
+//     deployment with no api), which needs the Verifier to send CORS headers;
+//   * through the debugger's api (POST /oid4vp/call), which no browser policy
+//     applies to, so any compliant Verifier can be used, CORS or not.
+//
+// Either way the answer comes back as { ok, status, text(), json() }, the
+// Response methods the pages already use, so a caller cannot tell the routes
+// apart and does not branch on them.
+// ---------------------------------------------------------------------------
+function apiBase() {
+  log.debug("Entering apiBase().");
+  var url = "";
+  try {
+    url = String(require(process.env.CONFIG_FILE).apiUrl || "");
+  } catch (e) {
+    url = "";
+  }
+  log.debug("Leaving apiBase(). " + url);
+  return url.replace(/\/+$/, "");
+}
+
+function viaApi() {
+  log.debug("Entering viaApi().");
+  var on = sdJwtVc.get(KEYS.VIA_API) === "1" && !!apiBase() &&
+    backendAvailable();
+  log.debug("Leaving viaApi(). " + on);
+  return on;
+}
+
+function verifierFetch(url, init) {
+  log.debug("Entering verifierFetch(). " + url + (viaApi() ? " (api)" : ""));
+  var options = init || {};
+  if (!viaApi()) {
+    log.debug("Leaving verifierFetch(). Direct.");
+    return fetch(url, options);
+  }
+  var headers = {};
+  Object.keys(options.headers || {}).forEach(function (k) {
+    headers[k] = options.headers[k];
+  });
+  log.debug("Leaving verifierFetch(). Through the api.");
+  return fetch(apiBase() + "/oid4vp/call", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: url,
+      method: options.method || "GET",
+      headers: headers,
+      body: options.body || "",
+      sslValidate: sdJwtVc.get(KEYS.API_SSL_VALIDATE) !== "0"
+    })
+  }).then(function (r) {
+    return r.json().catch(function () {
+      return { error: "the api answered HTTP " + r.status + " with no JSON" };
+    }).then(function (answer) {
+      if (!r.ok) {
+        // 400: the api refused to send it; 502: the Verifier did not answer.
+        // Neither is something the Verifier said, so it is thrown, the way a
+        // direct fetch throws when nothing comes back.
+        throw new Error("the debugger's api " + (r.status === 400 ?
+          "refused the call: " : "could not reach the Verifier: ") +
+          (answer.error || ("HTTP " + r.status)));
+      }
+      var text = String(answer.body || "");
+      return {
+        ok: !!answer.ok,
+        status: answer.status,
+        headers: answer.headers || {},
+        viaApi: true,
+        text: function () {
+          return Promise.resolve(text);
+        },
+        json: function () {
+          return Promise.resolve().then(function () {
+            return JSON.parse(text);
+          });
+        }
+      };
+    });
+  });
+}
+
+// Whether this deployment has an api that offers the route at all. A static
+// build says it has none (backendAvailable: false), and is not asked: its
+// apiUrl is the site itself, which answers /oid4vp/limits with a 404 that
+// the browser logs as an error on every VC Presentation page.
+function backendAvailable() {
+  log.debug("Entering backendAvailable().");
+  var available = true;
+  try {
+    available = require(process.env.CONFIG_FILE).backendAvailable !== false;
+  } catch (e) {
+    available = true;
+  }
+  log.debug("Leaving backendAvailable(). " + available);
+  return available;
+}
+
+function apiRouteAvailable() {
+  log.debug("Entering apiRouteAvailable().");
+  if (!apiBase()) {
+    log.debug("Leaving apiRouteAvailable(). No api configured.");
+    return Promise.resolve(false);
+  }
+  if (!backendAvailable()) {
+    log.debug("Leaving apiRouteAvailable(). A static build has no api.");
+    return Promise.resolve(false);
+  }
+  log.debug("Leaving apiRouteAvailable().");
+  return fetch(apiBase() + "/oid4vp/limits").then(function (r) {
+    return r.ok;
+  }).catch(function () {
+    return false;
+  });
 }
 
 // --- the request in hand ----------------------------------------------------
@@ -246,9 +443,9 @@ function forgetRequest() {
 var REQUEST_PARAMS = ["client_id", "response_type", "response_mode",
     "response_uri", "redirect_uri",
                       "nonce", "state", "dcql_query", "client_metadata",
-                          "request_uri",
+                          "request_uri", "presentation_definition",
                       "request_uri_method", "request", "scope",
-                          "transaction_data"];
+                          "transaction_data", "id_token_type"];
 
 function parseRequestQuery(search) {
   log.debug("Entering parseRequestQuery().");
@@ -356,9 +553,22 @@ function dcqlClaimPaths(credentialQuery) {
 function claimNameForPath(path, format) {
   log.debug("Entering claimNameForPath().");
   var parts = String(path || "").split(".");
-  if (format === sdJwtVc.FORMAT_JWT_VC_JSON && parts.length > 1 &&
+  // Both W3C formats keep their claims under credentialSubject. ldp_vc was
+  // missing here, so step 1 reported every requested ldp_vc claim as "not in
+  // the credential you hold" while the presentation itself was fine.
+  if ((format === sdJwtVc.FORMAT_JWT_VC_JSON ||
+       format === sdJwtVc.FORMAT_LDP_VC || sdJwtVc.isJoseCose(format)) &&
+      parts.length > 1 &&
       parts[0] === "credentialSubject") {
     parts = parts.slice(1);
+  }
+  // An mdoc claim is [namespace, element], and the namespace has dots of
+  // its own (org.iso.18013.5.1), so the dotted form cannot be split on its
+  // first one: the element is the LAST segment. ISO/IEC 18013-5 element
+  // identifiers are snake_case and carry no dot.
+  if ((format === sdJwtVc.FORMAT_MSO_MDOC ||
+       format === sdJwtVc.FORMAT_SD_CWT) && parts.length > 1) {
+    parts = parts.slice(-1);
   }
   log.debug("Leaving claimNameForPath().");
   return parts.join(".");
@@ -418,6 +628,149 @@ function requiresKeyBinding(credentialQuery) {
 }
 
 // ---------------------------------------------------------------------------
+// The query, in either language (vp_query.js): DCQL, OpenID4VP 1.0's, with
+// the debugger's predicate extension when a credential query marks it
+// critical; or a DIF Presentation Exchange presentation_definition, which
+// the OpenID4VP DRAFTS carried and 1.0 removed.
+// ---------------------------------------------------------------------------
+function requestQuery(request) {
+  log.debug("Entering requestQuery().");
+  var params = (request && request.params) || {};
+  var dcql = (request && request.dcql) ||
+    requestObjectValue(params, "dcql_query");
+  var pd = (request && request.presentationDefinition) ||
+    requestObjectValue(params, "presentation_definition");
+  log.debug("Leaving requestQuery().");
+  return vpQuery.normalise({ dcql_query: dcql || undefined,
+                             presentation_definition: pd || undefined });
+}
+
+// A claim lookup over a parsed held credential, for vp_query.js planFor():
+// the path walked through the payload and the claims, then — as the rest
+// of this workflow names claims — by claimNameForPath() in the flat map.
+function heldLookup(parsed) {
+  log.debug("Entering heldLookup().");
+  if (!parsed) {
+    log.debug("Leaving heldLookup(). Nothing held.");
+    return function () {
+      return { found: false };
+    };
+  }
+  if (parsed.format === sdJwtVc.FORMAT_ANONCREDS && parsed.anoncreds) {
+    log.debug("Leaving heldLookup(). AnonCreds.");
+    return anoncredsWallet.claimLookup(parsed.anoncreds);
+  }
+  var flat = parsed.claims || {};
+  var view = Object.assign({}, parsed.payload || {}, flat);
+  if (parsed.document) view = Object.assign({}, parsed.document, view);
+  log.debug("Leaving heldLookup().");
+  return function (path) {
+    var segs = [].concat(path || []);
+    var hits = vpQuery.selectAll(view, segs);
+    if (hits.length) return { found: true, value: hits[0] };
+    var name = claimNameForPath(segs.join("."), parsed.format);
+    if (Object.prototype.hasOwnProperty.call(flat, name)) {
+      return { found: true, value: flat[name] };
+    }
+    var last = vpQuery.attributeOf(segs);
+    return Object.prototype.hasOwnProperty.call(flat, last) ?
+      { found: true, value: flat[last] } : { found: false };
+  };
+}
+
+// The workflow's claim name for a query path (DCQL, or the PE path that
+// matched): claimNameForPath() of its string segments. An AnonCreds
+// attribute is flat, so it is the last segment.
+function claimNameOf(path, format) {
+  log.debug("Entering claimNameOf().");
+  var segs = (path || []).filter(function (x) {
+    return typeof x === "string";
+  });
+  if (format === sdJwtVc.FORMAT_ANONCREDS) {
+    log.debug("Leaving claimNameOf(). AnonCreds.");
+    return segs[segs.length - 1] || "";
+  }
+  log.debug("Leaving claimNameOf().");
+  return claimNameForPath(segs.join("."), format);
+}
+
+// The plan for the credential in hand against the request: { model, item,
+// plan, blocking: [text] }. The wallet holds ONE credential, so it answers
+// one query item: DCQL's first credential query (as everywhere in this
+// workflow), or the first Input Descriptor the credential can answer.
+// opts: { allowPreferredDisclosure }.
+function planForRequest(request, parsed, opts) {
+  log.debug("Entering planForRequest().");
+  var model = requestQuery(request);
+  if (!model.items.length) {
+    log.debug("Leaving planForRequest(). No query.");
+    return { model: model, item: null, plan: null,
+             blocking: model.language ? model.errors.slice() : [] };
+  }
+  var held = { format: parsed ? parsed.format : "",
+               lookup: heldLookup(parsed),
+               w3c: !!(parsed && parsed.anoncreds && parsed.anoncreds.w3c),
+               ids: parsed && parsed.anoncreds ? {
+                 schema_id: parsed.anoncreds.schemaId,
+                 cred_def_id: parsed.anoncreds.credDefId,
+                 issuer_id: (parsed.anoncreds.credentialDefinition || {})
+                   .issuerId } : null };
+  var candidates = model.language === "dcql" ? [model.items[0]] :
+    model.items;
+  var plans = candidates.map(function (item) {
+    return { item: item, plan: vpQuery.planFor(model, item, held, opts) };
+  });
+  var chosen = plans.filter(function (x) {
+    return x.plan.ok;
+  })[0] || plans[0];
+  var plan = chosen.plan;
+  var rows = (plan.claims && plan.claims.rows) || [];
+  plan.disclose = plan.disclose.map(function (n) {
+    var row = rows.filter(function (x) {
+      return x.attribute === n && x.status === "available";
+    })[0];
+    return row && parsed ? claimNameOf(row.path, parsed.format) : n;
+  });
+  // What blocks: everything the plan refuses, except — for a plain DCQL
+  // query, no values, no claim_sets and no predicates — a claim this
+  // wallet's presence check cannot find, which stays the advisory it has
+  // always been (the check is approximate for nested paths).
+  var plain = model.language === "dcql" && !chosen.item.claimSets &&
+    !chosen.item.predicates.length && !(chosen.item.extension &&
+      (chosen.item.extension.refuse || chosen.item.extension.present)) &&
+    !chosen.item.claims.some(function (c) {
+      return c.values !== undefined;
+    });
+  var blocking = plain ? [] : plan.refusals.slice();
+  log.debug("Leaving planForRequest(). " + blocking.length +
+            " blocking.");
+  return { model: model, item: chosen.item, plan: plan,
+           blocking: blocking, plain: plain };
+}
+
+// The answer to a presentation_definition (OpenID4VP drafts): the vp_token
+// is the presentation itself and a presentation_submission maps the Input
+// Descriptor to it. An AnonCreds presentation in the W3C form is a
+// Verifiable Presentation (di_vp) carrying a di_vc.
+function peAnswer(model, item, built) {
+  log.debug("Entering peAnswer().");
+  var element = built.vpElement || built.presentation;
+  var entry = { id: item.id, format: built.format, path: "$" };
+  if (built.format === sdJwtVc.FORMAT_ANONCREDS) {
+    element = JSON.parse(built.presentation);
+    if (element && element.type && [].concat(element.type)
+        .indexOf("VerifiablePresentation") !== -1) {
+      entry.format = "di_vp";
+      entry.path_nested = { id: item.id, format: "di_vc",
+                            path: "$.verifiableCredential[0]" };
+    }
+  }
+  log.debug("Leaving peAnswer().");
+  return { vpToken: element, submission: vpQuery.buildSubmission(
+    model.definition.id, [entry]) };
+}
+
+// ---------------------------------------------------------------------------
 // Building the presentation.
 // ---------------------------------------------------------------------------
 // The bytes the KB-JWT is signed over: the issuer-signed JWT and the selected
@@ -444,8 +797,131 @@ function sdHash(prefix, sdAlg) {
   for (var i = 0; i < prefix.length; i++) { bytes[i] =
        prefix.charCodeAt(i) & 0xff; }
   log.debug("Leaving sdHash().");
-  return crypto.subtle.digest(webcrypto, bytes).then(function (buf) {
-    return metadataClient.bytesToB64u(buf);
+  return Promise.resolve(provider.digest(webcrypto, bytes))
+    .then(function (buf) {
+      return metadataClient.bytesToB64u(buf);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// transaction_data (OpenID4VP 1.0 section 8.4; Appendix B.3.3.1 for
+// SD-JWT VC). A Verifier may attach `transaction_data` — an array of
+// base64url JSON objects, each { type, credential_ids, ... } — describing
+// what the presentation authorizes. The wallet "MUST include a
+// representation or reference to the data in the respective Credential
+// presentation"; the SD-JWT VC profile is `transaction_data_hashes` in the
+// KB-JWT, each the hash of the base64url STRING as received (NOT decoded
+// first), by sha-256 unless the entry listed transaction_data_hashes_alg, in
+// which case the KB-JWT names the one it used. This mirrors what
+// vp_verifier.js checks on the answer.
+// ---------------------------------------------------------------------------
+// The digest this wallet computes for each Named Information registry name,
+// keyed exactly as the Verifier's own TD_HASHES set.
+var TD_HASH_NAMES = { "sha-256": "SHA-256", "sha-384": "SHA-384",
+  "sha-512": "SHA-512", "sha3-256": "SHA3-256", "sha3-384": "SHA3-384",
+  "sha3-512": "SHA3-512" };
+// The wallet's preference when the Verifier offers a choice of algorithms.
+var TD_ALG_PREFERENCE = ["sha-256", "sha-384", "sha-512", "sha3-256",
+  "sha3-384", "sha3-512"];
+
+function isArray(x) {
+  return Object.prototype.toString.call(x) === "[object Array]";
+}
+
+// The request's transaction_data strings (base64url) that name `queryId`,
+// each with its decoded object { type, credential_ids, ... }. An entry that
+// names no queryId applies to every query (there is only one credential
+// query in this wallet's requests), so a request with transaction_data and a
+// query id of "" still binds.
+function transactionDataFor(params, queryId) {
+  log.debug("Entering transactionDataFor().");
+  var raw = requestObjectValue(params, "transaction_data");
+  var list = isArray(raw) ? raw : [];
+  var out = [];
+  list.forEach(function (str) {
+    if (typeof str !== "string" || !str) {
+      return;
+    }
+    var td = null;
+    try {
+      td = JSON.parse(bytes.b64uToStr(str));
+    } catch (e) {
+      td = null;
+    }
+    if (td && isArray(td.credential_ids) &&
+        (!queryId || td.credential_ids.indexOf(queryId) !== -1)) {
+      out.push({ str: str, td: td });
+    }
+  });
+  log.debug("Leaving transactionDataFor(). " + out.length);
+  return out;
+}
+
+// The hash algorithm the KB-JWT will name, and whether it must name one at
+// all. Appendix B.3.3.1: an entry that listed transaction_data_hashes_alg
+// forces the KB-JWT to name the one used and to use one of that entry's; an
+// entry that listed none accepts sha-256 only — so if any entry lists none
+// the choice is sha-256.
+function chooseTransactionDataAlg(entries) {
+  log.debug("Entering chooseTransactionDataAlg().");
+  var anyWithout = false;
+  var offered = [];
+  entries.forEach(function (one) {
+    var list = isArray(one.td.transaction_data_hashes_alg) ?
+        one.td.transaction_data_hashes_alg : null;
+    if (list) {
+      offered.push(list);
+    } else {
+      anyWithout = true;
+    }
+  });
+  var candidates = TD_ALG_PREFERENCE.filter(function (a) {
+    if (anyWithout && a !== "sha-256") {
+      return false;
+    }
+    return offered.every(function (list) {
+      return list.indexOf(a) !== -1;
+    });
+  });
+  var alg = candidates[0] || "sha-256";
+  log.debug("Leaving chooseTransactionDataAlg(). " + alg);
+  return { alg: alg, includeAlg: offered.length > 0 };
+}
+
+// The transaction_data_hashes for `queryId`, with the algorithm name the
+// KB-JWT must carry (null when sha-256 is implied). Resolves to null when the
+// request carries no transaction_data for this query, so the KB-JWT is left
+// exactly as it was.
+function transactionDataHashes(params, queryId) {
+  log.debug("Entering transactionDataHashes().");
+  var entries = transactionDataFor(params || {}, queryId);
+  if (!entries.length) {
+    log.debug("Leaving transactionDataHashes(). None.");
+    return Promise.resolve(null);
+  }
+  var choice = chooseTransactionDataAlg(entries);
+  var hashName = TD_HASH_NAMES[choice.alg];
+  if (!hashName) {
+    log.debug("Leaving transactionDataHashes(). Unsupported alg.");
+    return Promise.reject(new Error("this wallet cannot compute the " +
+      'transaction_data hash algorithm "' + choice.alg + '" the Verifier ' +
+      "requires (section 8.4)."));
+  }
+  log.debug("Leaving transactionDataHashes().");
+  return Promise.all(entries.map(function (one) {
+    // The base64url STRING as received, US-ASCII — NOT the decoded object.
+    var b = new Uint8Array(one.str.length);
+    for (var i = 0; i < one.str.length; i++) {
+      b[i] = one.str.charCodeAt(i) & 0xff;
+    }
+    return Promise.resolve(provider.digest(hashName, b))
+      .then(function (buf) {
+        return metadataClient.bytesToB64u(buf);
+      });
+  })).then(function (hashes) {
+    log.debug("Leaving transactionDataHashes(). " + hashes.length);
+    return { hashes: hashes, alg: choice.includeAlg ? choice.alg : null,
+             entries: entries };
   });
 }
 
@@ -453,25 +929,53 @@ function sdHash(prefix, sdAlg) {
 // exactly iat, aud, nonce and sd_hash. OID4VP fixes the first two of those: the
 // nonce is the request's nonce, and the aud is the verifier's Client
 // Identifier.
+// The algorithm a holder private JWK signs with: the one it was made for
+// when it names one, otherwise its curve's (vc_formats.jwsFor()); `accepted`
+// is the Verifier's list when it gave one.
+function holderJws(privateJwk, accepted) {
+  log.debug("Entering holderJws().");
+  var k = privateJwk || {};
+  var offered = [].concat(accepted || []);
+  if (!offered.length && k.alg) {
+    offered = [k.alg];
+  }
+  var j = vcFormats.jwsFor(vcFormats.publicJwkOf(k), offered);
+  log.debug("Leaving holderJws(). " + (j ? j.headerAlg : KB_ALG));
+  return j || { algId: KB_ALG, headerAlg: KB_ALG };
+}
+
 function signKbJwt(opts) {
   log.debug("Entering signKbJwt(). aud=" + opts.aud);
-  var header = { typ: KB_TYP, alg: KB_ALG };
+  var alg = holderJws(opts.holderPrivateJwk, opts.acceptedAlgs);
+  var header = { typ: KB_TYP, alg: alg.headerAlg };
   var payload = {
     iat: Math.floor(Date.now() / 1000),
     aud: opts.aud,
     nonce: opts.nonce,
     sd_hash: opts.sdHash
   };
+  // transaction_data_hashes (section 8.4, Appendix B.3.3.1): the hashes of
+  // the transaction_data strings this presentation authorizes, and the
+  // algorithm name when the Verifier offered a choice. Both are extension
+  // members of the KB-JWT, placed after sd_hash.
+  if (isArray(opts.transactionDataHashes) &&
+      opts.transactionDataHashes.length) {
+    payload.transaction_data_hashes = opts.transactionDataHashes;
+    if (opts.transactionDataHashesAlg) {
+      payload.transaction_data_hashes_alg = opts.transactionDataHashesAlg;
+    }
+  }
   log.debug("Leaving signKbJwt().");
   // VERBATIM header: a Key Binding JWT's `typ` is `kb+jwt` and the SD-JWT VC
   // specification fixes the rest, so the bytes are not this module's to
-  // rearrange. jws.js does the signing input and the Web Crypto call.
+  // rearrange. jws.js does the signing input and the signature, on its
+  // default pure-JS backend (#463, step 2c), so a KB-JWT is made on every
+  // deployment, plain HTTP included.
   return jws.signJwsAsync({
-    algId: KB_ALG,
+    algId: alg.algId,
     protectedHeader: header,
     payload: payload,
-    privateKey: { jwk: opts.holderPrivateJwk },
-    backend: "webcrypto"
+    privateKey: { jwk: opts.holderPrivateJwk }
   }).then(function (signed) {
     log.debug("Leaving signKbJwt().");
     return { jwt: signed.serialized, header: header, payload: payload };
@@ -494,16 +998,24 @@ function buildPresentation(opts) {
         log.debug("Leaving buildPresentation(). No key binding required.");
         return { presentation: prefix, prefix: prefix, sdHash: hash, kb: null };
       }
-      return signKbJwt({
-        holderPrivateJwk: opts.holderPrivateJwk,
-        aud: opts.aud,
-        nonce: opts.nonce,
-        sdHash: hash
-      }).then(function (kb) {
-        log.debug("Leaving buildPresentation(). Signed a KB-JWT.");
-        return { presentation: prefix + kb.jwt, prefix: prefix, sdHash: hash,
-                kb: kb };
-      });
+      // transaction_data (section 8.4): when the request carries any for the
+      // credential query being presented, the KB-JWT carries their hashes.
+      return transactionDataHashes(opts.params, opts.credentialQueryId)
+        .then(function (td) {
+          return signKbJwt({
+            holderPrivateJwk: opts.holderPrivateJwk,
+            acceptedAlgs: opts.acceptedAlgs,
+            aud: opts.aud,
+            nonce: opts.nonce,
+            sdHash: hash,
+            transactionDataHashes: td ? td.hashes : null,
+            transactionDataHashesAlg: td ? td.alg : null
+          });
+        }).then(function (kb) {
+          log.debug("Leaving buildPresentation(). Signed a KB-JWT.");
+          return { presentation: prefix + kb.jwt, prefix: prefix,
+                   sdHash: hash, kb: kb };
+        });
     });
 }
 
@@ -522,7 +1034,8 @@ function buildPresentation(opts) {
 // ---------------------------------------------------------------------------
 function signVpJwt(opts) {
   log.debug("Entering signVpJwt(). aud=" + opts.aud);
-  var header = { typ: "JWT", alg: KB_ALG };
+  var alg = holderJws(opts.holderPrivateJwk, opts.acceptedAlgs);
+  var header = { typ: "JWT", alg: alg.headerAlg };
   var payload = {
     iss: opts.holderId || "urn:ietf:params:oauth:jwk-thumbprint:holder",
     aud: opts.aud,
@@ -535,12 +1048,14 @@ function signVpJwt(opts) {
     }
   };
   log.debug("Leaving signVpJwt().");
+  // The pure-JS backend (jws.js's default, on crypto_provider.js): it works
+  // on every deployment, plain HTTP included, where crypto.subtle does not
+  // exist (#463, step 2c).
   return jws.signJwsAsync({
-    algId: "ES256",
+    algId: alg.algId,
     protectedHeader: header,
     payload: payload,
-    privateKey: { jwk: opts.holderPrivateJwk },
-    backend: "webcrypto"
+    privateKey: { jwk: opts.holderPrivateJwk }
   }).then(function (signed) {
     log.debug("Leaving signVpJwt().");
     return { jwt: signed.serialized, header: header, payload: payload };
@@ -551,8 +1066,69 @@ function signVpJwt(opts) {
 // return the same shape so the pages that display and submit it do not branch:
 // `selected` and `sdHash` are simply absent for a VP JWT, because that format
 // has nothing to select and nothing to commit to beyond its own signature.
+// An mdoc presentation: a DeviceResponse disclosing the selected elements,
+// device-signed over OpenID4VP's session transcript (mdoc.js). Its holder
+// proof is that device signature, so the shape returned has no KB-JWT.
+function buildMdocPresentation(opts) {
+  log.debug("Entering buildMdocPresentation().");
+  var parsed = opts.parsed && opts.parsed.mdoc ? opts.parsed.mdoc :
+      mdoc.parseIssuerSigned(opts.credential);
+  log.debug("Leaving buildMdocPresentation().");
+  return mdoc.deviceResponse({
+    parsed: parsed,
+    selected: opts.selected || [],
+    devicePrivateJwk: opts.holderPrivateJwk,
+    clientId: opts.aud,
+    nonce: opts.nonce,
+    responseUri: opts.responseUri || "",
+    encryptionJwk: opts.encryptionJwk || null
+  }).then(function (r) {
+    log.debug("Leaving buildMdocPresentation(). " + r.disclosed.length +
+              " element(s).");
+    return { presentation: r.deviceResponse, prefix: "", sdHash: "",
+             kb: null, format: sdJwtVc.FORMAT_MSO_MDOC, mdoc: r };
+  });
+}
+
 function buildPresentationFor(opts) {
   var format = sdJwtVc.credentialFormat(opts.credential);
+  if (format === sdJwtVc.FORMAT_MSO_MDOC) {
+    log.debug("Leaving buildPresentationFor(). mso_mdoc.");
+    return buildMdocPresentation(opts);
+  }
+  // vc+jwt and vc+cose go whole, enveloped in a vp+jwt the holder signs
+  // with the request's nonce and the Verifier's Client Identifier.
+  if (format === sdJwtVc.FORMAT_VC_JWT || format === sdJwtVc.FORMAT_VC_COSE) {
+    var alg = holderJws(opts.holderPrivateJwk, opts.acceptedAlgs);
+    log.debug("Leaving buildPresentationFor(). " + format + ", enveloped.");
+    try {
+      var vp = vcJoseCose.presentEnveloped(opts.credential, {
+        privateJwk: Object.assign({}, opts.holderPrivateJwk,
+                                  { alg: alg.headerAlg }),
+        did: opts.holderId || undefined,
+        kid: opts.holderId ? opts.holderId + "#0" : undefined
+      }, { nonce: opts.nonce, aud: opts.aud });
+      return Promise.resolve({ presentation: vp.jwt, prefix: "", sdHash: "",
+        kb: null, vp: { jwt: vp.jwt, header: null, payload: vp.claims },
+        format: format });
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+  if (format === sdJwtVc.FORMAT_JPT) {
+    log.debug("Leaving buildPresentationFor(). jpt.");
+    return presentJpt(opts);
+  }
+  if (format === sdJwtVc.FORMAT_SD_CWT) {
+    log.debug("Leaving buildPresentationFor(). sd-cwt.");
+    return presentSdCwt(opts);
+  }
+  if (format === sdJwtVc.FORMAT_ANONCREDS) {
+    log.debug("Leaving buildPresentationFor(). anoncreds.");
+    return presentAnoncreds(opts);
+  }
+  // A W3C vc+sd-jwt is an SD-JWT on the wire: selected Disclosures and a
+  // Key Binding JWT, exactly as a dc+sd-jwt.
   if (format !== sdJwtVc.FORMAT_JWT_VC_JSON) {
     log.debug("Leaving buildPresentationFor().");
     return buildPresentation(opts);
@@ -572,6 +1148,91 @@ function buildPresentationFor(opts) {
   });
 }
 
+// The issuer's key for a JWP or SD-CWT credential: its kid as a DID URL (or
+// a URL), else its iss, through the resolver VC-JOSE-COSE uses.
+function issuerKeyFor(kid, iss) {
+  log.debug("Entering issuerKeyFor().");
+  var vm = vcJoseCose.verificationMethodFor(kid, iss);
+  if (!vm) {
+    log.debug("Leaving issuerKeyFor(). Nothing to resolve.");
+    return Promise.resolve(null);
+  }
+  log.debug("Leaving issuerKeyFor(). " + vm.slice(0, 60));
+  return vcJoseCose.defaultResolveKey()(vm).catch(function (e) {
+    log.debug("issuerKeyFor(): " + e.message);
+    return null;
+  });
+}
+
+// A JPT presented (draft-ietf-jose-json-proof-algorithms-15): the selected
+// payload slots, a Presentation Header carrying the Verifier's Client
+// Identifier as aud and the request's nonce, and the algorithm's proof —
+// the holder's signature for SU and MAC, ProofGen for BBS (which needs the
+// issuer's public key, resolved from the Issuer Header's kid).
+function presentJpt(opts) {
+  log.debug("Entering presentJpt().");
+  var jwp = jwpLib.parse(opts.credential);
+  var h = jwp.issuerHeader.value;
+  var header = {};
+  if (opts.aud !== undefined) header.aud = opts.aud;
+  if (opts.nonce !== undefined) header.nonce = opts.nonce;
+  var disclose = (opts.selected || []).map(Number);
+  var keyed = h.alg === "BBS" ? issuerKeyFor(h.kid, h.iss) :
+    Promise.resolve(null);
+  log.debug("Leaving presentJpt().");
+  return keyed.then(function (issuerKey) {
+    if (h.alg === "BBS" && !issuerKey) {
+      throw new Error("a BBS presentation needs the issuer's public key, " +
+                      "and the Issuer Header's kid (" + h.kid + ") did not " +
+                      "resolve to one.");
+    }
+    var presented = jwpLib.present(jwp, { disclose: disclose, header: header,
+      holderKey: opts.holderPrivateJwk, issuerKey: issuerKey });
+    return { presentation: presented, prefix: "", sdHash: "", kb: null,
+             vp: null, format: sdJwtVc.FORMAT_JPT };
+  });
+}
+
+// An SD-CWT presented (draft-ietf-spice-sd-cwt-09 section 8.1): a Key
+// Binding Token by the cnf key, carrying the SD-CWT with only the chosen
+// disclosures, aud the Verifier's Client Identifier, cnonce the request's
+// nonce and iat now. Sent as base64url.
+function presentSdCwt(opts) {
+  log.debug("Entering presentSdCwt().");
+  try {
+    var kbt = sdCwt.present(opts.credential, {
+      disclose: opts.selected || [], holderKey: opts.holderPrivateJwk,
+      aud: opts.aud, cnonce: opts.nonce });
+    log.debug("Leaving presentSdCwt().");
+    return Promise.resolve({ presentation: bytes.bytesToB64u(kbt),
+      prefix: "", sdHash: "", kb: null, vp: null,
+      format: sdJwtVc.FORMAT_SD_CWT });
+  } catch (e) {
+    log.debug("Leaving presentSdCwt(). " + e.message);
+    return Promise.reject(e);
+  }
+}
+
+// An AnonCreds presentation (#479): the selected attributes revealed, under
+// this debugger's mapping of the OpenID4VP request (anoncreds_wallet.js),
+// with the link secret held as the holder key. Sent as the presentation's
+// JSON text.
+function presentAnoncreds(opts) {
+  log.debug("Entering presentAnoncreds().");
+  try {
+    var made = anoncredsWallet.present(opts.credential, opts.selected || [],
+                                       opts.holderPrivateJwk, opts.nonce,
+                                       opts.predicates || []);
+    log.debug("Leaving presentAnoncreds().");
+    return Promise.resolve({ presentation: JSON.stringify(made.presentation),
+      prefix: "", sdHash: "", kb: null, vp: null,
+      anoncredsRequest: made.request, format: sdJwtVc.FORMAT_ANONCREDS });
+  } catch (e) {
+    log.debug("Leaving presentAnoncreds(). " + e.message);
+    return Promise.reject(e);
+  }
+}
+
 // The vp_token: a JSON object keyed by the DCQL credential query id, each value
 // an array of presentations (OID4VP section 8.1).
 function vpToken(credentialQueryId, presentation) {
@@ -587,6 +1248,12 @@ function vpToken(credentialQueryId, presentation) {
 // rather than from what the wallet believes it sent.
 function presentedClaims(presentation) {
   log.debug("Entering presentedClaims().");
+  if (mdoc.looksLikeDeviceResponse(presentation)) {
+    var read = mdoc.readDeviceResponse(presentation);
+    log.debug("Leaving presentedClaims(). mso_mdoc.");
+    return { parsed: read.parsed, claims: mdoc.claimsOf(read.parsed),
+             mdoc: read };
+  }
   // A VP JWT carries the credential inside its vp claim, so what reached the
   // Verifier is read from the EMBEDDED credential — reading the outer JWT would
   // report the presentation's own claims (nonce, aud) as if they were the
@@ -599,6 +1266,64 @@ function presentedClaims(presentation) {
     log.debug("Leaving presentedClaims(). jwt_vc_json, " +
               Object.keys(inner.claims).length + " claim(s).");
     return { parsed: inner, claims: inner.claims, outer: outer };
+  }
+  // An AnonCreds presentation: the raw values it reveals.
+  if (anoncredsWallet.looksLikePresentation(presentation)) {
+    var ap = JSON.parse(presentation);
+    var aclaims = anoncredsWallet.revealedClaims(ap, null);
+    log.debug("Leaving presentedClaims(). anoncreds.");
+    return { parsed: { format: sdJwtVc.FORMAT_ANONCREDS,
+                       disclosures: Object.keys(aclaims) },
+             claims: aclaims, anoncreds: ap };
+  }
+  // A presented JPT: the claims of the disclosed slots.
+  if (jwpLib.looksLikeJwp(presentation)) {
+    var jp = jwpLib.parse(presentation);
+    var jclaims = {};
+    try {
+      jclaims = jwpLib.claimsOf(jp);
+    } catch (e) {
+      log.debug("presentedClaims(): " + e.message);
+    }
+    log.debug("Leaving presentedClaims(). jpt.");
+    return { parsed: { format: sdJwtVc.FORMAT_JPT, jwp: jp,
+                       disclosures: Object.keys(jclaims) },
+             claims: jclaims, jpt: jp };
+  }
+  // A KBT around an SD-CWT: the claims its disclosures restore.
+  if (String(presentation).indexOf(".") === -1 &&
+      sdCwt.looksLikeSdCwt(presentation)) {
+    var kv = sdCwt.verify(presentation, {});
+    var plain = sdCwt.toPlainClaims(kv.claims || new Map());
+    ["iss", "sub", "aud", "exp", "nbf", "iat", "cti", "cnf",
+     "cnonce"].forEach(function (k) {
+      delete plain[k];
+    });
+    log.debug("Leaving presentedClaims(). sd-cwt.");
+    return { parsed: { format: sdJwtVc.FORMAT_SD_CWT,
+                       disclosures: kv.disclosed || [] },
+             claims: plain, sdCwt: kv };
+  }
+  // A vp+jwt enveloping a VC-JOSE-COSE credential: read the credential out
+  // of the envelope, as the Verifier will.
+  var vpInfo = vcJoseCose.detect(presentation);
+  if (vpInfo && vpInfo.kind === "vp") {
+    var vpParsed = vcJoseCose.parse(presentation);
+    var env = [].concat((vpParsed.document || {}).verifiableCredential ||
+                        [])[0];
+    var innerSecured = vcJoseCose.unenvelope(env).secured;
+    var innerParsed = sdJwtVc.parseCredential(innerSecured instanceof
+      Uint8Array ? bytes.bytesToB64u(innerSecured) : innerSecured);
+    log.debug("Leaving presentedClaims(). " + innerParsed.format +
+              ", enveloped.");
+    return { parsed: innerParsed, claims: innerParsed.claims,
+             outer: vpParsed };
+  }
+  // A W3C vc+sd-jwt presentation reads with every Disclosure that went.
+  if (sdJwtVc.credentialFormat(presentation) === sdJwtVc.FORMAT_VC_SD_JWT) {
+    var w3c = sdJwtVc.parseCredential(presentation);
+    log.debug("Leaving presentedClaims(). vc+sd-jwt.");
+    return { parsed: w3c, claims: w3c.claims };
   }
   var parsed = sdJwtVc.parseSdJwt(presentation);
   var claims = sdJwtVc.disclosedClaims(parsed);
@@ -621,7 +1346,15 @@ module.exports = {
   useCaseById: useCaseById,
   currentUseCase: currentUseCase,
   setUseCase: setUseCase,
+  currentProtocol: currentProtocol,
+  setProtocol: setProtocol,
+  useCaseAllowed: useCaseAllowed,
   renderUseCaseBadge: renderUseCaseBadge,
+  apiBase: apiBase,
+  viaApi: viaApi,
+  verifierFetch: verifierFetch,
+  issuerKeyFor: issuerKeyFor,
+  apiRouteAvailable: apiRouteAvailable,
   storeRequest: storeRequest,
   storedRequest: storedRequest,
   forgetRequest: forgetRequest,
@@ -638,10 +1371,18 @@ module.exports = {
   requiresKeyBinding: requiresKeyBinding,
   presentedPrefix: presentedPrefix,
   sdHash: sdHash,
+  transactionDataFor: transactionDataFor,
+  transactionDataHashes: transactionDataHashes,
   signKbJwt: signKbJwt,
+  holderJws: holderJws,
   buildPresentation: buildPresentation,
   buildPresentationFor: buildPresentationFor,
+  buildMdocPresentation: buildMdocPresentation,
   signVpJwt: signVpJwt,
   vpToken: vpToken,
-  presentedClaims: presentedClaims
+  presentedClaims: presentedClaims,
+  requestQuery: requestQuery,
+  heldLookup: heldLookup,
+  planForRequest: planForRequest,
+  peAnswer: peAnswer
 };

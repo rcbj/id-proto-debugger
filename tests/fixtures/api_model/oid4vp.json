@@ -1,0 +1,582 @@
+{
+  "family": "oid4vp",
+  "about": "POST /oid4vp/call and GET /oid4vp/limits (api/oid4vp_proxy.js), added by #436 after the data model was recorded (#437). The refusals and the limits document were computed from api/oid4vp_proxy.js with api/env/docker-tests.js, the configuration the containerized stack runs; every outbound target is verifier.invalid, so no case leaves the api. The Verifier role's nine routes (api/oid4vp_verifier.js, #364) were added with their model: a session's id and secret are generated, so the cases that reach one by id use one that was never created (every page call there is a 404 before its Bearer secret is asked for), and the one session created here asks for a 1 ms idle lifetime, so it is gone by the next request and replaying this file never reaches oid4vpVerifierMaxSessionsPerCaller. The live-signing publish (oid4vpVerifierPublishFor) needs a Wallet held open on a live session, which no single recorded request can make, so its cases are the unknown session and the wrong type; the held Wallet, the 401s, the timeout, and the 503 temporarily_unavailable (oid4vpVerifierRequestPost) that a Wallet which sent a wallet_nonce gets on a timeout or at oid4vpVerifierMaxPendingSignings (OpenID4VP section 5.10.2) are driven by tests/api_oid4vp_verifier.js too. The lifecycle, the 401s, the media types and the size caps are driven by tests/api_oid4vp_verifier.js. #470 (B3) added responseEncoding to the call; its refusals are recorded here. #470 (B5) added publicBaseUrl to create and to the Verifier limits; its refusals are recorded here, and a create with a publicBaseUrl, whose URLs are generated, is driven by tests/api_oid4vp_verifier.js. #471 (E4) lets the live-signing publish carry a compact JWE, the Request Object signed then encrypted to a key from the Wallet's wallet_metadata (RFC 9101 section 4); the model takes it as a string like the JWS, and its case here is the unknown session. A held Wallet receiving one is driven by tests/api_oid4vp_verifier.js.",
+  "cases": [
+    {
+      "name": "oid4vp call: an empty body is refused for its url",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required: the request_uri, the response_uri, or the redirect_uri a SIOPv2 post goes to, exactly as the Verifier named it."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a url that is not http(s) is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "ftp://verifier.invalid/request"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http:// or https:// URL. OpenID4VP names every endpoint absolutely, and a relative one resolved against this service would reach the api's own routes."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a method other than GET or POST is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/request",
+        "method": "PUT"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "method must be GET or POST. A wallet fetches a Request Object and posts an answer, and nothing else crosses in OpenID4VP; another method would make this endpoint useful for something that is not a presentation."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a body that is not a string is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/response",
+        "method": "POST",
+        "body": {
+          "vp_token": "x"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "body must be a string: OpenID4VP's bodies are application/x-www-form-urlencoded, and the page sends them encoded exactly as they are to travel."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a GET carrying a body is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/request",
+        "method": "GET",
+        "body": "state=1"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A GET carries no body. Fetching a Request Object by POST is request_uri_method=post, and is sent as a POST; a body silently dropped from a GET is how the wrong method goes unnoticed."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a responseEncoding other than text or base64 is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/status",
+        "responseEncoding": "hex"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "responseEncoding must be \"text\" or \"base64\": the body comes back as the text that arrived, or as its bytes in base64 (a status list may be binary CBOR)."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a responseEncoding that is not a string",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/status",
+        "responseEncoding": 64
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `responseEncoding` must be a JSON string or null. GET /api-docs describes what oid4vpCall takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a framing header is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/request",
+        "headers": {
+          "Content-Length": "5"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "This endpoint will not forward the Content-Length header. The body framing is this service's to set — a caller that could set it could smuggle a second request inside the first. Everything else is forwarded as sent — the refusals here are about the SHAPE of the request rather than its content."
+        }
+      }
+    },
+    {
+      "name": "oid4vp limits: what the proxy will and will not do",
+      "method": "GET",
+      "path": "/oid4vp/limits",
+      "changed": "#470 (B3) added responseEncodings: the Verifier page's issuer, DID and status list fetches come back as base64 bytes, because a status list may be a binary CWT.",
+      "before": {
+        "status": 200,
+        "body": {
+          "methods": [
+            "GET",
+            "POST"
+          ],
+          "refusedHeaders": [
+            "host",
+            "content-length",
+            "transfer-encoding",
+            "connection",
+            "keep-alive",
+            "upgrade",
+            "te",
+            "trailer",
+            "proxy-authorization"
+          ],
+          "maxRequestBytes": 262144,
+          "statusRule": "a 400 is this service refusing; a 502 is the Verifier unreachable; anything the Verifier answered is a 200 with its status inside."
+        }
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "methods": [
+            "GET",
+            "POST"
+          ],
+          "responseEncodings": [
+            "text",
+            "base64"
+          ],
+          "refusedHeaders": [
+            "host",
+            "content-length",
+            "transfer-encoding",
+            "connection",
+            "keep-alive",
+            "upgrade",
+            "te",
+            "trailer",
+            "proxy-authorization"
+          ],
+          "maxRequestBytes": 262144,
+          "statusRule": "a 400 is this service refusing; a 502 is the Verifier unreachable; anything the Verifier answered is a 200 with its status inside."
+        }
+      }
+    },
+    {
+      "name": "verifier limits: what the Verifier role will hold",
+      "method": "GET",
+      "path": "/oid4vp/verifier/limits",
+      "volatile": [
+        "held"
+      ],
+      "changed": "Live signing (#364, request_uri_method=post) added liveSignWaitMs and maxPendingSignings. #470 (B5) then added publicBaseUrl (oid4vpVerifierPublicBaseUrl, empty here); `before` is the answer from before that second change.",
+      "before": {
+        "status": 200,
+        "body": {
+          "enabled": true,
+          "ttlMs": 1800000,
+          "idleTtlMs": 600000,
+          "maxSessions": 100,
+          "maxSessionsPerCaller": 10,
+          "maxEvents": 50,
+          "maxResponseBytes": 262144,
+          "maxRequestObjectBytes": 65536,
+          "maxSessionBytes": 1048576,
+          "liveSignWaitMs": 15000,
+          "maxPendingSignings": 4,
+          "held": 0,
+          "requestObjectMediaType": "application/oauth-authz-req+jwt",
+          "caMediaType": "application/pkix-cert",
+          "verifies": false,
+          "note": "A page cannot be an HTTP server, so it cannot be the request_uri or the response_uri a Wallet connects to. This service hosts both on the page's behalf: the page signs the Request Object itself and publishes it here, and reads back what Wallets posted. Nothing is verified here; the page verifies."
+        }
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "enabled": true,
+          "ttlMs": 1800000,
+          "idleTtlMs": 600000,
+          "maxSessions": 100,
+          "maxSessionsPerCaller": 10,
+          "maxEvents": 50,
+          "maxResponseBytes": 262144,
+          "maxRequestObjectBytes": 65536,
+          "maxSessionBytes": 1048576,
+          "liveSignWaitMs": 15000,
+          "maxPendingSignings": 4,
+          "publicBaseUrl": "",
+          "held": 0,
+          "requestObjectMediaType": "application/oauth-authz-req+jwt",
+          "caMediaType": "application/pkix-cert",
+          "verifies": false,
+          "note": "A page cannot be an HTTP server, so it cannot be the request_uri or the response_uri a Wallet connects to. This service hosts both on the page's behalf: the page signs the Request Object itself and publishes it here, and reads back what Wallets posted. Nothing is verified here; the page verifies."
+        }
+      }
+    },
+    {
+      "name": "verifier create: a redirectUri that is not a string",
+      "method": "POST",
+      "path": "/oid4vp/verifier",
+      "body": {
+        "redirectUri": 5
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `redirectUri` must be a JSON string or null. GET /api-docs describes what oid4vpVerifierCreate takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "verifier create: a ttlMs that is not a number is refused",
+      "method": "POST",
+      "path": "/oid4vp/verifier",
+      "body": {
+        "ttlMs": "soon"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "ttlMs must be a positive whole number of milliseconds; it was \"soon\". Leave it out for the default (oid4vpVerifierTtlMs, 1800000)."
+        }
+      }
+    },
+    {
+      "name": "verifier create: a ttlMs above the ceiling is refused",
+      "method": "POST",
+      "path": "/oid4vp/verifier",
+      "body": {
+        "ttlMs": 999999999
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "ttlMs 999999999 is above this service's ceiling, oid4vpVerifierTtlMs = 1800000. A page may ask for less, never more."
+        }
+      }
+    },
+    {
+      "name": "verifier create: a redirectUri with a line break is refused",
+      "method": "POST",
+      "path": "/oid4vp/verifier",
+      "body": {
+        "redirectUri": "https://rp.invalid/\r\nX: y"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "redirectUri may not contain a line break."
+        }
+      }
+    },
+    {
+      "name": "verifier create: a liveSigning that is not a boolean",
+      "method": "POST",
+      "path": "/oid4vp/verifier",
+      "body": {
+        "liveSigning": "yes"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `liveSigning` must be a JSON boolean or null. GET /api-docs describes what oid4vpVerifierCreate takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "verifier create: a publicBaseUrl that is not https is refused",
+      "method": "POST",
+      "path": "/oid4vp/verifier",
+      "body": {
+        "publicBaseUrl": "http://verifier.invalid:4000"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "publicBaseUrl must be an https:// URL: a Wallet fetches request_uri and posts to response_uri over TLS. It was \"http://verifier.invalid:4000\"."
+        }
+      }
+    },
+    {
+      "name": "verifier create: a publicBaseUrl that is not a string",
+      "method": "POST",
+      "path": "/oid4vp/verifier",
+      "body": {
+        "publicBaseUrl": 4000
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `publicBaseUrl` must be a JSON string or null. GET /api-docs describes what oid4vpVerifierCreate takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "verifier create: a session is created (and expires by the next request)",
+      "method": "POST",
+      "path": "/oid4vp/verifier",
+      "body": {
+        "redirectUri": "https://rp.invalid/done",
+        "idleTtlMs": 1
+      },
+      "volatile": [
+        "id",
+        "secret",
+        "requestUri",
+        "responseUri",
+        "caIssuersUrl",
+        "expiresAt"
+      ],
+      "changed": "Live signing (#364) added liveSigning to the answer: false unless the page asked for it.",
+      "before": {
+        "status": 201,
+        "body": {
+          "id": "b16d60f8e25d542bb34cdb708ae6bd4e",
+          "secret": "faf4107f569cde63bedd5aa576a339d9",
+          "requestUri": "https://localhost:4998/oid4vp/verifier/b16d60f8e25d542bb34cdb708ae6bd4e/request",
+          "responseUri": "https://localhost:4998/oid4vp/verifier/b16d60f8e25d542bb34cdb708ae6bd4e/response",
+          "caIssuersUrl": "https://localhost:4998/oid4vp/verifier/b16d60f8e25d542bb34cdb708ae6bd4e/ca",
+          "expiresAt": "2026-11-17T19:15:17.394Z"
+        }
+      },
+      "expect": {
+        "status": 201,
+        "body": {
+          "id": "524474f917780615432c3f1a22a66ff6",
+          "secret": "ae57bd6590a44eb6b0b74f01f7135b10",
+          "requestUri": "https://localhost:4998/oid4vp/verifier/524474f917780615432c3f1a22a66ff6/request",
+          "responseUri": "https://localhost:4998/oid4vp/verifier/524474f917780615432c3f1a22a66ff6/response",
+          "caIssuersUrl": "https://localhost:4998/oid4vp/verifier/524474f917780615432c3f1a22a66ff6/ca",
+          "liveSigning": false,
+          "expiresAt": "2026-11-17T21:04:53.985Z"
+        }
+      }
+    },
+    {
+      "name": "verifier create: a live-signing session is created (and expires by the next request)",
+      "method": "POST",
+      "path": "/oid4vp/verifier",
+      "body": {
+        "liveSigning": true,
+        "idleTtlMs": 1
+      },
+      "volatile": [
+        "id",
+        "secret",
+        "requestUri",
+        "responseUri",
+        "caIssuersUrl",
+        "expiresAt"
+      ],
+      "expect": {
+        "status": 201,
+        "body": {
+          "id": "f4130eaa1e262ccf6fb6538ee4a1e8ea",
+          "secret": "5e0fa4c4d704f5879c7ff148313be618",
+          "requestUri": "https://localhost:4998/oid4vp/verifier/f4130eaa1e262ccf6fb6538ee4a1e8ea/request",
+          "responseUri": "https://localhost:4998/oid4vp/verifier/f4130eaa1e262ccf6fb6538ee4a1e8ea/response",
+          "caIssuersUrl": "https://localhost:4998/oid4vp/verifier/f4130eaa1e262ccf6fb6538ee4a1e8ea/ca",
+          "liveSigning": true,
+          "expiresAt": "2026-11-17T21:04:53.988Z"
+        }
+      }
+    },
+    {
+      "name": "verifier publish: to a session that does not exist",
+      "method": "PUT",
+      "path": "/oid4vp/verifier/0123456789abcdef0123456789abcdef/request",
+      "body": {
+        "requestObject": "a.b.c"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no Verifier session with that id here. Either it was never created, it has been deleted, or it expired (oid4vpVerifierTtlMs, oid4vpVerifierIdleTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "verifier publish: a requestObject that is not a string",
+      "method": "PUT",
+      "path": "/oid4vp/verifier/0123456789abcdef0123456789abcdef/request",
+      "body": {
+        "requestObject": 5
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `requestObject` must be a JSON string or null. GET /api-docs describes what oid4vpVerifierPublish takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "verifier publish for: a live-signed object for a session that does not exist",
+      "method": "PUT",
+      "path": "/oid4vp/verifier/0123456789abcdef0123456789abcdef/request/fedcba9876543210fedcba9876543210",
+      "body": {
+        "requestObject": "a.b.c"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no Verifier session with that id here. Either it was never created, it has been deleted, or it expired (oid4vpVerifierTtlMs, oid4vpVerifierIdleTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "verifier publish for: an encrypted live-signed object (a five-segment compact JWE) for a session that does not exist",
+      "method": "PUT",
+      "path": "/oid4vp/verifier/0123456789abcdef0123456789abcdef/request/fedcba9876543210fedcba9876543210",
+      "body": {
+        "requestObject": "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiQTI1NkdDTSIsImN0eSI6IkpXVCJ9..aXY.Y3Q.dGFn"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no Verifier session with that id here. Either it was never created, it has been deleted, or it expired (oid4vpVerifierTtlMs, oid4vpVerifierIdleTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "verifier publish for: a requestObject that is not a string",
+      "method": "PUT",
+      "path": "/oid4vp/verifier/0123456789abcdef0123456789abcdef/request/fedcba9876543210fedcba9876543210",
+      "body": {
+        "requestObject": 5
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `requestObject` must be a JSON string or null. GET /api-docs describes what oid4vpVerifierPublishFor takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "verifier request: a Wallet's GET to a session that does not exist",
+      "method": "GET",
+      "path": "/oid4vp/verifier/0123456789abcdef0123456789abcdef/request",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "not_found",
+          "error_description": "There is no Verifier session with that id here. Either it was never created, it has been deleted, or it expired (oid4vpVerifierTtlMs, oid4vpVerifierIdleTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "verifier request: a Wallet's POST (request_uri_method=post) to a session that does not exist",
+      "method": "POST",
+      "path": "/oid4vp/verifier/0123456789abcdef0123456789abcdef/request",
+      "form": {
+        "wallet_metadata": "{}",
+        "wallet_nonce": "n"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "not_found",
+          "error_description": "There is no Verifier session with that id here. Either it was never created, it has been deleted, or it expired (oid4vpVerifierTtlMs, oid4vpVerifierIdleTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "verifier ca: from a session that does not exist",
+      "method": "GET",
+      "path": "/oid4vp/verifier/0123456789abcdef0123456789abcdef/ca",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "not_found",
+          "error_description": "There is no Verifier session with that id here. Either it was never created, it has been deleted, or it expired (oid4vpVerifierTtlMs, oid4vpVerifierIdleTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "verifier response: a form answer to a session that does not exist",
+      "method": "POST",
+      "path": "/oid4vp/verifier/0123456789abcdef0123456789abcdef/response",
+      "form": {
+        "vp_token": "x",
+        "state": "s"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "not_found",
+          "error_description": "There is no Verifier session with that id here. Either it was never created, it has been deleted, or it expired (oid4vpVerifierTtlMs, oid4vpVerifierIdleTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "verifier response: a JSON answer to a session that does not exist",
+      "method": "POST",
+      "path": "/oid4vp/verifier/nope/response",
+      "body": {
+        "response": "a.b.c.d.e"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "not_found",
+          "error_description": "There is no Verifier session with that id here. Either it was never created, it has been deleted, or it expired (oid4vpVerifierTtlMs, oid4vpVerifierIdleTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "verifier events: of a session that does not exist",
+      "method": "GET",
+      "path": "/oid4vp/verifier/0123456789abcdef0123456789abcdef/events?after=3",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no Verifier session with that id here. Either it was never created, it has been deleted, or it expired (oid4vpVerifierTtlMs, oid4vpVerifierIdleTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "verifier events: a cursor that is not a number, of a session that does not exist",
+      "method": "GET",
+      "path": "/oid4vp/verifier/nope/events?after=soon",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no Verifier session with that id here. Either it was never created, it has been deleted, or it expired (oid4vpVerifierTtlMs, oid4vpVerifierIdleTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "verifier delete: a session that does not exist",
+      "method": "DELETE",
+      "path": "/oid4vp/verifier/0123456789abcdef0123456789abcdef",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no Verifier session with that id here. Either it was never created, it has been deleted, or it expired (oid4vpVerifierTtlMs, oid4vpVerifierIdleTtlMs)."
+        }
+      }
+    }
+  ]
+}

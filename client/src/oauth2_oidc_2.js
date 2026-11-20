@@ -15,6 +15,10 @@ const sessionHandoff = require("./session_handoff");
 // DPoP for THIS workflow (RFC 9449), kept apart from the VC workflow's copy —
 // see oauth_dpop.js for why the two are separate state.
 const oauthDpop = require("./oauth_dpop");
+// The VC issuance workflow's client authentication, applied to the code
+// exchange while that workflow drives this page (#vc-client-auth).
+const clientAuth = require("./client_auth");
+const vcClientAuthPane = require("./vc_client_auth_pane");
 const vciWallet = require("./vci_wallet");
 const bunyan = require("bunyan");
 const DOMPurify = require("dompurify");
@@ -150,12 +154,74 @@ function logoutButtonClick()  {
   return false;
 };
 
+// The VC issuance workflow's client authentication (#vc-client-auth), applied
+// to this page's authorization code exchange while that workflow is driving
+// it. client_secret_basic and client_secret_post are this page's own auth
+// styles, so they set it; the JWT methods and the Client Attestation are
+// added by client_auth.js. Resolves to { params, headers, problem } — what
+// to ADD to the request. Outside the VC flow it adds nothing.
+function vcFlowClientAuth(formData, viaApi) {
+  log.debug("Entering vcFlowClientAuth().");
+  var none = { params: {}, headers: {}, problem: "" };
+  if (!sdJwtVc.isFlowActive()) {
+    log.debug("Leaving vcFlowClientAuth(). Not the VC flow.");
+    return Promise.resolve(none);
+  }
+  var s;
+  try {
+    s = vcClientAuthPane.settings();
+  } catch (e) {
+    log.debug("Leaving vcFlowClientAuth(). " + e.message);
+    return Promise.resolve({ params: {}, headers: {}, problem: e.message });
+  }
+  s.secret = $("#token_client_secret").val() || "";
+  s.clientId = formData.client_id || s.clientId;
+  // Nothing chosen on step 1 (or `none` chosen): this page's own settings
+  // stand, exactly as before the VC workflow had a choice to make.
+  if (!vcClientAuthPane.chosenMethod() || s.method === "none") {
+    log.debug("Leaving vcFlowClientAuth(). No method chosen.");
+    return Promise.resolve(none);
+  }
+  if (s.method === "client_secret_basic" ||
+      s.method === "client_secret_post") {
+    formData.auth_style = s.method === "client_secret_post";
+    log.debug("Leaving vcFlowClientAuth(). The page's own auth style.");
+    return Promise.resolve(none);
+  }
+  // A Client Attestation's PoP carries the AS's challenge when it
+  // publishes a challenge_endpoint (draft -12 section 6.1), fetched here
+  // first. Through the api, its two headers ride as client_attestation and
+  // client_attestation_pop, which api/server.js turns back into headers.
+  var ready = s.method === "attest_jwt_client_auth" ?
+      vcClientAuthPane.freshChallenge().then(function () {
+        s.challenge = vcClientAuthPane.settings().challenge;
+      }) : Promise.resolve();
+  log.debug("Leaving vcFlowClientAuth(). " + s.method);
+  return ready.then(function () {
+    return clientAuth.apply(s);
+  }).then(function (applied) {
+    var params = Object.assign({}, applied.params);
+    delete params.client_id;
+    var headers = applied.headers || {};
+    if (viaApi && headers[clientAuth.HEADER_ATTESTATION]) {
+      return { params: params, headers: {}, problem: "",
+               attestation: headers[clientAuth.HEADER_ATTESTATION],
+               attestationPop: headers[clientAuth.HEADER_POP] };
+    }
+    return { params: params, headers: headers, problem: "" };
+  }, function (e) {
+    return { params: {}, headers: {}, problem: e.message };
+  });
+}
+
 function tokenButtonClick() {
   log.debug("Entering tokenButtonClick().");
   log.debug("Entering token Submit button clicked function.");
   expandPane('#step3');
   expandPane('#step4');
-  expandPane('#step5');
+  // Not #step5 (RP-initiated Logout): there is nothing to log out of until
+  // the token endpoint has answered with a token set (#38). The success
+  // handler opens it.
   expandPane('#step6');
   expandPane('#step7');
   expandPane('#operation-history-panel');
@@ -201,13 +267,30 @@ function tokenButtonClick() {
     // asynchronous (Web Crypto), so the call is made from the promise rather
     // than inline — and when DPoP is off, dpopTokenRequestHeaders() resolves to
     // an empty object and this is the request it always was.
-    dpopTokenRequestHeaders(localStorage.getItem("token_endpoint"))
+    var vcAuth = null;
+    vcFlowClientAuth(formData, false)
+      .then(function (auth) {
+        vcAuth = auth;
+        return dpopTokenRequestHeaders(localStorage.getItem("token_endpoint"));
+      })
       .then(function (headers) {
+        if (vcAuth.problem) {
+          $("#sdjwtvc_banner").append("<p class='vc-bad'>" +
+            DOMPurify.sanitize("Client authentication: " + vcAuth.problem) +
+            "</p>");
+          return;
+        }
         var url = localStorage.getItem("token_endpoint");
         var sentBody = convertToOAuth2Format(formData);
+        // The VC workflow's client assertion, when its method is one.
+        Object.keys(vcAuth.params).forEach(function (k) {
+          sentBody += "&" + encodeURIComponent(k) + "=" +
+            encodeURIComponent(vcAuth.params[k]);
+        });
         // convertToOAuth2Format() leaves the client credentials out of the
         // body for the Header auth style; this is where they go instead.
-        headers = $.extend({}, headers, clientBasicAuthHeader(formData));
+        headers = $.extend({}, headers, clientBasicAuthHeader(formData),
+                           vcAuth.headers);
         // Recorded for the HTTP tab before the request goes, so that a call
         // which never comes back still shows what left. The headers are the
         // ones this page CHOSE: the browser adds Origin, Referer and
@@ -275,6 +358,25 @@ function tokenButtonClick() {
     // It is a flag for the api and goes no further: convertToOAuth2Format()
     // builds the outbound form body from named parameters, so nothing here
     // reaches the identity provider.
+    vcFlowClientAuth(formData, true).then(function (vcAuth) {
+    if (vcAuth.problem) {
+      $("#sdjwtvc_banner").append("<p class='vc-bad'>" +
+        DOMPurify.sanitize("Client authentication: " + vcAuth.problem) +
+        "</p>");
+      return;
+    }
+    // The VC workflow's client assertion rides as custom parameters, which
+    // the api forwards into the body it sends (common/data.js).
+    if (Object.keys(vcAuth.params).length) {
+      formData.customParams = $.extend({}, formData.customParams || {},
+                                       vcAuth.params);
+    }
+    if (vcAuth.attestation) {
+      formData.client_attestation = vcAuth.attestation;
+      formData.client_attestation_pop = vcAuth.attestationPop;
+      // No client secret goes with an attestation, so no Basic header.
+      formData.auth_style = true;
+    }
     var proxiedBody = JSON.stringify($.extend({}, formData, {
       http_trace: true }));
     noteHttpRequestSent("token", {
@@ -294,6 +396,7 @@ function tokenButtonClick() {
       contentType: "application/json; charset=utf-8",
       success: successfulInternalTokenAPICall,
       error: errorInternalTokenAPICall
+    });
     });
   }
   log.debug("Leaving tokenButtonClick().");
@@ -1972,15 +2075,15 @@ function successfulInternalTokenAPICall(data, textStatus, request)
     $("#token_fieldset").hide();
     $("#token_expand_button").val("Expand");
     useRefreshTokens();
-    if(!!currentRefreshToken) {
+    if (!!data.id_token) {
       $("#logout_id_token_hint").val(data.id_token);
-      $("#logout_client_id").val($("#token_client_id").val());
-    } else {
-      $("#logout_fieldset").hide();
-      $("#logout_expand_button").val("Expand");
+    }
+    $("#logout_client_id").val($("#token_client_id").val());
+    if(!currentRefreshToken) {
       $("#refresh_fieldset").hide();
       $("#refresh_expand_button").val("Expand");
     }
+    expandLogoutPaneIfSession($("#token_grant_type").val(), data);
     expandPane('#currently-viewing-panel');
     expandPane('#refresh_endpoint_result');
     recalculateRefreshRequestDescription();
@@ -2035,7 +2138,9 @@ function errorInternalTokenAPICall(request, status, error) {
   log.error("request: " + JSON.stringify(request));
   log.error("status: " + JSON.stringify(status));
   log.error("error: " + JSON.stringify(error));
-  recalculateTokenErrorDescription(tokenErrorWithoutTrace(request));
+  var tokenErrorView = tokenErrorWithoutTrace(request);
+  recalculateTokenErrorDescription(tokenErrorView);
+  noteHandoffScopeRefusal(tokenErrorCode(tokenErrorView));
   saveOperationToHistory('Token Endpoint', {
     client_id: $("#token_client_id").val(),
     detail: 'error'
@@ -2379,11 +2484,10 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
   if (!!currentIDToken) {
     localStorage.setItem("refresh_id_token", currentIDToken);
   }
-  // Update token in logout pane.
-  if(currentRefreshToken) {
+  // Update token in logout pane. Whether the pane is open is decided by
+  // expandLogoutPaneIfSession() from the session, not from a refresh token.
+  if(currentIDToken) {
     $("#logout_id_token_hint").val(currentIDToken);
-  } else {
-    $("#logout_fieldset").hide();
   }
   recalculateRefreshRequestDescription();
   if (refreshTokenUsed) {
@@ -3825,6 +3929,9 @@ $(document).ready(function() {
                                    errorDescriptionParam + '</P>' +
                                '</fieldset>';
     $('#authz-error-report').html(DOMPurify.sanitize(authzErrorReportHTML));
+    // A hand-off waiting on this response is told why it got nothing back
+    // when the reason is the scope it asked for (#311).
+    noteHandoffScopeRefusal(errorParam);
     log.debug('errorDescriptionParam=' + errorDescriptionParam +
               ', errorParam=' + errorParam); 
     return;
@@ -4003,7 +4110,9 @@ $(document).ready(function() {
     $("#logout_id_token_hint").val(localStorage.getItem("token_id_token"));
     // Tokens already exist on this path, so show the panes that operate on
     // them (logout, revocation, token exchange) and the operation history.
-    expandPane("#step5");
+    expandLogoutPaneIfSession($("#token_grant_type").val(), {
+      access_token: localStorage.getItem("token_access_token"),
+      id_token: localStorage.getItem("token_id_token") });
     expandPane("#step6");
     expandPane("#step7");
     expandPane("#operation-history-panel");
@@ -4116,7 +4225,11 @@ $(document).ready(function() {
   {
     expandPane('#step3');
     expandPane('#step4');
-    expandPane('#step5');
+    // Logout only when the identity provider actually sent a token: an
+    // error response opens no session (#38).
+    if (implicitTokenReturned()) {
+      expandLogoutPaneIfSession(authzGrantType, { access_token: "x" });
+    }
     expandPane('#step6');
     expandPane('#step7');
     expandPane('#operation-history-panel');
@@ -4419,6 +4532,53 @@ function maybeShowTokenHandoffBanner() {
   log.debug("Leaving maybeShowTokenHandoffBanner(). " +
       tokenHandoff.label());
   return true;
+}
+
+// THE AUTHORIZATION SERVER REFUSED THE SCOPE THE HAND-OFF ASKED FOR (#311).
+//
+// Called with the `error` of a failed authorization response or token
+// response. When a hand-off is waiting, asked for scopes of its own and the
+// answer is `invalid_scope`, the banner says why: the client this page used
+// is not allowed those scopes, which is a registration to change rather than
+// anything wrong with either workflow. The sentence is token_handoff.js's,
+// so the two OAuth2 / OIDC pages cannot word it two ways.
+//
+// TEXT rather than markup, for the banner's own reason: the requested scope
+// crossed a page load in session storage.
+function noteHandoffScopeRefusal(error) {
+  log.debug("Entering noteHandoffScopeRefusal().");
+  if (!maybeShowTokenHandoffBanner()) {
+    log.debug("Leaving noteHandoffScopeRefusal(). No hand-off.");
+    return false;
+  }
+  var note = tokenHandoff.scopeRefusalNote(error,
+      tokenHandoff.requestedScope());
+  if (!note) {
+    log.debug("Leaving noteHandoffScopeRefusal(). Not a scope refusal.");
+    return false;
+  }
+  if (!$("#token_handoff_scope_refusal").length) {
+    $("#token_handoff_banner").append(" <strong " +
+        "id='token_handoff_scope_refusal'></strong>");
+  }
+  $("#token_handoff_scope_refusal").text(note);
+  log.debug("Leaving noteHandoffScopeRefusal(). Shown.");
+  return true;
+}
+
+// The `error` member of a token endpoint's JSON error response, or "" when
+// the body is not one.
+function tokenErrorCode(view) {
+  log.debug("Entering tokenErrorCode().");
+  try {
+    var parsed = JSON.parse((view && view.responseText) || "");
+    var code = parsed && typeof parsed.error === "string" ? parsed.error : "";
+    log.debug("Leaving tokenErrorCode(). " + (code || "(none)"));
+    return code;
+  } catch (e) {
+    log.debug("Leaving tokenErrorCode(). Not JSON.");
+    return "";
+  }
 }
 
 // Called from the token endpoint's success handler, once the tokens are in
@@ -5623,6 +5783,27 @@ function expandPane(selector) {
   $(selector).show().removeAttr("data-pane-collapsed");
   paneFieldset(selector).css("display", "block");
   log.debug("Leaving expandPane().");
+}
+
+// The RP-initiated Logout pane (#step5) stays collapsed until there is
+// something to log out of (#38): a token set this page has retrieved for an
+// END USER, which is what leaves a session at the provider. A Client
+// Credentials grant authenticates no end user, so it opens no session and the
+// pane stays shut; the reader can still open it by hand.
+function expandLogoutPaneIfSession(grantType, tokens) {
+  log.debug("Entering expandLogoutPaneIfSession(). grantType=" + grantType);
+  if (!tokens || !(tokens.access_token || tokens.id_token)) {
+    log.debug("Leaving expandLogoutPaneIfSession(). No token set.");
+    return;
+  }
+  if (grantType === "client_credentials" ||
+      grantType === "client_credential") {
+    log.debug("Leaving expandLogoutPaneIfSession(). No end-user session.");
+    return;
+  }
+  expandPane("#step5");
+  $("#logout_expand_button").val("Collapse");
+  log.debug("Leaving expandLogoutPaneIfSession().");
 }
 
 function onClickShowFieldSet(expand_button_id, field_set_id) {
@@ -7275,5 +7456,8 @@ module.exports = {
   // tests/scim_page.js drives the delivery half without an identity provider,
   // which is the only way to assert the whole route from the SCIM page's
   // button to the SCIM page's field.
-  offerTokenToHandoff
+  offerTokenToHandoff,
+  // Exported for tests/ssf_page.js, which drives the refusal note without an
+  // authorization server that refuses anything.
+  noteHandoffScopeRefusal
 };

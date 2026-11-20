@@ -121,8 +121,12 @@ var log = {
 // sts.example.com), so its certificate answers to exactly the names its
 // callers already use; `sts` is the compose service name and the other two are
 // what a host run and its documentation reach it by.
+//
+// `polaris` is the TLS CORS proxy in front of the Polaris OpenID4VP verifier
+// (#423, docker-compose-run-tests.yml): HAIP has a verifier hand the wallet
+// https URLs, and the browser in the tests container reaches it by that name.
 const DNS_NAMES = ['localhost', 'client', 'api',
-                   'sts', 'sts-mock', 'sts.example.com'];
+                   'sts', 'sts-mock', 'sts.example.com', 'polaris'];
 const IP_NAMES = ['127.0.0.1', '::1'];
 
 // ---------------------------------------------------------------------------
@@ -157,6 +161,15 @@ if (RUNNING_AS_SCRIPT) {
 // The project's own authoring modules. Required by path rather than through
 // tests/module_paths.js, which is the TEST suite's resolver and is not
 // reachable from a launcher.
+//
+// They require the pure-JS engines as siblings (`./pqc`), and those live in
+// common/crypto/ since #463 — the browser build stages them into client/src,
+// a node process does not. crypto_resolve.js closes that gap; it sits beside
+// this file in a checkout and in /usr/src/common in the tests image, where
+// this file is copied flat into /usr/src/app.
+require(fs.existsSync(path.join(__dirname, 'crypto_resolve.js'))
+  ? './crypto_resolve.js'
+  : '../common/crypto_resolve.js').install();
 const keys = require('../client/src/key_material.js');
 const x509 = require('../client/src/x509.js');
 
@@ -334,7 +347,7 @@ async function makeRootCa() {
     subjectPublicKey: key.publicPem,
     issuerPrivateKey: key.privatePem,
     signatureAlg: SIG_ALG,
-    extensions: x509.defaultExtensions('root-ca')
+    extensions: x509.defaultExtensions('root-ca', KEY_ALG)
   });
   log.debug('Leaving makeRootCa().');
   return { pem: cert.pem, privatePem: key.privatePem };
@@ -350,7 +363,7 @@ async function makeIssuingCa(root) {
     issuer: { certificatePem: root.pem, privateKeyPem: root.privatePem,
               keyAlg: KEY_ALG },
     signatureAlg: SIG_ALG,
-    extensions: x509.defaultExtensions('issuing-ca')
+    extensions: x509.defaultExtensions('issuing-ca', KEY_ALG)
   });
   log.debug('Leaving makeIssuingCa().');
   return { pem: cert.pem, privatePem: key.privatePem };
@@ -403,7 +416,7 @@ async function generate(outDir, extraNames, opts) {
   const ca = await loadOrMakeCa(caDir, options.rotateCa);
 
   const key = await keys.generateKeyPair(KEY_ALG);
-  const extensions = x509.defaultExtensions('tls-server');
+  const extensions = x509.defaultExtensions('tls-server', KEY_ALG);
   extensions.subjectAltName = { present: true, critical: false,
                                 names: altNames(extraNames) };
   const cert = await x509.issueCertificate({

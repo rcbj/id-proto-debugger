@@ -1,0 +1,1492 @@
+{
+  "family": "spiffe",
+  "about": "POST /spiffe/call, POST /spiffe/bundle and GET /spiffe/limits. Recorded against the api as it was before the family switched to the model, on api/env/docker-tests.js. A call that gets past the refusals aims at spire.invalid or bundle.invalid (RFC 6761). The SPIRE Server API refusals that come after the address name 127.0.0.1:8081, a literal the address policy (off on that configuration) never resolves and which every one of them refuses before a connection is opened.",
+  "cases": [
+    {
+      "name": "call: an empty body is refused for its address",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {},
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "address is required: host:port, tcp://host:port or unix:///path/to/api.sock. Note that a unix: path is resolved on the machine running this api, which is not the machine running your browser."
+        }
+      }
+    },
+    {
+      "name": "call: an empty address is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "",
+        "service": "workload",
+        "method": "FetchX509SVID"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "address is required: host:port, tcp://host:port or unix:///path/to/api.sock. Note that a unix: path is resolved on the machine running this api, which is not the machine running your browser."
+        }
+      }
+    },
+    {
+      "name": "call: an unknown service is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "spire.invalid:8081",
+        "service": "nope",
+        "method": "X"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "There is no SPIFFE service called \"nope\" here. The surfaces are workload, entry, agent, bundle, svid, trustdomain, debug.",
+          "code": "ESPIFFENOSERVICE",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "call: an unknown method is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "spire.invalid:8081",
+        "service": "workload",
+        "method": "Nope"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The SpiffeWorkloadAPI service has no method called \"Nope\". GET /spiffe/limits lists every method on every surface.",
+          "code": "ESPIFFENOMETHOD",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a metadata name that is not a token is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "spire.invalid:8081",
+        "service": "workload",
+        "method": "FetchX509SVID",
+        "metadata": {
+          "bad name": "x"
+        }
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The metadata name \"bad name\" is not a token, so it cannot go on the wire.",
+          "code": "ESPIFFEBADMETADATA",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a reserved grpc- metadata name is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "spire.invalid:8081",
+        "service": "workload",
+        "method": "FetchX509SVID",
+        "metadata": {
+          "grpc-timeout": "1S"
+        }
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The metadata name grpc-timeout is reserved: the grpc- prefix is the framing itself, and setting one changes how the far end reads the call rather than what it is told.",
+          "code": "ESPIFFEBADMETADATA",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a metadata value with a line feed is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "spire.invalid:8081",
+        "service": "workload",
+        "method": "FetchX509SVID",
+        "metadata": {
+          "x-a": "one\ntwo"
+        }
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The value of the metadata x-a carries a carriage return or a line feed.",
+          "code": "ESPIFFEBADMETADATA",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "call: an address with an unknown scheme is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "http://spire.invalid:8081",
+        "service": "workload",
+        "method": "FetchX509SVID"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "That address is not one this service dials: the scheme is not one this service dials. A SPIFFE gRPC address is host:port, tcp://host:port or unix:///path.",
+          "code": "ESPIFFEBADADDRESS",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: an address with no port is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "spire.invalid",
+        "service": "workload",
+        "method": "FetchX509SVID"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "That address is not one this service dials: the address names no port. gRPC has no default port and guessing one would dial something nobody asked for.",
+          "code": "ESPIFFEBADADDRESS",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a relative unix address is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "unix:agent.sock",
+        "service": "workload",
+        "method": "FetchX509SVID"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "That address is not one this service dials: a unix: address names an ABSOLUTE path — unix:///run/x.sock or unix:/run/x.sock.",
+          "code": "ESPIFFEBADADDRESS",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a port outside spiffeAllowedPorts is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "spire.invalid:9",
+        "service": "workload",
+        "method": "FetchX509SVID"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to open a gRPC connection to port 9. This service speaks SPIFFE to SPIFFE ports only (8081, 8092, 8181). Add the port to spiffeAllowedPorts if this deployment needs it, or set that setting to the string \"any\".",
+          "code": "ESPIFFEPORTNOTALLOWED",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a socket outside spiffeAllowedSocketPaths is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "unix:///etc/agent.sock",
+        "service": "workload",
+        "method": "FetchX509SVID"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to connect to the Unix socket /etc/agent.sock. This service connects only to sockets under /tmp/spire-agent/, /tmp/spire-server/. A path is not an address, so the address policy cannot judge one — this allowlist is what stands in its place. Add the prefix to spiffeAllowedSocketPaths, or set that setting to the string \"any\".",
+          "code": "ESPIFFESOCKETNOTALLOWED",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a socket path over sun_path is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "unix:///tmp/spire-agent/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.sock",
+        "service": "workload",
+        "method": "FetchX509SVID"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "That socket path is 142 bytes. A Unix socket path is bounded by sun_path at 103 bytes here, and past it the operating system fails the connect with a message about the address already being in use — which names something that is not the problem. Move the socket somewhere shorter.",
+          "code": "ESPIFFESOCKETPATHTOOLONG",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a socket that is not there is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "unix:///tmp/spire-agent/no-such-model-case.sock",
+        "service": "workload",
+        "method": "FetchX509SVID"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "There is nothing at /tmp/spire-agent/no-such-model-case.sock (ENOENT). A Workload API socket is created by the agent when it starts, so this usually means the agent is not running or SPIFFE_ENDPOINT_SOCKET names somewhere else. Note that the path is resolved on the machine running this api, which is not the machine running your browser.",
+          "code": "ESPIFFESOCKETMISSING",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: an unknown serverIdentityMode is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "127.0.0.1:8081",
+        "service": "entry",
+        "method": "ListEntries",
+        "request": {},
+        "serverIdentityMode": "trust-me"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "serverIdentityMode must be spiffe-id, trust-domain or none; it was \"trust-me\".",
+          "code": "ESPIFFEBADMODE",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: spiffe-id mode with no id and no trust domain is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "127.0.0.1:8081",
+        "service": "entry",
+        "method": "ListEntries",
+        "request": {}
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Verifying the server needs either the SPIFFE ID to expect or the trust domain to derive it from. A SPIRE server is spiffe://<trust domain>/spire/server.",
+          "code": "ESPIFFENOSERVERID",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a trust domain that names no server is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "127.0.0.1:8081",
+        "service": "entry",
+        "method": "ListEntries",
+        "request": {},
+        "trustDomain": "Not A Domain"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The trust domain \"Not A Domain\" cannot name a server: Cannot build a SPIFFE ID from trust domain \"Not A Domain\" and path \"/spire/server\": A trust domain name is lower-case: Not A Domain is not a valid trust domain, and it is not another spelling of not a domain either — they are different identifiers.",
+          "code": "ESPIFFEBADTRUSTDOMAIN",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: trust-domain mode with no trust domain is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "127.0.0.1:8081",
+        "service": "entry",
+        "method": "ListEntries",
+        "request": {},
+        "serverIdentityMode": "trust-domain"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "serverIdentityMode \"trust-domain\" needs the trust domain to check against.",
+          "code": "ESPIFFENOTRUSTDOMAIN",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: verifying with no trust bundle is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "127.0.0.1:8081",
+        "service": "entry",
+        "method": "ListEntries",
+        "request": {},
+        "trustDomain": "example.org"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Verifying the server needs its trust bundle — the x509-svid authorities of the trust domain, as PEM or as base64 DER. Fetch it from the bundle endpoint, or take it off any X509-SVID the Workload API handed you: that response carries the bundle beside the identity for exactly this.",
+          "code": "ESPIFFENOTRUSTBUNDLE",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a trust bundle with no certificate is refused",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "127.0.0.1:8081",
+        "service": "entry",
+        "method": "ListEntries",
+        "request": {},
+        "trustDomain": "example.org",
+        "trustBundle": "not a bundle"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The trust bundle supplied held no certificate this service could read. It takes PEM, or base64 CONCATENATED DER — which is what the Workload API returns and what node reads as one certificate, silently ignoring the rest.",
+          "code": "ESPIFFEBADTRUSTBUNDLE",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a well-formed Workload API call reaches the network",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "spire.invalid:8081",
+        "service": "workload",
+        "method": "FetchX509SVID",
+        "request": {},
+        "maxMessages": 1,
+        "securityHeader": true
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve spire.invalid: getaddrinfo ENOTFOUND spire.invalid (ENOTFOUND).",
+          "code": "ESPIFFEDNS",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 4
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a well-formed SPIRE Server API call reaches the network",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "tcp://spire.invalid:8081",
+        "service": "entry",
+        "method": "ListEntries",
+        "request": {},
+        "serverIdentityMode": "none",
+        "plaintext": true,
+        "metadata": {
+          "x-case": "model"
+        }
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve spire.invalid: getaddrinfo ENOTFOUND spire.invalid (ENOTFOUND).",
+          "code": "ESPIFFEDNS",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 5
+          }
+        }
+      }
+    },
+    {
+      "name": "call: a number for the address",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": 8081,
+        "service": "workload",
+        "method": "FetchX509SVID"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "changed": "address is a string in the model and refused with the route's own sentence otherwise. Until then a number passed the presence check and was refused by the address grammar as naming no port.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "That address is not one this service dials: the address names no port. gRPC has no default port and guessing one would dial something nobody asked for.",
+          "code": "ESPIFFEBADADDRESS",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 0
+          }
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "address is required: host:port, tcp://host:port or unix:///path/to/api.sock. Note that a unix: path is resolved on the machine running this api, which is not the machine running your browser."
+        }
+      }
+    },
+    {
+      "name": "call: a string for the request",
+      "method": "POST",
+      "path": "/spiffe/call",
+      "body": {
+        "address": "spire.invalid:8081",
+        "service": "workload",
+        "method": "FetchX509SVID",
+        "request": "x"
+      },
+      "volatile": [
+        "timing"
+      ],
+      "changed": "request is an object or null in the model. Until then a string was silently replaced with an empty request message, and the call went ahead with nothing the caller had written.",
+      "before": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve spire.invalid: getaddrinfo ENOTFOUND spire.invalid (ENOTFOUND).",
+          "code": "ESPIFFEDNS",
+          "identityMismatch": false,
+          "peer": null,
+          "timing": {
+            "totalMs": 4
+          }
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `request` must be a JSON object or null. GET /api-docs describes what spiffeCall takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "bundle: an empty body is refused",
+      "method": "POST",
+      "path": "/spiffe/bundle",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required and must be an http:// or https:// URL. A SPIFFE bundle endpoint is plain HTTPS — it is the ONE surface of SPIFFE that is, which is why this endpoint is an ordinary fetch and the other one is gRPC."
+        }
+      }
+    },
+    {
+      "name": "bundle: a url that is not http(s) is refused",
+      "method": "POST",
+      "path": "/spiffe/bundle",
+      "body": {
+        "url": "spiffe://example.org"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required and must be an http:// or https:// URL. A SPIFFE bundle endpoint is plain HTTPS — it is the ONE surface of SPIFFE that is, which is why this endpoint is an ordinary fetch and the other one is gRPC."
+        }
+      }
+    },
+    {
+      "name": "bundle: a well-formed request reaches the network",
+      "method": "POST",
+      "path": "/spiffe/bundle",
+      "body": {
+        "url": "https://bundle.invalid/",
+        "sslValidate": true
+      },
+      "volatile": [
+        "timing"
+      ],
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "The bundle endpoint could not be reached: getaddrinfo ENOTFOUND bundle.invalid",
+          "code": "ENOTFOUND",
+          "timing": {
+            "totalMs": 4
+          }
+        }
+      }
+    },
+    {
+      "name": "bundle: a number for the url",
+      "method": "POST",
+      "path": "/spiffe/bundle",
+      "body": {
+        "url": 7
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required and must be an http:// or https:// URL. A SPIFFE bundle endpoint is plain HTTPS — it is the ONE surface of SPIFFE that is, which is why this endpoint is an ordinary fetch and the other one is gRPC."
+        }
+      }
+    },
+    {
+      "name": "limits",
+      "method": "GET",
+      "path": "/spiffe/limits",
+      "expect": {
+        "status": 200,
+        "body": {
+          "ports": [
+            8081,
+            8092,
+            8181
+          ],
+          "socketPaths": [
+            "/tmp/spire-agent/",
+            "/tmp/spire-server/"
+          ],
+          "maxSocketPathBytes": 103,
+          "connectionTimeoutMs": 5000,
+          "callTimeoutMs": 10000,
+          "maxResultBytes": 1048576,
+          "maxStreamMessages": 4,
+          "streamTimeoutMs": 45000,
+          "addressPolicy": false,
+          "serverIdentityModes": [
+            "spiffe-id",
+            "trust-domain",
+            "none"
+          ],
+          "securityHeader": "workload.spiffe.io",
+          "surfaces": {
+            "workload": [
+              {
+                "service": "workload",
+                "label": "SpiffeWorkloadAPI",
+                "methods": [
+                  {
+                    "service": "workload",
+                    "serviceLabel": "SpiffeWorkloadAPI",
+                    "name": "FetchJWTBundles",
+                    "path": "/SpiffeWorkloadAPI/FetchJWTBundles",
+                    "requestStream": false,
+                    "responseStream": true,
+                    "what": "The JWT verification keys as JWK Sets — JSON, where the X.509 bundles are concatenated DER.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "workload",
+                    "serviceLabel": "SpiffeWorkloadAPI",
+                    "name": "FetchJWTSVID",
+                    "path": "/SpiffeWorkloadAPI/FetchJWTSVID",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "A JWT-SVID for the audience(s) asked for. Refuses a call with no audience, and every conforming implementation does: a JWT-SVID is a bearer credential, and the audience is the only thing stopping one issued for service A being replayed against service B.",
+                    "example": {
+                      "audience": [
+                        "spiffe://example.org/db"
+                      ]
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "workload",
+                    "serviceLabel": "SpiffeWorkloadAPI",
+                    "name": "FetchWITBundles",
+                    "path": "/SpiffeWorkloadAPI/FetchWITBundles",
+                    "requestStream": false,
+                    "responseStream": true,
+                    "what": "The WIT half of the bundle stream. Same answer as FetchWITSVID from a server that issues no WIT-SVIDs.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "workload",
+                    "serviceLabel": "SpiffeWorkloadAPI",
+                    "name": "FetchWITSVID",
+                    "path": "/SpiffeWorkloadAPI/FetchWITSVID",
+                    "requestStream": false,
+                    "responseStream": true,
+                    "what": "Workload Identity Tokens. On the service because they are in the SPIFFE proto; a server that issues none answers Unimplemented, which is the answer this call exists to show you.",
+                    "example": {
+                      "audience": [
+                        "spiffe://example.org/db"
+                      ]
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "workload",
+                    "serviceLabel": "SpiffeWorkloadAPI",
+                    "name": "FetchX509Bundles",
+                    "path": "/SpiffeWorkloadAPI/FetchX509Bundles",
+                    "requestStream": false,
+                    "responseStream": true,
+                    "what": "The X.509 trust bundles alone — this trust domain's and every federated one's — with no identity and no private key. What a service that only VERIFIES peers needs.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "workload",
+                    "serviceLabel": "SpiffeWorkloadAPI",
+                    "name": "FetchX509SVID",
+                    "path": "/SpiffeWorkloadAPI/FetchX509SVID",
+                    "requestStream": false,
+                    "responseStream": true,
+                    "what": "One X509-SVID per entitled registration entry, each with its PRIVATE KEY and the trust domain bundle. This is the call a workload makes to be given an identity, and it needs no credential — the Workload Endpoint specification says the endpoint MUST NOT require one, because a workload has no root of trust until this call gives it one.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "workload",
+                    "serviceLabel": "SpiffeWorkloadAPI",
+                    "name": "ValidateJWTSVID",
+                    "path": "/SpiffeWorkloadAPI/ValidateJWTSVID",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Verifies a JWT-SVID: the signature against the trust domain's JWT authorities, exp with no leeway, the audience, and that the sub belongs to the trust domain whose key verified it. The point of the call is to be told NO, so this is the one method in the family that behaves like a production one.",
+                    "example": {
+                      "audience": "spiffe://example.org/db",
+                      "svid": "<a JWT-SVID>"
+                    },
+                    "described": true
+                  }
+                ]
+              }
+            ],
+            "server": [
+              {
+                "service": "entry",
+                "label": "Entry",
+                "methods": [
+                  {
+                    "service": "entry",
+                    "serviceLabel": "Entry",
+                    "name": "BatchCreateEntry",
+                    "path": "/spire.api.server.entry.v1.Entry/BatchCreateEntry",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Create registration entries. A batch answers PER ENTRY, so a partial success is normal and the per-row status is the result — reading only the transport status reports a batch of ten with nine failures as a success.",
+                    "example": {
+                      "entries": [
+                        {
+                          "spiffe_id": {
+                            "trust_domain": "example.org",
+                            "path": "/example"
+                          },
+                          "parent_id": {
+                            "trust_domain": "example.org",
+                            "path": "/spire/server"
+                          },
+                          "selectors": [
+                            {
+                              "type": "unix",
+                              "value": "uid:1000"
+                            }
+                          ],
+                          "x509_svid_ttl": 3600
+                        }
+                      ]
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "entry",
+                    "serviceLabel": "Entry",
+                    "name": "BatchDeleteEntry",
+                    "path": "/spire.api.server.entry.v1.Entry/BatchDeleteEntry",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Delete entries by id, per-row status again.",
+                    "example": {
+                      "ids": [
+                        "<entry id>"
+                      ]
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "entry",
+                    "serviceLabel": "Entry",
+                    "name": "BatchUpdateEntry",
+                    "path": "/spire.api.server.entry.v1.Entry/BatchUpdateEntry",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Update entries. Without an `entry_mask` every field of the submitted entry is applied, which is what `spire-server entry update` relies on and is how a field gets cleared by accident.",
+                    "example": {
+                      "entries": [
+                        {
+                          "id": "<entry id>",
+                          "x509_svid_ttl": 7200
+                        }
+                      ],
+                      "input_mask": {
+                        "x509_svid_ttl": true
+                      }
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "entry",
+                    "serviceLabel": "Entry",
+                    "name": "CountEntries",
+                    "path": "/spire.api.server.entry.v1.Entry/CountEntries",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "How many registration entries the server holds. Administrator or the local socket.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "entry",
+                    "serviceLabel": "Entry",
+                    "name": "GetAuthorizedEntries",
+                    "path": "/spire.api.server.entry.v1.Entry/GetAuthorizedEntries",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "What THIS CALLER is entitled to, rather than what the server holds. An AGENT method: it answers the agent on the connection, so the credential decides the answer and there is nothing to name in the request.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "entry",
+                    "serviceLabel": "Entry",
+                    "name": "GetEntry",
+                    "path": "/spire.api.server.entry.v1.Entry/GetEntry",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "One entry by its id. NOT by its SPIFFE ID: several entries may name one identity under different parents and selectors, which is the case a client that keys on the SPIFFE ID gets wrong.",
+                    "example": {
+                      "id": "<entry id>"
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "entry",
+                    "serviceLabel": "Entry",
+                    "name": "ListEntries",
+                    "path": "/spire.api.server.entry.v1.Entry/ListEntries",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "The registration entries: which identity a workload gets, under which parent, matching which selectors. `filter.by_hint` and `filter.by_downstream` are google.protobuf wrappers on the wire — send the bare value and this service wraps it.",
+                    "example": {
+                      "page_size": 20
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "entry",
+                    "serviceLabel": "Entry",
+                    "name": "SyncAuthorizedEntries",
+                    "path": "/spire.api.server.entry.v1.Entry/SyncAuthorizedEntries",
+                    "requestStream": true,
+                    "responseStream": true,
+                    "what": "The streaming form of the same question, for an agent keeping a local cache: send the ids and revisions you hold and be told what changed. Bidirectional, so this service writes the request, ends its side and reads what comes back.",
+                    "example": {},
+                    "described": true
+                  }
+                ]
+              },
+              {
+                "service": "agent",
+                "label": "Agent",
+                "methods": [
+                  {
+                    "service": "agent",
+                    "serviceLabel": "Agent",
+                    "name": "AttestAgent",
+                    "path": "/spire.api.server.agent.v1.Agent/AttestAgent",
+                    "requestStream": true,
+                    "responseStream": true,
+                    "what": "Become an agent. OPEN TO EVERYBODY — it has to be, because an agent has no SVID until this call gives it one, which is why the SPIRE Server API's TCP port ASKS FOR a client certificate and does not REQUIRE one. Bidirectional: the params go up, an SVID or a challenge comes back. The CSR is real even where the attestation payload is taken on trust.",
+                    "example": {
+                      "params": {
+                        "data": {
+                          "type": "join_token",
+                          "payload": "<a join token>"
+                        },
+                        "params": {
+                          "csr": "<base64 DER PKCS#10>"
+                        }
+                      }
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "agent",
+                    "serviceLabel": "Agent",
+                    "name": "BanAgent",
+                    "path": "/spire.api.server.agent.v1.Agent/BanAgent",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Refuse this agent from now on, including a fresh attestation. The difference from DeleteAgent is the whole reason both exist.",
+                    "example": {
+                      "id": {
+                        "trust_domain": "example.org",
+                        "path": "/spire/agent/..."
+                      }
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "agent",
+                    "serviceLabel": "Agent",
+                    "name": "CountAgents",
+                    "path": "/spire.api.server.agent.v1.Agent/CountAgents",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "How many agents have attested here.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "agent",
+                    "serviceLabel": "Agent",
+                    "name": "CreateJoinToken",
+                    "path": "/spire.api.server.agent.v1.Agent/CreateJoinToken",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Mint a join token: the one attestation payload a SPIRE server ISSUES and can therefore verify. Single-use, expiring, and optionally bound to one agent id.",
+                    "example": {
+                      "ttl": 600
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "agent",
+                    "serviceLabel": "Agent",
+                    "name": "DeleteAgent",
+                    "path": "/spire.api.server.agent.v1.Agent/DeleteAgent",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Forget an agent. It may attest again; a BAN is what stops that.",
+                    "example": {
+                      "id": {
+                        "trust_domain": "example.org",
+                        "path": "/spire/agent/..."
+                      }
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "agent",
+                    "serviceLabel": "Agent",
+                    "name": "GetAgent",
+                    "path": "/spire.api.server.agent.v1.Agent/GetAgent",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "One agent by its SPIFFE ID, which is always under the reserved /spire/agent path.",
+                    "example": {
+                      "id": {
+                        "trust_domain": "example.org",
+                        "path": "/spire/agent/join_token/<uuid>"
+                      }
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "agent",
+                    "serviceLabel": "Agent",
+                    "name": "ListAgents",
+                    "path": "/spire.api.server.agent.v1.Agent/ListAgents",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "The attested agents, with the selectors their attestation claimed. Note `unverified:true` on a mock's agents — an attestation payload nothing checked is a claim, not a fact.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "agent",
+                    "serviceLabel": "Agent",
+                    "name": "PostStatus",
+                    "path": "/spire.api.server.agent.v1.Agent/PostStatus",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "An agent reporting its own health. An agent method, so the credential decides who is reporting.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "agent",
+                    "serviceLabel": "Agent",
+                    "name": "RenewAgent",
+                    "path": "/spire.api.server.agent.v1.Agent/RenewAgent",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Renew the agent ON THE CONNECTION — never one named in the request, which is the distinction that made this method answerable at all once the surface authenticated its callers.",
+                    "example": {
+                      "params": {
+                        "csr": "<base64 DER PKCS#10>"
+                      }
+                    },
+                    "described": true
+                  }
+                ]
+              },
+              {
+                "service": "bundle",
+                "label": "Bundle",
+                "methods": [
+                  {
+                    "service": "bundle",
+                    "serviceLabel": "Bundle",
+                    "name": "AppendBundle",
+                    "path": "/spire.api.server.bundle.v1.Bundle/AppendBundle",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Add authorities to this trust domain's own bundle. A server is right to refuse: it would publish an authority it holds no key for, which every workload in the trust domain would then trust.",
+                    "example": {
+                      "x509_authorities": [],
+                      "jwt_authorities": []
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "bundle",
+                    "serviceLabel": "Bundle",
+                    "name": "BatchCreateFederatedBundle",
+                    "path": "/spire.api.server.bundle.v1.Bundle/BatchCreateFederatedBundle",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Push a foreign bundle in. A bundle is PUSHED and never FETCHED here: dereferencing a URL the far end chose is a server-side request forgery with a specification citation attached.",
+                    "example": {
+                      "bundle": [
+                        {
+                          "trust_domain": "example.com",
+                          "x509_authorities": [],
+                          "jwt_authorities": []
+                        }
+                      ]
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "bundle",
+                    "serviceLabel": "Bundle",
+                    "name": "BatchDeleteFederatedBundle",
+                    "path": "/spire.api.server.bundle.v1.Bundle/BatchDeleteFederatedBundle",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Stop federating. `mode` decides what happens to the registration entries that federate with it, and the default RESTRICT refuses while any still do.",
+                    "example": {
+                      "trust_domains": [
+                        "example.com"
+                      ],
+                      "mode": "RESTRICT"
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "bundle",
+                    "serviceLabel": "Bundle",
+                    "name": "BatchSetFederatedBundle",
+                    "path": "/spire.api.server.bundle.v1.Bundle/BatchSetFederatedBundle",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Create or replace — the idempotent form, which is what a configuration loop wants.",
+                    "example": {
+                      "bundle": [
+                        {
+                          "trust_domain": "example.com"
+                        }
+                      ]
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "bundle",
+                    "serviceLabel": "Bundle",
+                    "name": "BatchUpdateFederatedBundle",
+                    "path": "/spire.api.server.bundle.v1.Bundle/BatchUpdateFederatedBundle",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Replace a foreign bundle that is already held.",
+                    "example": {
+                      "bundle": [
+                        {
+                          "trust_domain": "example.com"
+                        }
+                      ]
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "bundle",
+                    "serviceLabel": "Bundle",
+                    "name": "CountBundles",
+                    "path": "/spire.api.server.bundle.v1.Bundle/CountBundles",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "How many FEDERATED bundles are held. This trust domain's own is not one of them.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "bundle",
+                    "serviceLabel": "Bundle",
+                    "name": "GetBundle",
+                    "path": "/spire.api.server.bundle.v1.Bundle/GetBundle",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "This trust domain's own bundle. OPEN TO EVERYBODY, in a real SPIRE server too: it is the root of trust and it is published.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "bundle",
+                    "serviceLabel": "Bundle",
+                    "name": "GetFederatedBundle",
+                    "path": "/spire.api.server.bundle.v1.Bundle/GetFederatedBundle",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "One foreign bundle by trust domain NAME — `example.com`, not `spiffe://example.com`.",
+                    "example": {
+                      "trust_domain": "example.com"
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "bundle",
+                    "serviceLabel": "Bundle",
+                    "name": "ListFederatedBundles",
+                    "path": "/spire.api.server.bundle.v1.Bundle/ListFederatedBundles",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Every foreign trust domain's bundle this server holds.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "bundle",
+                    "serviceLabel": "Bundle",
+                    "name": "PublishJWTAuthority",
+                    "path": "/spire.api.server.bundle.v1.Bundle/PublishJWTAuthority",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "The JWT half of AppendBundle, for a DOWNSTREAM server. Same refusal, same reason.",
+                    "example": {
+                      "jwt_authority": {}
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "bundle",
+                    "serviceLabel": "Bundle",
+                    "name": "PublishWITAuthority",
+                    "path": "/spire.api.server.bundle.v1.Bundle/PublishWITAuthority",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "The WIT half. A server that issues no WIT-SVIDs answers Unimplemented.",
+                    "example": {
+                      "wit_authority": {}
+                    },
+                    "described": true
+                  }
+                ]
+              },
+              {
+                "service": "svid",
+                "label": "SVID",
+                "methods": [
+                  {
+                    "service": "svid",
+                    "serviceLabel": "SVID",
+                    "name": "BatchNewWITSVID",
+                    "path": "/spire.api.server.svid.v1.SVID/BatchNewWITSVID",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "The WIT form. Unimplemented on a server that issues none.",
+                    "example": {
+                      "params": []
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "svid",
+                    "serviceLabel": "SVID",
+                    "name": "BatchNewX509SVID",
+                    "path": "/spire.api.server.svid.v1.SVID/BatchNewX509SVID",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "What an AGENT calls to sign the CSRs of the workloads it is attesting — one per entry id. Only the public key is read out of each CSR; the identity comes from the entry.",
+                    "example": {
+                      "params": [
+                        {
+                          "entry_id": "<entry id>",
+                          "csr": "<base64 DER PKCS#10>"
+                        }
+                      ]
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "svid",
+                    "serviceLabel": "SVID",
+                    "name": "MintJWTSVID",
+                    "path": "/spire.api.server.svid.v1.SVID/MintJWTSVID",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "A JWT-SVID for an identity you name. Refuses with no audience, for the reason FetchJWTSVID does.",
+                    "example": {
+                      "id": {
+                        "trust_domain": "example.org",
+                        "path": "/example"
+                      },
+                      "audience": [
+                        "spiffe://example.org/db"
+                      ],
+                      "ttl": 300
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "svid",
+                    "serviceLabel": "SVID",
+                    "name": "MintWITSVID",
+                    "path": "/spire.api.server.svid.v1.SVID/MintWITSVID",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "The WIT form. Unimplemented on a server that issues none.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "svid",
+                    "serviceLabel": "SVID",
+                    "name": "MintX509SVID",
+                    "path": "/spire.api.server.svid.v1.SVID/MintX509SVID",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "`spire-server x509 mint`: a one-off certificate outside any registration entry. The CSR is the ONLY statement of what is wanted, so the identity is read out of it rather than out of an entry — which is what makes this method different from every other minting call here.",
+                    "example": {
+                      "csr": "<base64 DER PKCS#10>",
+                      "ttl": 3600
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "svid",
+                    "serviceLabel": "SVID",
+                    "name": "NewDownstreamX509CA",
+                    "path": "/spire.api.server.svid.v1.SVID/NewDownstreamX509CA",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "A signing certificate for a NESTED SPIRE server. The DOWNSTREAM entity, and the only method on this surface that hands out a certificate which can sign others.",
+                    "example": {
+                      "csr": "<base64 DER PKCS#10>"
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "svid",
+                    "serviceLabel": "SVID",
+                    "name": "NewJWTSVID",
+                    "path": "/spire.api.server.svid.v1.SVID/NewJWTSVID",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "The agent's form of MintJWTSVID: an entry id rather than an identity, because an agent may not name an identity it was not given.",
+                    "example": {
+                      "entry_id": "<entry id>",
+                      "audience": [
+                        "spiffe://example.org/db"
+                      ]
+                    },
+                    "described": true
+                  }
+                ]
+              },
+              {
+                "service": "trustdomain",
+                "label": "TrustDomain",
+                "methods": [
+                  {
+                    "service": "trustdomain",
+                    "serviceLabel": "TrustDomain",
+                    "name": "BatchCreateFederationRelationship",
+                    "path": "/spire.api.server.trustdomain.v1.TrustDomain/BatchCreateFederationRelationship",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Record a relationship. `https_web` trusts the public web PKI for the endpoint; `https_spiffe` trusts a SPIFFE ID, which is the profile that makes federation self-contained.",
+                    "example": {
+                      "federation_relationships": [
+                        {
+                          "trust_domain": "example.com",
+                          "bundle_endpoint_url": "https://example.com/bundle",
+                          "https_spiffe": {
+                            "endpoint_spiffe_id": {
+                              "trust_domain": "example.com",
+                              "path": "/spire/server"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "trustdomain",
+                    "serviceLabel": "TrustDomain",
+                    "name": "BatchDeleteFederationRelationship",
+                    "path": "/spire.api.server.trustdomain.v1.TrustDomain/BatchDeleteFederationRelationship",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Stop recording one. This does not delete the BUNDLE — that is BatchDeleteFederatedBundle, and the two being separate is the point.",
+                    "example": {
+                      "trust_domains": [
+                        "example.com"
+                      ]
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "trustdomain",
+                    "serviceLabel": "TrustDomain",
+                    "name": "BatchUpdateFederationRelationship",
+                    "path": "/spire.api.server.trustdomain.v1.TrustDomain/BatchUpdateFederationRelationship",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Change one.",
+                    "example": {
+                      "federation_relationships": [
+                        {
+                          "trust_domain": "example.com"
+                        }
+                      ]
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "trustdomain",
+                    "serviceLabel": "TrustDomain",
+                    "name": "GetFederationRelationship",
+                    "path": "/spire.api.server.trustdomain.v1.TrustDomain/GetFederationRelationship",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "One relationship by trust domain name.",
+                    "example": {
+                      "trust_domain": "example.com"
+                    },
+                    "described": true
+                  },
+                  {
+                    "service": "trustdomain",
+                    "serviceLabel": "TrustDomain",
+                    "name": "ListFederationRelationships",
+                    "path": "/spire.api.server.trustdomain.v1.TrustDomain/ListFederationRelationships",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Which trust domains this one federates with, at which bundle endpoint, under which profile.",
+                    "example": {},
+                    "described": true
+                  },
+                  {
+                    "service": "trustdomain",
+                    "serviceLabel": "TrustDomain",
+                    "name": "RefreshBundle",
+                    "path": "/spire.api.server.trustdomain.v1.TrustDomain/RefreshBundle",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Ask the server to go and FETCH a federated bundle. A server may well refuse, naming the URL it is not fetching — the same refusal WS-Federation's wreqptr and OIDC's jwks_uri get here, and for the same reason.",
+                    "example": {
+                      "trust_domain": "example.com"
+                    },
+                    "described": true
+                  }
+                ]
+              },
+              {
+                "service": "debug",
+                "label": "Debug",
+                "methods": [
+                  {
+                    "service": "debug",
+                    "serviceLabel": "Debug",
+                    "name": "GetInfo",
+                    "path": "/spire.api.server.debug.v1.Debug/GetInfo",
+                    "requestStream": false,
+                    "responseStream": false,
+                    "what": "Uptime, and how many entries, agents and federated bundles the server holds. LOCAL-ONLY in SPIRE's own authorization table, so an administrator's SVID over TCP is refused it — that reads like an omission and is not: it is a health check for whoever is standing on the host.",
+                    "example": {},
+                    "described": true
+                  }
+                ]
+              }
+            ]
+          },
+          "notes": [
+            "The Workload API is never authenticated: its specification says a client MUST NOT be required to authenticate, because a workload has no root of trust until that call gives it one.",
+            "The SPIRE Server API's TCP port is mutual TLS and its Unix socket is the local entity. Those are opposite postures on one service and reading it as an inconsistency is the mistake to avoid.",
+            "A SPIRE server's certificate carries no DNS name, so hostname verification cannot pass and is REPLACED here by a check on the SPIFFE ID in its URI subjectAltName.",
+            "A stream is read for at most 4 message(s) or 45000 milliseconds — its own deadline, longer than a unary call's 10000 — and the answer says which stopped it."
+          ]
+        }
+      }
+    }
+  ]
+}

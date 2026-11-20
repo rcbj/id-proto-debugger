@@ -57,15 +57,17 @@ var log = bunyan.createLogger({ name: 'crypto_engines',
 log.info("Log initialized. logLevel=" + log.level());
 
 // The modules under test live next to this script in the tests image and in
-// client/src in a checkout — see the note in tests/module_paths.js, and the
+// common/crypto in a checkout — see the note in tests/module_paths.js, and the
 // tests/Dockerfile COPY that puts them here.
 const paths = require("./module_paths.js");
-const SRC = path.resolve(__dirname, "..", "client", "src");
+// common/crypto/ since #463 moved the engines out of client/src.
+const CRYPTO = path.resolve(__dirname, "..", "common", "crypto");
 
 function shared(name) {
   log.debug("Entering shared(). name=" + name);
   const found = paths.requireSharedModule(
-    [path.join(__dirname, name), path.join(SRC, name)], "client/src/" + name);
+    [path.join(__dirname, name), path.join(CRYPTO, name)],
+    "common/crypto/" + name);
   log.debug("Leaving shared().");
   return found;
 }
@@ -1030,7 +1032,8 @@ function checkNoDom() {
   const forbidden = /\b(document|window|localStorage|sessionStorage)\s*\./;
   var checked = 0;
   DOM_FREE.forEach(function (name) {
-    const candidates = [path.join(__dirname, name), path.join(SRC, name)];
+    const candidates = [path.join(__dirname, name),
+                        path.join(CRYPTO, name)];
     const file = candidates.filter(function (one) {
       return fs.existsSync(one);
     })[0];

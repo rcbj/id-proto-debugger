@@ -64,15 +64,21 @@ const metadataClient = paths.requireSharedModule(
   [path.join(__dirname, "metadata_client.js"), path.join(ROOT, "client", "src",
    "metadata_client.js")],
   "the wallet's metadata/JWS module");
-const stsSuite = paths.requireSharedModule(
-  // The tests image's flattened copy first, then wherever iya-sts's tree
-  // keeps it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
-  // ("Reorganizing source code.") moved every module into a subdirectory, and
-  // this one is in common/crypto_impl/. mockStsModule() is the single place
-  // that answers that question — see tests/module_paths.js.
-  [path.join(__dirname, "sts_bbs2023.js"),
-   paths.mockStsModule("bbs2023.js") || ""],
-  "the STS's bbs-2023 cryptosuite");
+// iya-sts's W3C bbs-2023 (Data Integrity BBS Cryptosuites v1.0, iya-sts
+// 1.1.0): oid4vc/vc_bbs.js verifies a base proof, and
+// common/crypto_impl/bbs2023.js decodes the issuer's Multikey. Both come from
+// iya-sts's tree, and mockStsModule() is the single place that knows where it
+// keeps them (tests/module_paths.js). Its legacy* functions are the pre-W3C
+// format, which this debugger no longer speaks, and are not used.
+const stsBbs = paths.requireSharedModule(
+  [paths.mockStsModule("vc_bbs.js") || ""],
+  "iya-sts's W3C bbs-2023 cryptosuite (oid4vc/vc_bbs.js)");
+const stsBbsKeys = paths.requireSharedModule(
+  [paths.mockStsModule("bbs2023.js") || ""],
+  "iya-sts's BBS key encoding (common/crypto_impl/bbs2023.js)");
+// A W3C bbs-2023 BASE proof is multibase base64url of CBOR tag 0xd95d02,
+// which base64url-encodes to "u2V0C" (a derived one, 0xd95d03, is "u2V0D").
+const BASE_PROOF_PREFIX = /^u2V0C/;
 
 var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
@@ -403,13 +409,17 @@ async function ldpVcNamesTheDidAndVerifies(meta) {
   assert.ok(resolved.method.publicKeyMultibase,
     "the verificationMethod must resolve to a key with a publicKeyMultibase: " +
     JSON.stringify(resolved.method).slice(0, 200));
-  const pk = stsSuite.multibaseToBytes(resolved.method.publicKeyMultibase);
+  const pk = stsBbsKeys.publicKeyFromMultibase(
+    resolved.method.publicKeyMultibase);
   assert.strictEqual(pk.length, 96,
-    "a BLS12-381 G2 public key is 96 compressed bytes; got " + pk.length +
-        ". A short key here means " +
-    "the multibase prefix was stripped twice.");
+    "a BLS12-381 G2 public key is 96 compressed bytes, after the Multikey's " +
+        "0xeb01 prefix; got " + pk.length + ".");
+  assert.ok(BASE_PROOF_PREFIX.test((credential.proof || {}).proofValue),
+    "the credential carries a W3C bbs-2023 base proof (CBOR tag 0xd95d02). " +
+        "Got " + String((credential.proof || {}).proofValue).slice(0, 12) +
+        "...");
 
-  const verdict = await stsSuite.verifyBase(credential, pk);
+  const verdict = await stsBbs.verifyBaseProof(credential, pk);
   assert.strictEqual(verdict.ok, true,
     "the embedded bbs-2023 proof must verify against the key resolved FROM " +
         "THE DID DOCUMENT. This is " +
@@ -418,8 +428,8 @@ async function ldpVcNamesTheDidAndVerifies(meta) {
     "document names the key, and the key verifies the proof.");
   log.info("[ldp_vc] OK — issuer " + credential.issuer +
            ", verificationMethod " + vm +
-           ", proof verifies over " + verdict.statements.length +
-               " statements.");
+           ", proof verifies over " +
+           (verdict.mandatory + verdict.nonMandatory) + " statements.");
 
   // Non-regression: the plain ldp_vc configuration keeps the dereferenceable
   // https verificationMethod that tests/ldp_vc_issuance.js fetches directly.

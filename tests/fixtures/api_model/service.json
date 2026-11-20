@@ -1,0 +1,86 @@
+{
+  "family": "service",
+  "about": "GET /healthcheck, GET /model/gaps, and the API document at GET /api-docs.json GET /api-docs (the explorer), /api-docs/init.js and /api-docs/operations. The document changes whenever a model does, so only its OpenAPI version is compared; the page, likewise, only by status. GET /model/gaps depends on validateResponses, which api/env/docker-tests.js turns on.",
+  "cases": [
+    {
+      "name": "healthcheck",
+      "method": "GET",
+      "path": "/healthcheck",
+      "expect": {
+        "status": 200,
+        "body": {
+          "message": "Success"
+        }
+      }
+    },
+    {
+      "name": "model gaps: the record is kept on a test configuration",
+      "method": "GET",
+      "path": "/model/gaps",
+      "volatile": [
+        "gaps"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "validateResponses": true,
+          "gaps": []
+        }
+      }
+    },
+    {
+      "name": "the API document is OpenAPI 3.1",
+      "method": "GET",
+      "path": "/api-docs.json",
+      "volatile": [
+        "info",
+        "servers",
+        "tags",
+        "paths",
+        "components"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "openapi": "3.1.0"
+        }
+      }
+    },
+    {
+      "name": "the explorer page",
+      "method": "GET",
+      "path": "/api-docs",
+      "expect": {
+        "status": 200,
+        "body": {
+          "(not JSON)": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>id-proto-debugger API</title><link rel=\"stylesheet\" href=\"api-docs/assets/swagger-ui.css\"></head><body><div id=\"swagger-ui\"></div><script src=\"api-docs/assets/swagger-ui-bundle.js\"></script><script src=\"api-docs/init.js\"></script></body></html>"
+        }
+      }
+    },
+    {
+      "name": "the explorer initializer",
+      "method": "GET",
+      "path": "/api-docs/init.js",
+      "expect": {
+        "status": 200,
+        "body": {
+          "(not JSON)": "window.addEventListener(\"load\", function () { window.ui = SwaggerUIBundle({ url: \"api-docs.json\", dom_id: \"#swagger-ui\", deepLinking: true }); });\n"
+        }
+      }
+    },
+    {
+      "name": "the operations page",
+      "method": "GET",
+      "path": "/api-docs/operations",
+      "volatile": [
+        "(not JSON)"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "(not JSON)": "(the operations page; compared by status only)"
+        }
+      }
+    }
+  ]
+}

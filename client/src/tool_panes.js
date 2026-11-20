@@ -206,8 +206,14 @@ async function downloadJwkSet(jwks, password, baseName, statusId) {
 // window.location.search into an href is an open redirector, which is the
 // thing requirement 11 of the RFC 9700 client checklist is about and which
 // tests/url_safety_schemes.js reads client/src for.
+//
+// `fallbackLabel` names where the fallback goes, for a page that has a
+// landing card of its own: arriving from that card there is no ?from=, and
+// "Return to debugger" leading into the OAuth workflow is a link to somewhere
+// the visitor never was. Those pages fall back to the landing page and say
+// "Return to Home".
 // ---------------------------------------------------------------------------
-function setReturnLink(allowed, fallback, linkId) {
+function setReturnLink(allowed, fallback, linkId, fallbackLabel) {
   log.debug("Entering setReturnLink().");
   var from = new URLSearchParams(window.location.search).get('from');
   var entry = allowed[from];
@@ -225,6 +231,9 @@ function setReturnLink(allowed, fallback, linkId) {
     return;
   }
   link.setAttribute('href', fallback || '/oauth2_oidc_1.html');
+  if (fallbackLabel) {
+    link.textContent = '← Return to ' + fallbackLabel;
+  }
   log.debug("Leaving setReturnLink(). Fallback.");
 }
 

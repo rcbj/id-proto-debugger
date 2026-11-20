@@ -23,8 +23,9 @@
 //     credential points at it;
 //   * the base proof actually verifies, and an edited credential does not.
 //
-// tests/bbs2023_cryptosuite.js covers the cryptosuite across two
-// implementations; this covers the ISSUER endpoint and what it advertises.
+// tests/bbs2023_cryptosuite.js covers the cryptosuite against the W3C
+// specification's vectors and an independent implementation; this covers
+// the ISSUER endpoint and what it advertises.
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -55,15 +56,21 @@ var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 const ROOT = path.join(__dirname, "..");
 const paths = require("./module_paths.js");
-const stsSuite = paths.requireSharedModule(
-  // The tests image's flattened copy first, then wherever iya-sts's tree
-  // keeps it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
-  // ("Reorganizing source code.") moved every module into a subdirectory, and
-  // this one is in common/crypto_impl/. mockStsModule() is the single place
-  // that answers that question — see tests/module_paths.js.
-  [path.join(__dirname, "sts_bbs2023.js"),
-   paths.mockStsModule("bbs2023.js") || ""],
-  "the STS's bbs-2023 cryptosuite");
+// iya-sts's W3C bbs-2023 (Data Integrity BBS Cryptosuites v1.0, iya-sts
+// 1.1.0): oid4vc/vc_bbs.js verifies a base proof, and
+// common/crypto_impl/bbs2023.js decodes the issuer's Multikey. Both come from
+// iya-sts's tree, and mockStsModule() is the single place that knows where it
+// keeps them (tests/module_paths.js). Its legacy* functions are the pre-W3C
+// format, which this debugger no longer speaks, and are not used.
+const stsBbs = paths.requireSharedModule(
+  [paths.mockStsModule("vc_bbs.js") || ""],
+  "iya-sts's W3C bbs-2023 cryptosuite (oid4vc/vc_bbs.js)");
+const stsBbsKeys = paths.requireSharedModule(
+  [paths.mockStsModule("bbs2023.js") || ""],
+  "iya-sts's BBS key encoding (common/crypto_impl/bbs2023.js)");
+// A W3C bbs-2023 BASE proof is multibase base64url of CBOR tag 0xd95d02,
+// which base64url-encodes to "u2V0C" (a derived one, 0xd95d03, is "u2V0D").
+const BASE_PROOF_PREFIX = /^u2V0C/;
 // The wallet's own half of the exchange, loaded so this test covers what the
 // PAGE does with the response and not only what the issuer sends. Both are
 // copied flat into the tests image, hence the two candidate paths.
@@ -133,8 +140,11 @@ async function test() {
     "the proof is EMBEDDED in the credential.");
   assert.strictEqual(cred.proof.cryptosuite, "bbs-2023",
                      "and names the cryptosuite.");
-  assert.ok(/^u/.test(cred.proof.proofValue),
-            "proofValue is multibase base64url ('u').");
+  assert.ok(BASE_PROOF_PREFIX.test(cred.proof.proofValue),
+    "proofValue is a W3C bbs-2023 BASE proof: multibase base64url of CBOR " +
+        "tag 0xd95d02 (\"u2V0C...\"). Got " +
+    String(cred.proof.proofValue).slice(0, 12) + "...; a bare BBS signature " +
+        "is the pre-W3C format.");
   assert.ok(cred.proof.verificationMethod, "and says where its key is.");
   assert.ok(cred.credentialSubject && cred.credentialSubject.id,
     "the subject is named — for this format by id, not by a cnf key.");
@@ -148,27 +158,30 @@ async function test() {
         JSON.stringify(km).slice(0, 160));
   assert.strictEqual(km.cryptosuite, "bbs-2023",
                      "and name the cryptosuite it is for.");
-    assert.ok(/^u/.test(km.publicKeyMultibase),
-    "the key should be multibase base64url, which begins with 'u'.");
-  const pk = stsSuite.multibaseToBytes(km.publicKeyMultibase);
+  assert.ok(/^z/.test(km.publicKeyMultibase),
+    "the key should be a Multikey: multibase base58btc, which begins with " +
+        "'z'. Got " + String(km.publicKeyMultibase).slice(0, 12) + "...");
+  const pk = stsBbsKeys.publicKeyFromMultibase(km.publicKeyMultibase);
   assert.strictEqual(pk.length, 96,
-    "a BLS12-381 G2 public key is 96 compressed bytes. A short key here " +
-        "means the multibase prefix " +
-    "was stripped twice — a decoder that also strips it, plus a caller that " +
-        "strips it, eats a data " +
-    "character whenever the payload starts with 'u'. That is intermittent: " +
-        "it passes for most keys.");
+    "a BLS12-381 G2 public key is 96 compressed bytes, after the Multikey's " +
+        "two-byte 0xeb01 multicodec prefix.");
+  assert.ok(Buffer.from(stsBbs.parseBaseProofValue(cred.proof.proofValue)
+    .publicKey).equals(Buffer.from(pk)),
+    "the base proof carries the issuer's public key, and it must be the " +
+        "one the verificationMethod publishes.");
 
-  const verdict = await stsSuite.verifyBase(cred, pk);
+  const verdict = await stsBbs.verifyBaseProof(cred, pk);
   assert.strictEqual(verdict.ok, true,
     "the base proof must verify against the key the credential points at. If " +
         "this fails the issuer is " +
     "publishing a key it did not sign with.");
-  assert.ok(verdict.statements.length > 4,
-    "the credential should canonicalize to several statements; got " +
-        verdict.statements.length);
-  log.info("[verify] OK — the base proof verifies over " +
-           verdict.statements.length + " statements.");
+  const statements = verdict.mandatory + verdict.nonMandatory;
+  assert.ok(statements > 4 && verdict.mandatory > 0,
+    "the credential should canonicalize to several statements, some of " +
+        "them mandatory; got " + verdict.mandatory + " mandatory and " +
+        verdict.nonMandatory + " selective. " + verdict.detail);
+  log.info("[verify] OK — the base proof verifies over " + statements +
+           " statements (" + verdict.mandatory + " mandatory).");
 
   log.info("=== What the WALLET makes of that response ===");
   // The section above proves the ISSUER is right. That is not the same as the
@@ -261,12 +274,12 @@ async function test() {
   log.info("=== An edited credential must not verify ===");
   const tampered = JSON.parse(JSON.stringify(cred));
   tampered.credentialSubject.given_name = "Mallory";
-  const tamperedVerdict = await stsSuite.verifyBase(tampered, pk);
+  const tamperedVerdict = await stsBbs.verifyBaseProof(tampered, pk);
   assert.strictEqual(tamperedVerdict.ok, false,
     "changing a claim must break the base proof — the control below shows " +
         "the check is not simply " +
     "always-false.");
-  const control = await stsSuite.verifyBase(cred, pk);
+  const control = await stsBbs.verifyBaseProof(cred, pk);
   assert.strictEqual(control.ok, true,
                      "the control: the untouched credential still verifies.");
   log.info("[tamper] OK — an edited claim is refused; the control still " +

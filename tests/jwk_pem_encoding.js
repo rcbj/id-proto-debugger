@@ -470,8 +470,12 @@ function ellipticStaysOutOfTheBundles() {
   // that only reads client/src would have gone on reporting a pass over a
   // module it no longer looks at — while that module is still browserified
   // into nine bundles.
+  //
+  // common/crypto (#463) is the third staged directory, and the one with the
+  // most to lose: it is in nearly every bundle.
   const extraDirs = [path.join(__dirname, "..", "common", "krb5"),
-                     path.join(__dirname, "..", "common", "spiffe")]
+                     path.join(__dirname, "..", "common", "spiffe"),
+                     path.join(__dirname, "..", "common", "crypto")]
     .filter(function (d) { return fs.existsSync(d); });
   const extraFiles = [path.join(__dirname, "..", "common", "xmldsig.js")]
     .filter(function (f) { return fs.existsSync(f); });
@@ -630,6 +634,17 @@ function bigIntLiteralsStayOutOfTheBundles() {
     });
   })(srcDir);
   assert.ok(files.length > 0, "found no .js files in client/src");
+  // common/crypto (#463) is staged flat into client/src before browserify
+  // runs, so its modules are bundle source and are held to the same rule.
+  // Their relative names start with `../` and are reported that way below.
+  const cryptoDir = path.join(__dirname, "..", "common", "crypto");
+  if (fs.existsSync(cryptoDir)) {
+    fs.readdirSync(cryptoDir).filter(function (f) {
+      return /\.js$/.test(f);
+    }).forEach(function (f) {
+      files.push(path.relative(srcDir, path.join(cryptoDir, f)));
+    });
+  }
   const offences = [];
   files.forEach(function (file) {
     const text = fs.readFileSync(path.join(srcDir, file), "utf8");
@@ -638,7 +653,8 @@ function bigIntLiteralsStayOutOfTheBundles() {
       // naming `0n` while telling you not to write it is not writing it.
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
       if (BIGINT.test(line)) {
-        offences.push("client/src/" + file + ":" + (index + 1) + "  " +
+        offences.push(path.join("client", "src", file) + ":" +
+                      (index + 1) + "  " +
                       line.trim().slice(0, 90));
       }
     });
@@ -650,7 +666,7 @@ function bigIntLiteralsStayOutOfTheBundles() {
         "instead:\n  " +
     offences.join("\n  "));
   log.info("[bigint] OK — " + files.length +
-           " files in client/src, no BigInt literals.");
+           " files in client/src and common/crypto, no BigInt literals.");
   log.debug("Leaving bigIntLiteralsStayOutOfTheBundles().");
 }
 
@@ -878,6 +894,9 @@ function testsImageHasNoCollidingFilenames() {
   if (!fs.existsSync(dockerfile)) {
     log.info("[collisions] skipped: tests/Dockerfile is not present, so this is the tests image " +
       "rather than a checkout.");
+    // In the image the flat directory itself can be read, which is better
+    // evidence than the Dockerfile: check what is actually there.
+    flatModulesResolveTheirRequiresHere();
     log.debug("Leaving testsImageHasNoCollidingFilenames().");
     return;
   }
@@ -922,6 +941,7 @@ function testsImageHasNoCollidingFilenames() {
   testsImageTakesIyaStsWhole(dockerfile);
   testsImageCopiesTheRequireClosure(dockerfile);
   flatCopiedModulesHaveTheirPackages(dockerfile);
+  flatCopiedModulesCarryTheirRequires(dockerfile);
   log.debug("Leaving testsImageHasNoCollidingFilenames().");
 }
 
@@ -1230,6 +1250,206 @@ function testsImageCopiesTheRequireClosure(dockerfile) {
 // dompurify/jsdom pair is declared now, because "optional" had turned into a
 // section that logged SKIPPED on every run and measured nothing.)
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// EVERY MODULE COPIED FLAT MUST FIND ITS OWN RELATIVE REQUIRES BESIDE IT (#429).
+//
+// testsImageCopiesTheRequireClosure() walks the relative requires of tests/
+// files and stops where they leave tests/; flatCopiedModulesHaveTheirPackages()
+// reads the PACKAGES a flat-copied module needs. Neither followed a module
+// copied flat out of client/src, common/ or api/ to the OTHER modules it
+// requires, and in the image those resolve beside it in /usr/src/app or not at
+// all. So client/src/sd_jwt_vc.js gaining `require("./mdoc")` passed every
+// host run and took sd_jwt_vc_engine.js, ldp_vc_issuance.js and
+// ldp_vc_refresh.js down at load on the first containerized run, each naming
+// './mdoc' rather than a missing COPY.
+//
+// This walks the closure from every flat-copied module outside tests/: each
+// LOAD-TIME relative require must name a file some flat COPY carries, and a
+// module reached that way is walked in turn. A require inside a function
+// (lazy) is reported as a warning only, since it fails when called rather
+// than at load, and several modules keep an optional one that way.
+// ---------------------------------------------------------------------------
+function flatCopiedModulesCarryTheirRequires(dockerfile) {
+  log.debug("Entering flatCopiedModulesCarryTheirRequires().");
+  const repo = path.join(__dirname, "..");
+  if (!fs.existsSync(path.join(repo, "client", "src"))) {
+    log.info("[flat-closure] skipped: no client/src beside tests/, so this " +
+      "is the tests image rather than a checkout.");
+    log.debug("Leaving flatCopiedModulesCarryTheirRequires().");
+    return;
+  }
+  // What lands in /usr/src/app, by the name a require there would use, and
+  // where each came from in the checkout.
+  const carried = {};
+  readDockerfile(dockerfile).replace(/^COPY\s+([^\n]+)/gm, function (_, rest) {
+    const parts = rest.split(/\s+/).filter(function (one) {
+      return one && one.indexOf("--") !== 0;
+    });
+    if (parts.length < 2) {
+      return _;
+    }
+    const rawDest = parts[parts.length - 1];
+    const dest = rawDest.replace(/\/$/, "").replace(/^\.\//, "");
+    if (dest.indexOf("/") === 0) {
+      return _;
+    }
+    parts.slice(0, -1).forEach(function (src) {
+      if (src.indexOf("*") !== -1) {
+        return;
+      }
+      const here = path.join(repo, src);
+      if (!fs.existsSync(here)) {
+        return;
+      }
+      if (fs.statSync(here).isDirectory()) {
+        const under = function (dir, prefix) {
+          fs.readdirSync(dir, { withFileTypes: true }).forEach(function (e) {
+            const name = prefix + "/" + e.name;
+            if (e.isDirectory()) {
+              under(path.join(dir, e.name), name);
+              return;
+            }
+            carried[(dest === "" || dest === "." ? "" : dest) +
+                    name.replace(/^\//, dest === "" || dest === "." ? "" :
+                                 "/")] = path.join(dir, e.name);
+          });
+        };
+        under(here, "");
+        return;
+      }
+      const base = src.split("/").pop();
+      // Docker's rule: ONE file source and a destination without a trailing
+      // slash is the file's new NAME (COPY api/server.js ./api_server.js.txt),
+      // not a directory to put it in.
+      const renamed = parts.length === 2 && !/\/$/.test(rawDest) &&
+          dest !== "" && dest !== ".";
+      carried[renamed ? dest : (dest === "" || dest === "." ? base :
+              dest + "/" + base)] = here;
+    });
+    return _;
+  });
+
+  const queue = Object.keys(carried).filter(function (name) {
+    const from = path.relative(repo, carried[name]);
+    return /\.js$/.test(name) && from.indexOf("tests" + path.sep) !== 0;
+  });
+  const seen = {};
+  const missing = [];
+  const lazyMissing = [];
+  while (queue.length) {
+    const name = queue.shift();
+    if (seen[name]) {
+      continue;
+    }
+    seen[name] = true;
+    const source = carried[name];
+    const from = path.relative(repo, source);
+    stsRequiresIn(from, fs.readFileSync(source, "utf8")).forEach(
+      function (one) {
+        if (one.spec.indexOf("./") !== 0) {
+          // A package (flatCopiedModulesHaveTheirPackages()'s question) or a
+          // `../` path, which leaves /usr/src/app and is staged by its own
+          // COPY lines.
+          return;
+        }
+        let dep = path.posix.normalize(
+          path.posix.join(path.posix.dirname(name), one.spec));
+        if (!/\.js(on)?$/.test(dep) && !carried[dep]) {
+          dep = dep + ".js";
+        }
+        if (!carried[dep]) {
+          const where = dep + " (required by " + from + ")";
+          if (one.lazy) {
+            lazyMissing.push(where);
+          } else {
+            missing.push(where);
+          }
+          return;
+        }
+        if (/\.js$/.test(dep) && !seen[dep]) {
+          queue.push(dep);
+        }
+      });
+  }
+  const unique = missing.filter(function (v, i) {
+    return missing.indexOf(v) === i;
+  });
+  lazyMissing.filter(function (v, i) {
+    return lazyMissing.indexOf(v) === i;
+  }).forEach(function (one) {
+    log.warn("[flat-closure] a require inside a function finds nothing in " +
+             "the image: " + one + ". It fails when called, not at load.");
+  });
+  assert.deepStrictEqual(unique, [],
+    "tests/Dockerfile copies these modules' requirers flat into the tests " +
+    "image but not the modules themselves, so the requirer dies at load " +
+    "with MODULE_NOT_FOUND in a tenth of a second, naming the require " +
+    "rather than a build, while every host run stays green: " +
+    unique.join(", ") + ". Add a COPY of each beside the module that " +
+    "requires it.");
+  log.info("[flat-closure] OK — " + Object.keys(seen).length + " module(s) " +
+    "copied flat from outside tests/ walked, and every load-time relative " +
+    "require among them is carried into the tests image.");
+  log.debug("Leaving flatCopiedModulesCarryTheirRequires().");
+}
+
+// ---------------------------------------------------------------------------
+// THE SAME QUESTION, ASKED OF THE IMAGE ITSELF (#429, follow-up).
+//
+// flatCopiedModulesCarryTheirRequires() reads tests/Dockerfile, which only a
+// checkout has, so inside the tests image (where the suite and CI run every
+// job) it never ran. Here the flat directory IS the image's /usr/src/app, so
+// this reads it directly: every .js in it, and every `./` require each makes,
+// must resolve to a file that is actually beside it. Ground truth rather than
+// a reading of COPY lines: it also catches a COPY that names the right file
+// into the wrong place. A require inside a function (lazy) only warns, since
+// it fails when called rather than at load.
+// ---------------------------------------------------------------------------
+function flatModulesResolveTheirRequiresHere() {
+  log.debug("Entering flatModulesResolveTheirRequiresHere().");
+  const dir = __dirname;
+  const resolves = function (spec) {
+    const base = path.join(dir, spec);
+    return [base, base + ".js", base + ".json",
+            path.join(base, "index.js")].some(function (one) {
+      return fs.existsSync(one) && fs.statSync(one).isFile();
+    });
+  };
+  const missing = [];
+  let walked = 0;
+  fs.readdirSync(dir).filter(function (name) {
+    return /\.js$/.test(name) && fs.statSync(path.join(dir, name)).isFile();
+  }).forEach(function (name) {
+    walked++;
+    stsRequiresIn(name, fs.readFileSync(path.join(dir, name), "utf8"))
+      .forEach(function (one) {
+        if (one.spec.indexOf("./") !== 0 || resolves(one.spec)) {
+          return;
+        }
+        const where = one.spec + " (required by " + name + ")";
+        if (one.lazy) {
+          log.warn("[flat-closure] a require inside a function finds " +
+                   "nothing beside it in this image: " + where + ". It " +
+                   "fails when called, not at load.");
+          return;
+        }
+        missing.push(where);
+      });
+  });
+  const unique = missing.filter(function (v, i) {
+    return missing.indexOf(v) === i;
+  });
+  assert.deepStrictEqual(unique, [],
+    "these modules are in the tests image but the modules they require at " +
+    "load are not beside them, so each dies with MODULE_NOT_FOUND when a " +
+    "job loads it: " + unique.join(", ") + ". Add a COPY of each to " +
+    "tests/Dockerfile beside the module that requires it.");
+  log.info("[flat-closure] OK — " + walked + " module(s) in this image's " +
+           "flat directory read, and every load-time ./ require among them " +
+           "resolves beside it.");
+  log.debug("Leaving flatModulesResolveTheirRequiresHere().");
+}
+
 function flatCopiedModulesHaveTheirPackages(dockerfile) {
   log.debug("Entering flatCopiedModulesHaveTheirPackages().");
   const manifest = path.join(__dirname, "package.json");
@@ -1560,6 +1780,63 @@ function stagedSharedModuleListsAreComplete() {
     });
     checked += direct.length;
   });
+  // Every file client/build.js stages out of common/ — the whole of
+  // common/crypto (#463), common/krb5 and common/spiffe, and data.js and
+  // xmldsig.js — must be named in client/.gitignore, so a build killed
+  // before its `finally` cannot leave a copy that `git add` picks up as
+  // source; and must NOT be tracked under client/src, because a tracked copy
+  // is one the build used to overwrite and then delete (thirteen krb5 copies
+  // were, until 2026-11-17, three of them drifted from the source). The
+  // tracked half needs git and a checkout, so it is skipped in the tests
+  // image, which has neither.
+  const common = path.join(__dirname, "..", "common");
+  const clientIgnore = path.join(__dirname, "..", "client", ".gitignore");
+  const stagedCopies = [];
+  ["crypto", "krb5", "spiffe"].forEach(function (dir) {
+    const full = path.join(common, dir);
+    if (!fs.existsSync(full)) return;
+    fs.readdirSync(full).filter(function (f) {
+      return /\.js$/.test(f);
+    }).forEach(function (f) {
+      stagedCopies.push({ from: "common/" + dir + "/" + f, name: f });
+    });
+  });
+  ["data.js", "xmldsig.js"].forEach(function (f) {
+    if (fs.existsSync(path.join(common, f))) {
+      stagedCopies.push({ from: "common/" + f, name: f });
+    }
+  });
+  if (fs.existsSync(clientIgnore)) {
+    const ignored = fs.readFileSync(clientIgnore, "utf8").split(/\r?\n/);
+    stagedCopies.forEach(function (s) {
+      assert.ok(ignored.indexOf("src/" + s.name) >= 0,
+        s.from + " is staged into client/src by client/build.js but " +
+        "client/.gitignore has no `src/" + s.name + "` line, so a build " +
+        "interrupted before it cleans up leaves a copy that looks like " +
+        "source. Add the line.");
+    });
+  }
+  let tracked = null;
+  try {
+    tracked = require("child_process").execFileSync("git", ["ls-files",
+      "--", "client/src"], { cwd: path.join(__dirname, ".."),
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      .split(/\r?\n/);
+  } catch (e) {
+    log.info("[staged lists] not a git checkout here; the tracked-copy " +
+             "check is skipped: " + e.message.split("\n")[0]);
+  }
+  if (tracked) {
+    const copies = stagedCopies.filter(function (s) {
+      return tracked.indexOf("client/src/" + s.name) >= 0;
+    }).map(function (s) {
+      return "client/src/" + s.name + " (of " + s.from + ")";
+    });
+    assert.deepStrictEqual(copies, [], "git tracks copies of staged " +
+      "modules under client/src. client/build.js stages the source over " +
+      "them and refuses to when they differ; delete them with git rm: " +
+      copies.join(", "));
+  }
   log.info("[staged lists] OK — " + checked + " bundle(s) that require a " +
            "module staged out of common/ are named by the list that stages " +
            "it, and no list names a bundle that does not.");

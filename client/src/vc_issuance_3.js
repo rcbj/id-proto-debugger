@@ -22,6 +22,17 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var didLib = require("./did");
+// An ldp_vc's issuer proof, in any suite this debugger verifies (#475).
+var dataIntegrity = require("./data_integrity_rdfc");
+// A VC-JOSE-COSE credential's issuer signature (#477).
+var vcJoseCose = require("./vc_jose_cose");
+// JPT and SD-CWT, both drafts (#478).
+var jwpLib = require("./jwp");
+var sdCwt = require("./sd_cwt");
+var sdJwtVp = require("./sd_jwt_vp");
+// AnonCreds (#479).
+var anoncreds = require("./anoncreds");
+var anoncredsWallet = require("./anoncreds_wallet");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_3',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -133,13 +144,23 @@ function renderDisclosures(rows, sdDigests) {
           esc(typeof v === "object" ? JSON.stringify(v) : String(v)) +
               "</td></tr>";
       }).join("") + "</tbody>";
+    if (!parsed.ldpSelective) {
+      el("vc_disclosure_summary").innerHTML =
+        '<span class="vc-status vc-pending">This credential is ' +
+        '<code>ldp_vc</code> with a <code>' + esc(parsed.ldpSuite) +
+        '</code> proof, which has no selective disclosure: the proof covers ' +
+        'every statement, so it is presented whole, inside a Verifiable ' +
+        'Presentation its holder signs.</span>';
+      log.debug("Leaving renderDisclosures(). ldp_vc, whole.");
+      return;
+    }
     el("vc_disclosure_summary").innerHTML =
       '<span class="vc-status vc-pending">This credential is ' +
           '<code>ldp_vc</code> with a ' +
-      '<code>bbs-2023</code> proof. It carries no Disclosures: selective ' +
-          'disclosure here is over the ' +
-      "credential's canonical statements, chosen when it is presented, and " +
-          "each presentation is a " +
+      '<code>' + esc(parsed.ldpSuite) + '</code> proof. It carries no ' +
+      'Disclosures: selective disclosure here is by JSON pointer into the ' +
+          "credential, chosen when it is presented (the issuer's mandatory " +
+          "pointers always go), and each presentation is a " +
       'fresh proof that cannot be linked to the previous one.</span>';
     log.debug("Leaving renderDisclosures().");
     return;
@@ -301,6 +322,23 @@ function verify() {
     log.debug("Leaving verify().");
     return false;
   }
+  if (parsed.format === sdJwtVc.FORMAT_LDP_VC) {
+    log.debug("Leaving verify(). ldp_vc.");
+    return verifyLdp();
+  }
+  if (sdJwtVc.isJoseCose(parsed.format)) {
+    log.debug("Leaving verify(). " + parsed.format);
+    return verifyJoseCose();
+  }
+  if (parsed.format === sdJwtVc.FORMAT_ANONCREDS) {
+    log.debug("Leaving verify(). anoncreds.");
+    return verifyAnoncreds();
+  }
+  if (parsed.format === sdJwtVc.FORMAT_JPT ||
+      parsed.format === sdJwtVc.FORMAT_SD_CWT) {
+    log.debug("Leaving verify(). " + parsed.format);
+    return verifyJptSdCwt();
+  }
   var checks = [];
   var payload = parsed.payload || {};
   var header = parsed.header || {};
@@ -417,6 +455,223 @@ function verify() {
              e.message, "vc-bad");
     });
   log.debug("Leaving verify().");
+  return false;
+}
+
+// An ldp_vc as issued (#475): what secures it, who it is bound to, when it
+// is valid, and the issuer's proof verified by data_integrity.js against the
+// key its verificationMethod names. A selective suite's base proof (bbs-2023)
+// is reported rather than verified here: it is checked where the holder
+// derives from it, on the presentation pages.
+function verifyLdp() {
+  log.debug("Entering verifyLdp().");
+  var checks = [];
+  var doc = parsed.document || {};
+  var proof = [].concat(doc.proof || [])[0] || {};
+  checks.push({
+    name: "Proof",
+    ok: !!parsed.ldpSuite,
+    detail: parsed.ldpSuite + (proof.type === "DataIntegrityProof" ?
+        " (a DataIntegrityProof cryptosuite)" : " (a Linked Data proof " +
+        "type that predates Data Integrity)") + ", proofPurpose " +
+        proof.proofPurpose + ", by " + proof.verificationMethod + "."
+  });
+  var bound = sdJwtVc.boundHolderJwk(parsed);
+  checks.push({
+    name: "Holder binding (credentialSubject.id)",
+    ok: !!bound,
+    detail: bound ? "the subject is a DID naming a " + bound.kty + " key" +
+        (holderKeyMatches(bound) ? " — the holder key generated in step 2." :
+         " that is NOT the holder key generated in step 2.") :
+        "the subject is not a did:jwk or did:key, so no holder key can be " +
+        "read from it."
+  });
+  var w = sdJwtVc.validityWindowOf(parsed);
+  var now = Math.floor(Date.now() / 1000);
+  checks.push({
+    name: "Validity window",
+    ok: (!w.expires || w.expires > now) && (!w.notBefore ||
+        w.notBefore <= now),
+    detail: w.notBeforeMember + " " + isoOf(w.notBefore) + ", " +
+        w.expiresMember + " " + isoOf(w.expires) + "."
+  });
+  renderChecks(checks);
+  status("vc_credential_status", "Verifying the issuer's proof …",
+         "vc-pending");
+  var resolveKey = dataIntegrity.defaultResolveKey(undefined,
+                                                   { allowHttp: true });
+  dataIntegrity.verifyProof(doc, { resolveKey: resolveKey })
+    .then(function (r) {
+      var p = r.proofs[0] || {};
+      if (p.unsupported) {
+        checks.push({ name: "Issuer proof", ok: false, warn: true,
+                      detail: p.reason });
+        renderChecks(checks);
+        status("vc_credential_status", p.reason, "vc-pending");
+        return;
+      }
+      checks.push({
+        name: "Issuer proof",
+        ok: r.valid,
+        detail: r.valid ? p.suite + " by " + p.verificationMethod +
+            " verifies." : "DOES NOT verify: " + (p.reason || r.reason) + "."
+      });
+      renderChecks(checks);
+      status("vc_credential_status", r.valid ?
+        "The credential's issuer proof is valid." :
+        "The credential's issuer proof is INVALID.",
+        r.valid ? "vc-ok" : "vc-bad");
+    })
+    .catch(function (e) {
+      checks.push({ name: "Issuer proof", ok: false,
+                    detail: "could not be checked: " + e.message });
+      renderChecks(checks);
+      status("vc_credential_status", "Could not verify the issuer proof: " +
+             e.message, "vc-bad");
+    });
+  log.debug("Leaving verifyLdp().");
+  return false;
+}
+
+// A W3C VC-JOSE-COSE credential as issued (#477): its media type, the
+// issuer's signature found by kid or iss (section 4), the Disclosures of a
+// vc+sd-jwt, who it is bound to, and when it is valid.
+function verifyJoseCose() {
+  log.debug("Entering verifyJoseCose().");
+  var checks = [];
+  var bound = sdJwtVc.boundHolderJwk(parsed);
+  checks.push({
+    name: "Format", ok: true,
+    detail: parsed.format + " (W3C VC-JOSE-COSE): the credential is the " +
+      (parsed.form === "cose" ? "COSE_Sign1" : "JWS") + " payload itself, " +
+      "with no vc claim." + (parsed.form === "sdjwt" ? " " +
+      parsed.disclosures.length + " Disclosure(s); @context, type and " +
+      "issuer are never selectively disclosable." : "")
+  });
+  checks.push({
+    name: "Holder binding", ok: !!bound,
+    detail: bound ? "bound to a " + bound.kty + " key" +
+      (holderKeyMatches(bound) ? " — the holder key generated in step 2." :
+       " that is NOT the holder key generated in step 2.") :
+      "neither cnf.jwk nor a did:jwk / did:key credentialSubject.id names " +
+      "a holder key."
+  });
+  renderChecks(checks);
+  status("vc_credential_status", "Verifying the issuer's signature …",
+         "vc-pending");
+  vcJoseCose.verify(parsed.serialized).then(function (r) {
+    checks.push({ name: "Issuer signature", ok: r.valid,
+      detail: r.valid ? (r.header || {}).alg + " by " +
+        r.verificationMethod + " verifies." + (r.warnings.length ? " " +
+        r.warnings.join(" ") : "") : r.errors.join(" ") });
+    renderChecks(checks);
+    status("vc_credential_status", r.valid ?
+      "The credential's issuer signature is valid." :
+      "The credential's issuer signature is INVALID.",
+      r.valid ? "vc-ok" : "vc-bad");
+  }).catch(function (e) {
+    checks.push({ name: "Issuer signature", ok: false,
+                  detail: "could not be checked: " + e.message });
+    renderChecks(checks);
+    status("vc_credential_status", "Could not verify the issuer " +
+           "signature: " + e.message, "vc-bad");
+  });
+  log.debug("Leaving verifyJoseCose().");
+  return false;
+}
+
+// An AnonCreds credential as held (#479): its CL signature, A^e = Q, under
+// the holder's link secret (held as the holder key).
+function verifyAnoncreds() {
+  log.debug("Entering verifyAnoncreds().");
+  var b = parsed.anoncreds;
+  var key = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK);
+  var checks = [{ name: "Format", ok: true, detail: "AnonCreds, CL " +
+    "signatures: " + parsed.disclosures.length + " attribute(s) under " +
+    "schema " + b.schemaId + " and credential definition " + b.credDefId +
+    ". Neither OpenID4VCI nor OpenID4VP defines AnonCreds." }];
+  if (!anoncredsWallet.isLinkSecretJwk(key)) {
+    checks.push({ name: "Issuer signature", ok: false, detail: "the link " +
+      "secret is not held here, so the CL signature (which covers it) " +
+      "cannot be checked." });
+  } else {
+    var bad = anoncreds.verifyCredentialSignature(b.credential,
+      b.credentialDefinition, anoncredsWallet.linkSecretOf(key));
+    checks.push({ name: "Issuer signature", ok: !bad, detail: bad ||
+      "the CL signature verifies under the credential definition's key " +
+      "and this holder's link secret." });
+  }
+  renderChecks(checks);
+  var ok = checks.every(function (c) {
+    return c.ok;
+  });
+  status("vc_credential_status", ok ? "The credential's CL signature is " +
+         "valid." : "The credential's CL signature was not verified.",
+         ok ? "vc-ok" : "vc-bad");
+  log.debug("Leaving verifyAnoncreds().");
+  return false;
+}
+
+// A JPT or an SD-CWT as issued (#478): the holder's confirm interaction,
+// with the issuer key resolved from the kid (a DID URL) or iss.
+function verifyJptSdCwt() {
+  log.debug("Entering verifyJptSdCwt().");
+  var isJpt = parsed.format === sdJwtVc.FORMAT_JPT;
+  var bound = sdJwtVc.boundHolderJwk(parsed);
+  var checks = [{
+    name: "Format", ok: true,
+    detail: isJpt ? "JSON Proof Token, " + parsed.header.alg + " (" +
+      jwpLib.DRAFT + ", a DRAFT): " + parsed.disclosures.length +
+      " payload slot(s), each one claim." :
+      "SD-CWT (" + sdCwt.DRAFT + ", a DRAFT): " +
+      parsed.disclosures.length + " redacted claim(s) the holder may " +
+      "disclose, signed " + parsed.header.alg + "."
+  }, {
+    name: "Holder binding",
+    ok: !!bound || (isJpt && parsed.header.alg === "BBS"),
+    detail: bound ? "bound to a " + bound.kty + " " + (bound.crv || "") +
+      " key" + (holderKeyMatches(bound) ? " — the holder key generated " +
+      "in step 2." : " that is NOT the holder key generated in step 2.") :
+      isJpt && parsed.header.alg === "BBS" ? "BBS needs no holder key: " +
+      "the presentation proof itself is the binding." :
+      "no holder key is named."
+  }];
+  renderChecks(checks);
+  var kid;
+  var iss;
+  if (isJpt) {
+    kid = parsed.header.kid;
+    iss = parsed.header.iss;
+  } else {
+    var prot = parsed.sdCwt.parsed.sdCwt.protected;
+    var k = prot.get(sdCwt.HEADER.kid);
+    kid = k instanceof Uint8Array ? new TextDecoder().decode(k) : k;
+    iss = parsed.payload.iss;
+  }
+  status("vc_credential_status", "Resolving the issuer's key …",
+         "vc-pending");
+  sdJwtVp.issuerKeyFor(kid, iss).then(function (key) {
+    if (!key) {
+      checks.push({ name: "Issuer signature", ok: false, detail: "the " +
+        "issuer's key (" + (kid || iss || "none named") + ") could not be " +
+        "resolved, so the signature was not checked." });
+      renderChecks(checks);
+      status("vc_credential_status", "The issuer's key could not be " +
+             "resolved.", "vc-bad");
+      return;
+    }
+    var r = isJpt ? jwpLib.confirm(parsed.serialized, { issuerKey: key }) :
+      sdCwt.confirm(parsed.serialized, { issuerKey: key });
+    checks.push({ name: "Issuer proof", ok: r.valid, detail: r.valid ?
+      "the issuer's proof over every " + (isJpt ? "payload" :
+      "claim and disclosure") + " verifies." : r.errors.join(" ") });
+    renderChecks(checks);
+    status("vc_credential_status", r.valid ?
+           "The credential's issuer proof is valid." :
+           "The credential's issuer proof is INVALID.",
+           r.valid ? "vc-ok" : "vc-bad");
+  });
+  log.debug("Leaving verifyJptSdCwt().");
   return false;
 }
 

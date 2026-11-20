@@ -1,0 +1,390 @@
+{
+  "family": "gnap",
+  "about": "POST /gnap/call and GET /gnap/limits. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md). Every target is gnap.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 502 on any machine. The size caps (gnapMaxRequestBytes, 64 KiB of PEM) and a certificate and key that do not match are driven by tests/api_gnap.js.",
+  "cases": [
+    {
+      "name": "gnap: an empty body is refused for its url",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required. It is the absolute URL of the GNAP endpoint the page signed."
+        }
+      }
+    },
+    {
+      "name": "gnap: an empty url is refused",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": ""
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required. It is the absolute URL of the GNAP endpoint the page signed."
+        }
+      }
+    },
+    {
+      "name": "gnap: a relative url is refused",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "/x"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http:// or https:// URL. A relative one has no host for this service to resolve, and resolving it against this service's own address would make this endpoint a way to reach the api's own routes."
+        }
+      }
+    },
+    {
+      "name": "gnap: a url that is not a string",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": 5
+      },
+      "changed": "The model types url as a string or null and refuses anything else naming the member. Until then the proxy stringified a number and refused \"5\" as a relative URL, which named the wrong problem.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http:// or https:// URL. A relative one has no host for this service to resolve, and resolving it against this service's own address would make this endpoint a way to reach the api's own routes."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `url` must be a JSON string or null. GET /api-docs describes what gnapCall takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "gnap: a method outside the protocol's is refused",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/",
+        "method": "PUT"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "method must be one of GET, POST, PATCH, DELETE, OPTIONS. RFC 9635 uses those five."
+        }
+      }
+    },
+    {
+      "name": "gnap: headers that are not an object",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/",
+        "headers": [
+          "Accept"
+        ]
+      },
+      "changed": "headers is an object or null in the model, so an array is refused naming the member. Until then the proxy refused it with its own sentence; the refusal is the same, only its words and code are the model's.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "headers must be an object of name to value."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `headers` must be a JSON object or null. GET /api-docs describes what gnapCall takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "gnap: a header name that is not a token is refused",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/",
+        "headers": {
+          "Bad Name": "x"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The header name \"Bad Name\" is not a token (RFC 7230 section 3.2.6), so it is not a header name at all."
+        }
+      }
+    },
+    {
+      "name": "gnap: a framing header is refused",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/",
+        "headers": {
+          "Host": "elsewhere.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "This endpoint will not forward the Host header. It would send the request to a different virtual host than the URL names, which is how a proxy is turned into an open one."
+        }
+      }
+    },
+    {
+      "name": "gnap: a CR/LF in a header value is refused",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/",
+        "headers": {
+          "X-Note": "a\r\nInjected: b"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The value of X-Note contains a carriage return or a line feed. That is header injection, and it is refused."
+        }
+      }
+    },
+    {
+      "name": "gnap: a body on a GET is refused",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/",
+        "method": "GET",
+        "body": {
+          "a": 1
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A GET carries no body in RFC 9635, and this endpoint refuses one rather than dropping it. Discovery is OPTIONS on the grant endpoint, with an empty body."
+        }
+      }
+    },
+    {
+      "name": "gnap: a body on a OPTIONS is refused",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/",
+        "method": "OPTIONS",
+        "body": {
+          "a": 1
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A OPTIONS carries no body in RFC 9635, and this endpoint refuses one rather than dropping it. Discovery is OPTIONS on the grant endpoint, with an empty body."
+        }
+      }
+    },
+    {
+      "name": "gnap: a client certificate without its key is refused",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/gnap",
+        "clientCertificatePem": "-----BEGIN CERTIFICATE-----"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "clientCertificatePem and clientKeyPem go together. The mtls proof (RFC 9635 section 7.3.2) is a TLS client certificate and the key that proves it."
+        }
+      }
+    },
+    {
+      "name": "gnap: a client certificate on an http url is refused",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "http://gnap.invalid/gnap",
+        "clientCertificatePem": "x",
+        "clientKeyPem": "y"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A client certificate is presented in a TLS handshake, and an http:// URL has none. Use https://."
+        }
+      }
+    },
+    {
+      "name": "gnap: a client certificate that is not PEM is refused",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/gnap",
+        "clientCertificatePem": "not a certificate",
+        "clientKeyPem": "not a key"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "clientCertificatePem is not a PEM certificate: error:0480006C:PEM routines::no start line"
+        }
+      }
+    },
+    {
+      "name": "gnap: a client certificate that is not a string",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/gnap",
+        "clientCertificatePem": 1,
+        "clientKeyPem": "y"
+      },
+      "changed": "clientCertificatePem is a string or null in the model, so a number is refused naming the member. Until then gnap_proxy.js refused it as half a pair, which named the wrong problem.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "clientCertificatePem and clientKeyPem go together. The mtls proof (RFC 9635 section 7.3.2) is a TLS client certificate and the key that proves it."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `clientCertificatePem` must be a JSON string or null. GET /api-docs describes what gnapCall takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "gnap: a well-formed POST reaches the network (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/gnap",
+        "body": "{\"access_token\":{\"access\":[\"read\"]}}",
+        "headers": {
+          "Signature-Input": "sig=();created=1",
+          "Content-Digest": "sha-256=:x:"
+        }
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "The authorization server could not be reached: getaddrinfo ENOTFOUND gnap.invalid",
+          "code": "ENOTFOUND"
+        }
+      }
+    },
+    {
+      "name": "gnap: a well-formed POST reaches the network, with its trace",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/gnap",
+        "method": "POST",
+        "body": {
+          "access_token": {
+            "access": [
+              "read"
+            ]
+          }
+        },
+        "sslValidate": true,
+        "http_trace": true
+      },
+      "volatile": [
+        "http_exchange.timing",
+        "http_exchange.request.headers.User-Agent"
+      ],
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "The authorization server could not be reached: getaddrinfo ENOTFOUND gnap.invalid",
+          "code": "ENOTFOUND",
+          "http_exchange": {
+            "request": {
+              "method": "POST",
+              "url": "https://gnap.invalid/gnap",
+              "headers": {
+                "Content-Type": "application/json",
+                "User-Agent": "Identity Protocol Debugger/0.9.5.20261117040209"
+              },
+              "body": "{\"access_token\":{\"access\":[\"read\"]}}"
+            },
+            "response": null,
+            "timing": {
+              "totalMs": 5
+            },
+            "error": "getaddrinfo ENOTFOUND gnap.invalid"
+          }
+        }
+      }
+    },
+    {
+      "name": "gnap: discovery (OPTIONS, no body) reaches the network",
+      "method": "POST",
+      "path": "/gnap/call",
+      "body": {
+        "url": "https://gnap.invalid/gnap",
+        "method": "OPTIONS"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "The authorization server could not be reached: getaddrinfo ENOTFOUND gnap.invalid",
+          "code": "ENOTFOUND"
+        }
+      }
+    },
+    {
+      "name": "gnap limits",
+      "method": "GET",
+      "path": "/gnap/limits",
+      "expect": {
+        "status": 200,
+        "body": {
+          "methods": [
+            "GET",
+            "POST",
+            "PATCH",
+            "DELETE",
+            "OPTIONS"
+          ],
+          "refusedHeaders": [
+            "connection",
+            "content-length",
+            "host",
+            "keep-alive",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade"
+          ],
+          "maxRequestBytes": 262144,
+          "maxResponseBytes": 1048576,
+          "callTimeoutMs": 10000,
+          "connectionTimeoutMs": 5000,
+          "maxRedirects": 5,
+          "sslValidateDefault": true,
+          "addressPolicyEnabled": false,
+          "proofs": [
+            "httpsig",
+            "jwsd",
+            "jws",
+            "mtls"
+          ],
+          "mtls": "clientCertificatePem and clientKeyPem, presented on a connection opened for that one call. https only. At most 65536 bytes each.",
+          "statusRule": "A refusal by this service is a 400. A network failure is a 502. A GNAP error from the authorization server is a 200 carrying that status and the error code."
+        }
+      }
+    }
+  ]
+}

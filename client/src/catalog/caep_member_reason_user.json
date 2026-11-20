@@ -1,0 +1,6 @@
+{
+  "name": "reason_user",
+  "required": false,
+  "type": "langmap",
+  "what": "The same, in words meant for the person it happened to. Two members rather than one because what an auditor needs to read and what may be shown on a screen are rarely the same sentence."
+}

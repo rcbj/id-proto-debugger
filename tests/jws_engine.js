@@ -586,6 +586,89 @@ function checkEddsaCurves() {
 }
 
 // ---------------------------------------------------------------------------
+// 8b. The FULLY-SPECIFIED EdDSA identifiers (#468, M7):
+//     draft-ietf-jose-fully-specified-algorithms-13 section 2.2 registers
+//     "Ed25519" and "Ed448" as `alg` values naming one curve each, and
+//     OpenID4VP 1.0 Appendix B.3.4 has a Verifier advertise them for SD-JWT
+//     VC. Every JWS here is signed by NODE (OpenSSL), so a reading of the
+//     draft this module shares with itself cannot pass.
+// ---------------------------------------------------------------------------
+function checkFullySpecifiedEddsa() {
+  log.debug("Entering checkFullySpecifiedEddsa().");
+  const b64u = function b64u(x) {
+    log.debug("Entering b64u().");
+    log.debug("Leaving b64u().");
+    return Buffer.from(x).toString("base64url");
+  };
+  [["Ed25519", "ed25519"], ["Ed448", "ed448"]].forEach(function (pair) {
+    const alg = pair[0];
+    const kp = crypto.generateKeyPairSync(pair[1]);
+    const publicJwk = kp.publicKey.export({ format: "jwk" });
+    const nodeSigned = function nodeSigned(header) {
+      log.debug("Entering nodeSigned(). " + header.alg);
+      const input = b64u(JSON.stringify(header)) + "." + b64u(PAYLOAD);
+      log.debug("Leaving nodeSigned().");
+      return input + "." + b64u(crypto.sign(null, Buffer.from(input),
+                                            kp.privateKey));
+    };
+    const full = nodeSigned({ alg: alg, typ: "JWT" });
+    const byHeader = jws.verifyJws({ jws: full, publicKey: publicJwk });
+    assert.ok(byHeader.valid, alg + ": a node-signed JWS whose header says " +
+      alg + " must verify by its header: " +
+      JSON.stringify(byHeader.signatures));
+    const chosen = jws.verifyJws({ jws: full, publicKey: publicJwk,
+                                   algId: alg });
+    assert.ok(chosen.valid, alg + ": and when the verifier chooses " + alg +
+      ": " + JSON.stringify(chosen.signatures));
+    const asSet = jws.verifyJws({ jws: full, algId: alg,
+      publicKey: { keys: [Object.assign({ kid: "k" }, publicJwk)] } });
+    assert.ok(asSet.valid, alg + ": and against a one-key JWK Set");
+    const poly = jws.verifyJws({ jws: full, publicKey: publicJwk,
+                                 algId: "EdDSA" });
+    assert.ok(!poly.valid && /alg=/.test(poly.signatures[0].reason),
+      alg + ": a verifier that chose EdDSA must see the header's " + alg +
+      " as a mismatch (RFC 8725 section 3.1), not quietly accept it");
+    const polySigned = nodeSigned({ alg: "EdDSA" });
+    assert.ok(jws.verifyJws({ jws: polySigned, publicKey: publicJwk,
+      algId: "EdDSA" }).valid, alg + ": a verifier that names the EdDSA " +
+      "family verifies RFC 8037's alg, the curve read from the key");
+    assert.ok(!jws.verifyJws({ jws: polySigned, publicKey: publicJwk,
+      algId: alg }).valid, alg + ": and one that chose " + alg +
+      " refuses a header of EdDSA");
+    const tampered = full.slice(0, -4) + (full.slice(-4) === "AAAA" ?
+      "BBBB" : "AAAA");
+    assert.ok(!jws.verifyJws({ jws: tampered, publicKey: publicJwk,
+      algId: alg }).valid, alg + ": a damaged signature must not verify");
+    // Signing under the fully-specified id writes it, and OpenSSL agrees.
+    const mine = jws.signJws({ algId: alg, payload: PAYLOAD,
+      privateKey: { jwk: kp.privateKey.export({ format: "jwk" }) } });
+    assert.strictEqual(mine.header.alg, alg);
+    const parts = mine.serialized.split(".");
+    assert.ok(crypto.verify(null, Buffer.from(parts[0] + "." + parts[1]),
+      kp.publicKey, Buffer.from(parts[2], "base64url")),
+      alg + ": OpenSSL must verify what this module signed as " + alg);
+  });
+  const crossKey = crypto.generateKeyPairSync("ed448").publicKey
+    .export({ format: "jwk" });
+  const kp25519 = crypto.generateKeyPairSync("ed25519");
+  const in25519 = Buffer.from(JSON.stringify({ alg: "Ed25519" }))
+    .toString("base64url") + "." + Buffer.from(PAYLOAD)
+    .toString("base64url");
+  const sig25519 = crypto.sign(null, Buffer.from(in25519),
+                               kp25519.privateKey).toString("base64url");
+  assert.ok(!jws.verifyJws({ jws: in25519 + "." + sig25519,
+    publicKey: crossKey }).valid, "an Ed25519 JWS must not verify under " +
+    "an Ed448 key");
+  assert.ok(jws.algIds().indexOf("Ed25519") === -1 &&
+            jws.algIds().indexOf("Ed448") === -1,
+            "the aliases are not menu rows: algIds() is unchanged");
+  log.info("[fully-specified] OK — Ed25519 and Ed448 headers, signed by " +
+           "OpenSSL, verify; EdDSA stays the family; the verifier's choice " +
+           "still wins.");
+  log.debug("Leaving checkFullySpecifiedEddsa().");
+}
+
+// ---------------------------------------------------------------------------
 // 9. The Unsecured JWS. It is in the registry, it authenticates nothing, and
 //    the reason to implement it is that a relying party which accepts one has
 //    a critical defect you have to be able to demonstrate.
@@ -643,6 +726,99 @@ function checkTamperingAndJson() {
   log.info("[tamper/json] OK — every algorithm refuses a changed payload, " +
            "and the JSON check reports rather than repairs.");
   log.debug("Leaving checkTamperingAndJson().");
+}
+
+// ---------------------------------------------------------------------------
+// 10b. RSASSA-PKCS1-v1_5 VERIFICATION IS STRICT ABOUT THE DigestInfo.
+//
+//     The js backend verifies RS256/384/512 with node-forge, and node-forge up
+//     to 1.4.0 accepted a signature whose DigestInfo carried extra elements
+//     (GHSA-86w9-cpqp-85rv) — the shape of a Bleichenbacher-style forgery
+//     against a small public exponent. 1.4.3 refuses it. This check is what
+//     keeps it refused: a dependency downgrade, a lockfile resolving an older
+//     forge, or a hand-written verifier replacing forge's would each turn
+//     these signatures "valid" and fail here (#350).
+//
+//     Each signature below is a REAL RSA private-key operation over a
+//     hand-built encoded message (RFC 8017 §9.2), made with node's raw RSA,
+//     so the only thing wrong with it is the DigestInfo inside.
+// ---------------------------------------------------------------------------
+const DIGEST_INFO_OIDS = {
+  RS256: { oid: "0609608648016503040201", node: "sha256" },
+  RS384: { oid: "0609608648016503040202", node: "sha384" },
+  RS512: { oid: "0609608648016503040203", node: "sha512" }
+};
+
+function derSequence(body) {
+  log.debug("Entering derSequence().");
+  // Every DigestInfo here is under 128 octets, so the short length form is
+  // the right one; assert it rather than encode a long form nobody tests.
+  assert.ok(body.length < 128, "derSequence(): body too long for this test.");
+  log.debug("Leaving derSequence().");
+  return Buffer.concat([Buffer.from([0x30, body.length]), body]);
+}
+
+function digestInfo(algId, octets, algorithmExtra, trailingExtra) {
+  log.debug("Entering digestInfo().");
+  const d = DIGEST_INFO_OIDS[algId];
+  const hash = crypto.createHash(d.node).update(octets).digest();
+  const algorithm = derSequence(Buffer.concat([Buffer.from(d.oid, "hex"),
+    Buffer.from("0500", "hex"), algorithmExtra]));
+  const digest = Buffer.concat([Buffer.from([0x04, hash.length]), hash]);
+  log.debug("Leaving digestInfo().");
+  return derSequence(Buffer.concat([algorithm, digest, trailingExtra]));
+}
+
+function rawPkcs1Sign(privateKey, bits, info) {
+  log.debug("Entering rawPkcs1Sign().");
+  const k = bits / 8;
+  const em = Buffer.concat([Buffer.from([0x00, 0x01]),
+    Buffer.alloc(k - 3 - info.length, 0xff), Buffer.from([0x00]), info]);
+  log.debug("Leaving rawPkcs1Sign().");
+  return crypto.privateEncrypt({ key: privateKey,
+    padding: crypto.constants.RSA_NO_PADDING }, em);
+}
+
+function checkRsaDigestInfoStrict() {
+  log.debug("Entering checkRsaDigestInfoStrict().");
+  const bits = 2048;
+  const pair = crypto.generateKeyPairSync("rsa", { modulusLength: bits });
+  const publicPem = pair.publicKey.export({ type: "spki", format: "pem" });
+  const none = Buffer.alloc(0);
+  const variants = [
+    // The control: if this one fails, the encoder above is wrong and the
+    // refusals below prove nothing.
+    { name: "a well-formed DigestInfo", alg: none, tail: none, valid: true },
+    // The advisory's own case: an extra element nested in the
+    // AlgorithmIdentifier, after the NULL parameters.
+    { name: "an extra element in the AlgorithmIdentifier",
+      alg: Buffer.from("3000", "hex"), tail: none, valid: false },
+    { name: "an extra OCTET STRING in the AlgorithmIdentifier",
+      alg: Buffer.from("0404deadbeef", "hex"), tail: none, valid: false },
+    { name: "an extra element after the digest",
+      alg: none, tail: Buffer.from("0500", "hex"), valid: false }
+  ];
+  Object.keys(DIGEST_INFO_OIDS).forEach(function (algId) {
+    const header = Buffer.from(JSON.stringify({ alg: algId }))
+      .toString("base64url");
+    const payload = Buffer.from(PAYLOAD).toString("base64url");
+    const input = Buffer.from(header + "." + payload, "ascii");
+    variants.forEach(function (v) {
+      const sig = rawPkcs1Sign(pair.privateKey, bits,
+        digestInfo(algId, input, v.alg, v.tail));
+      const compact = header + "." + payload + "." +
+        sig.toString("base64url");
+      const verdict = jws.verifyJws({ jws: compact, publicKey: publicPem,
+        algId: algId });
+      assert.strictEqual(verdict.valid, v.valid, algId + " with " + v.name +
+        " must " + (v.valid ? "" : "NOT ") + "verify" +
+        (v.valid ? "." : " — is node-forge older than 1.4.3? " +
+          "(GHSA-86w9-cpqp-85rv, #350)"));
+    });
+  });
+  log.info("[rsa/digestinfo] OK — RS256/384/512 verify a well-formed " +
+           "DigestInfo and refuse three with extra elements.");
+  log.debug("Leaving checkRsaDigestInfoStrict().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1033,8 +1209,10 @@ async function test() {
   checkDetachedAndUnencoded();
   checkHeaderRules();
   checkEddsaCurves();
+  checkFullySpecifiedEddsa();
   checkUnsecured();
   checkTamperingAndJson();
+  checkRsaDigestInfoStrict();
   checkKeyForms();
   await checkBackendsAgree();
   checkVerbatimHeader();

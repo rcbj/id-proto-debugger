@@ -22,9 +22,13 @@
 <script type="text/javascript" src="/js/encryption_tools.js">
 </script>
 
-<p class="ds-return"><a id="return_link" href="/oauth2_oidc_1.html">&larr; Return to debugger</a> &nbsp;|&nbsp; <a href="/digital_signature.html?from=encryption_tools.html">Digital Signature &rarr;</a></p>
+<p class="ds-return"><a id="return_link" href="/">&larr; Return to Home</a> &nbsp;|&nbsp; <a href="/digital_signature.html?from=encryption_tools.html">Digital Signature &rarr;</a></p>
 
+<details class="ds-intro-more">
+<summary>About this page: every encryption mechanism, one pane each,
+symmetric, asymmetric and JWE. Nothing is stored.</summary>
 <p class="ds-intro">Encrypt and decrypt with every mechanism, entirely in your browser &mdash; one pane per mechanism. <strong>Symmetric:</strong> <strong>AES</strong> in every mode (GCM, CBC, CTR, CFB, OFB, ECB) at every key size, <strong>ChaCha20-Poly1305</strong> (RFC 8439), the legacy <strong>3DES / DES</strong>, and <strong>password-based</strong> encryption through PBKDF2, scrypt or PBES2. <strong>Asymmetric:</strong> <strong>RSA</strong> (OAEP and PKCS#1 v1.5, direct or hybrid), <strong>ECC</strong> as ECIES over five curves, the post-quantum <strong>ML-KEM</strong> (FIPS 203) alone, as <strong>X-Wing</strong>, or as one of six <strong>Composite ML-KEM</strong> pairings, and the finite-field family <strong>DSA</strong> belongs to &mdash; ElGamal and DHIES. <strong>Protocol:</strong> <strong>JWE</strong> compact serialization, the same code the rest of this debugger reads tokens with. One thing is worth knowing before you start: <strong>only RSA encrypts a message directly</strong>, and only a short one &mdash; every other asymmetric mechanism here agrees a key and encrypts the message symmetrically under it, which is what ECIES, HPKE, JWE and TLS all do. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
+</details>
 
 <p class="ds-controls">
   <label class="ds-toggle" title="Expand or collapse every pane.">
@@ -626,7 +630,7 @@
   <fieldset id="pane_jwe">
     <legend>JWE (JSON Web Encryption) <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-badge-note">RFC 7516</span></legend>
 
-    <p class="ds-note" title="This absence was checked against the draft itself, not assumed.">&#9432; <strong>There is no post-quantum <code>alg</code> here, and that is a fact about the standards rather than a gap in this page.</strong> The pane above will encrypt to ML-KEM, X-Wing and six Composite ML-KEM pairings &mdash; but none of them can go in a JWE yet, because <strong>no JOSE binding for a post-quantum KEM has been specified</strong>. The document that will carry one is <code>draft-ietf-jose-pqc-kem</code>; despite the name, revision 06 specifies only the <em>COSE</em> binding &mdash; its running header reads &ldquo;PQ KEM for COSE&rdquo;, every binding section registers COSE codepoints, its key-derivation section begins &ldquo;The key derivation for COSE is performed using KMAC&rdquo;, and the word &ldquo;JOSE&rdquo; appears in it three times, twice in its own filename. So there is currently no registered <code>alg</code> value, no defined header parameter for the encapsulated key, and no JOSE-side KDF context to implement. Inventing them would produce a token nothing else could read. <strong>Signatures are the other way round</strong>: ML-DSA&rsquo;s JOSE binding is published as RFC 9964, and the Digital Signature page&rsquo;s JWS pane offers all thirteen post-quantum <code>alg</code> values today.</p>
+    <p class="ds-note" title="Every post-quantum and HPKE alg below is from an Internet-Draft.">&#9432; <strong>The post-quantum and HPKE <code>alg</code> values here are all from Internet-Drafts, and the drafts disagree about which revision still has a JOSE binding.</strong> <strong>ML-KEM</strong> (<code>ML-KEM-512/768/1024</code>, and the <code>+A128KW</code>/<code>+A192KW</code>/<code>+A256KW</code> key-wrap forms) follows <code>draft-ietf-jose-pqc-kem-05</code>, the last revision with JOSE text &mdash; revision 06 is COSE-only. The KEM ciphertext travels in an <code>ek</code> header and the key comes from KMAC256 over the <code>enc</code> (direct) or <code>alg</code> (key wrap) name. <strong>HPKE-0 &hellip; HPKE-7</strong> are <code>draft-ietf-jose-hpke-encrypt-22</code> over the classical curves; <strong>HPKE-8 &hellip; HPKE-16</strong> are <code>draft-reddy-cose-jose-pqc-hybrid-hpke-11</code> over ML-KEM and the PQ/T hybrids, and <strong>HPKE-10 and HPKE-11 are X-Wing</strong>. A bare <code>HPKE-n</code> is <em>Integrated Encryption</em>: it has <strong>no <code>enc</code></strong>, so the enc menu is not used, and the IV and tag segments are empty. <code>HPKE-n-KE</code> encrypts an ordinary content key and uses the enc menu. ML-KEM and HPKE-8&hellip;16 keys are <code>kty: "AKP"</code> JWKs naming exactly one <code>alg</code>; HPKE-0&hellip;7 take EC or OKP JWKs. There is no PEM form of any of them. The names, key formats and KDFs can still change before these become RFCs.</p>
     <p class="ds-note">The one pane whose output is a <em>protocol artifact</em> rather than raw bytes, and the reason it belongs in this debugger: a compact JWE is what an encrypted ID Token, a JAR request object and an OID4VCI encrypted credential response all are. It is the same module (<code>jose_jwe.js</code>) the VC issuance panes and JWT Tools use, so what this pane produces is what the rest of the debugger consumes. Note <code>A192GCM</code>: the RFC defines it and Chrome refuses every AES-192 operation, so the status line will say so rather than failing with an OperationError.</p>
 
       <div class="ds-field">
@@ -645,6 +649,50 @@
             <option value="ECDH-ES+A128KW">ECDH-ES+A128KW</option>
             <option value="ECDH-ES+A192KW">ECDH-ES+A192KW</option>
             <option value="ECDH-ES+A256KW">ECDH-ES+A256KW</option>
+            <optgroup label="ML-KEM — DRAFT draft-ietf-jose-pqc-kem-05">
+              <option value="ML-KEM-512">ML-KEM-512</option>
+              <option value="ML-KEM-768">ML-KEM-768</option>
+              <option value="ML-KEM-1024">ML-KEM-1024</option>
+              <option value="ML-KEM-512+A128KW">ML-KEM-512+A128KW</option>
+              <option value="ML-KEM-768+A192KW">ML-KEM-768+A192KW</option>
+              <option value="ML-KEM-1024+A256KW">ML-KEM-1024+A256KW</option>
+            </optgroup>
+            <optgroup label="HPKE — DRAFT draft-ietf-jose-hpke-encrypt-22">
+              <option value="HPKE-0">HPKE-0 (P-256, no enc)</option>
+              <option value="HPKE-0-KE">HPKE-0-KE (P-256)</option>
+              <option value="HPKE-1">HPKE-1 (P-384, no enc)</option>
+              <option value="HPKE-1-KE">HPKE-1-KE (P-384)</option>
+              <option value="HPKE-2">HPKE-2 (P-521, no enc)</option>
+              <option value="HPKE-2-KE">HPKE-2-KE (P-521)</option>
+              <option value="HPKE-3">HPKE-3 (X25519, no enc)</option>
+              <option value="HPKE-3-KE">HPKE-3-KE (X25519)</option>
+              <option value="HPKE-4">HPKE-4 (X25519, no enc)</option>
+              <option value="HPKE-5">HPKE-5 (X448, no enc)</option>
+              <option value="HPKE-5-KE">HPKE-5-KE (X448)</option>
+              <option value="HPKE-6">HPKE-6 (X448, no enc)</option>
+              <option value="HPKE-7">HPKE-7 (P-256, no enc)</option>
+              <option value="HPKE-7-KE">HPKE-7-KE (P-256)</option>
+            </optgroup>
+            <optgroup label="Post-quantum HPKE — DRAFT draft-reddy-cose-jose-pqc-hybrid-hpke-11">
+              <option value="HPKE-8">HPKE-8 (ML-KEM-768+P-256, no enc)</option>
+              <option value="HPKE-8-KE">HPKE-8-KE (ML-KEM-768+P-256)</option>
+              <option value="HPKE-9">HPKE-9 (ML-KEM-768+P-256, no enc)</option>
+              <option value="HPKE-9-KE">HPKE-9-KE (ML-KEM-768+P-256)</option>
+              <option value="HPKE-10">HPKE-10 (X-Wing, no enc)</option>
+              <option value="HPKE-10-KE">HPKE-10-KE (X-Wing)</option>
+              <option value="HPKE-11">HPKE-11 (X-Wing, no enc)</option>
+              <option value="HPKE-11-KE">HPKE-11-KE (X-Wing)</option>
+              <option value="HPKE-12">HPKE-12 (ML-KEM-1024+P-384, no enc)</option>
+              <option value="HPKE-12-KE">HPKE-12-KE (ML-KEM-1024+P-384)</option>
+              <option value="HPKE-13">HPKE-13 (ML-KEM-1024+P-384, no enc)</option>
+              <option value="HPKE-13-KE">HPKE-13-KE (ML-KEM-1024+P-384)</option>
+              <option value="HPKE-14">HPKE-14 (ML-KEM-512, no enc)</option>
+              <option value="HPKE-14-KE">HPKE-14-KE (ML-KEM-512)</option>
+              <option value="HPKE-15">HPKE-15 (ML-KEM-768, no enc)</option>
+              <option value="HPKE-15-KE">HPKE-15-KE (ML-KEM-768)</option>
+              <option value="HPKE-16">HPKE-16 (ML-KEM-1024, no enc)</option>
+              <option value="HPKE-16-KE">HPKE-16-KE (ML-KEM-1024)</option>
+            </optgroup>
           </select>
           </div>
           <div class="ds-grow">

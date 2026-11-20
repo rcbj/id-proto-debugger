@@ -31,6 +31,10 @@ var sdJwtVc = require("./sd_jwt_vc");
 // and reading the response — shared with step 4, which makes the same call to
 // refresh the credential (OID4VCI section 14.5).
 var vciWallet = require("./vci_wallet");
+// Client authentication at the token endpoint.
+var clientAuthPane = require("./vc_client_auth_pane");
+// What each format and key allows: the holder key's algorithm (#475).
+var vcFormats = require("./vc_formats");
 // Which claims the wallet asked for, chosen on step 1. Shared with that page so
 // the two cannot disagree about what a full selection sends.
 var vciClaims = require("./vci_claims");
@@ -98,12 +102,31 @@ function status(id, text, cls) {
 }
 
 // --- the holder key ---------------------------------------------------------
-// ES256, because it is what OID4VCI wallets use and what the mock issuer
-// advertises in proof_signing_alg_values_supported.
+// The kind of key the ISSUER accepts on its key proof
+// (proof_signing_alg_values_supported) that the credential's format can use
+// afterwards — vc_formats.holderKeyAlgFor() decides, so nobody has to pick a
+// valid pair (#475). ES256 when the issuer says nothing.
+function holderKeyAlg() {
+  log.debug("Entering holderKeyAlg().");
+  var cfg = sdJwtVc.storedRequestConfig();
+  var alg = vcFormats.holderKeyAlgFor(cfg.proofAlgs, cfg.format);
+  log.debug("Leaving holderKeyAlg(). " + (alg || "none"));
+  return { alg: alg, cfg: cfg };
+}
+
 function generateHolderKey() {
   log.debug("Entering generateHolderKey().");
-  log.debug("Leaving generateHolderKey().");
-  return vciWallet.generateHolderKeyPair()
+  var want = holderKeyAlg();
+  if (!want.alg) {
+    log.debug("Leaving generateHolderKey(). No usable algorithm.");
+    return Promise.reject(new Error("the issuer's " +
+      "proof_signing_alg_values_supported (" + want.cfg.proofAlgs + ") " +
+      "names no algorithm this wallet can make a holder key for" +
+      (want.cfg.format === "mso_mdoc" ? " that an mdoc can use (ES256)" :
+       " (" + vcFormats.HOLDER_KEY_ALGS.join(", ") + ")") + "."));
+  }
+  log.debug("Leaving generateHolderKey(). " + want.alg);
+  return vciWallet.generateHolderKeyPair(want.alg)
     .then(function (pair) {
       request.holderPublicJwk = pair.publicJwk;
       request.holderPrivateJwk = pair.privateJwk;
@@ -117,6 +140,15 @@ function loadOrGenerateHolderKey() {
   log.debug("Entering loadOrGenerateHolderKey().");
   var pub = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_JWK);
   var priv = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK);
+  var cfg = sdJwtVc.storedRequestConfig();
+  // A stored key this issuer would refuse is not reused: the request it
+  // signed would fail, naming the algorithm rather than the key.
+  if (pub && priv && !vcFormats.holderKeyFits(pub, cfg.proofAlgs,
+                                              cfg.format)) {
+    log.debug("loadOrGenerateHolderKey(): the stored " + pub.kty + " " +
+              (pub.crv || "") + " key does not fit " + cfg.proofAlgs + ".");
+    pub = null;
+  }
   if (pub && priv) {
     request.holderPublicJwk = pub;
     request.holderPrivateJwk = priv;
@@ -693,15 +725,29 @@ function holderKeysFor(count) {
 function signProof(nonce) {
   log.debug("Entering signProof().");
   var wanted = Math.min(requestedBatchSize(), issuerBatchSize());
-  log.debug("Leaving signProof(). Signing " + wanted + " proof(s).");
+  var proofType = selectedProofType();
+  log.debug("Leaving signProof(). " + proofType + ", " + wanted + " key(s).");
   return holderKeysFor(wanted)
     .then(function (keys) {
       request.holderKeys = keys;
-      return vciWallet.signProofs(keys, {
+      var opts = {
         clientId: sdJwtVc.get("client_id") || "",
         credentialIssuer: request.config.credentialIssuer,
-        nonce: nonce
-      });
+        nonce: nonce,
+        proofAlgs: String(request.config.proofAlgs || "").split(",")
+          .map(function (a) {
+            return a.trim();
+          }).filter(Boolean)
+      };
+      // The `attestation` proof type is ONE Key Attestation JWT vouching for
+      // every holder key; `jwt` is one proof of possession per key.
+      if (proofType === "attestation") {
+        return vciWallet.signAttestationProof(keys, opts)
+          .then(function (r) {
+            return r.proofs;
+          });
+      }
+      return vciWallet.signProofs(keys, opts);
     })
     .then(function (proofs) {
       request.proofs = proofs;
@@ -710,6 +756,76 @@ function signProof(nonce) {
       setValue("vc_proof_jwt", request.proof);
       return request.proof;
     });
+}
+
+// --- the key proof TYPE (OID4VCI 1.0 section 8.2.1) -------------------------
+// The proof types this request may use: the ones the issuer advertised in
+// proof_types_supported that this wallet can produce, jwt always among them
+// (it is the universal default, and an issuer that advertises none still
+// accepts it).
+function availableProofTypes() {
+  log.debug("Entering availableProofTypes().");
+  var advertised = String((request.config || {}).proofTypes || "")
+    .split(",").map(function (t) {
+      return t.trim();
+    }).filter(Boolean);
+  var out = vciWallet.PROOF_TYPES.filter(function (t) {
+    return !advertised.length || advertised.indexOf(t) !== -1;
+  });
+  if (out.indexOf(vciWallet.DEFAULT_PROOF_TYPE) === -1) {
+    out.unshift(vciWallet.DEFAULT_PROOF_TYPE);
+  }
+  log.debug("Leaving availableProofTypes(). " + out.join(","));
+  return out;
+}
+
+// The proof type chosen on the page, defaulting to jwt and never a type the
+// issuer did not advertise.
+function selectedProofType() {
+  log.debug("Entering selectedProofType().");
+  var sel = el("vc_proof_type");
+  var chosen = sel ? sel.value : "";
+  if (availableProofTypes().indexOf(chosen) === -1) {
+    chosen = vciWallet.DEFAULT_PROOF_TYPE;
+  }
+  log.debug("Leaving selectedProofType(). " + chosen);
+  return chosen;
+}
+
+// Fill the proof-type select from what the issuer advertises, keeping the
+// current choice when it is still available and jwt otherwise.
+function populateProofTypeSelect() {
+  log.debug("Entering populateProofTypeSelect().");
+  var sel = el("vc_proof_type");
+  if (!sel) {
+    log.debug("Leaving populateProofTypeSelect(). No select.");
+    return;
+  }
+  var avail = availableProofTypes();
+  var keep = avail.indexOf(sel.value) !== -1 ? sel.value :
+    vciWallet.DEFAULT_PROOF_TYPE;
+  while (sel.firstChild) {
+    sel.removeChild(sel.firstChild);
+  }
+  avail.forEach(function (t) {
+    var opt = document.createElement("option");
+    opt.value = t;
+    opt.textContent = t;
+    if (t === keep) {
+      opt.selected = true;
+    }
+    sel.appendChild(opt);
+  });
+  // A single advertised type is not a choice.
+  sel.disabled = avail.length < 2;
+  log.debug("Leaving populateProofTypeSelect().");
+}
+
+function onProofTypeChange() {
+  log.debug("Entering onProofTypeChange().");
+  prepareRequest();
+  log.debug("Leaving onProofTypeChange().");
+  return false;
 }
 
 function fetchNonce() {
@@ -830,6 +946,7 @@ function buildRequestBody() {
     credentialIdentifier: granted.length ? granted[0] : "",
     credentialConfigurationId: request.config.credentialConfigurationId,
     proofs: request.proofs,
+    proofType: selectedProofType(),
     encryption: request.encryption
   });
   request.body = body;
@@ -1017,7 +1134,11 @@ function onRequestOptionsChange() {
 // ---------------------------------------------------------------------------
 function renderProofJwt(body) {
   log.debug("Entering renderProofJwt().");
-  var jwt = body && body.proofs && body.proofs.jwt && body.proofs.jwt[0];
+  // The proof under whichever type this request carries (jwt or attestation):
+  // one object, one key, so the first array it holds is "the" proof shown.
+  var proofs = (body && body.proofs) || {};
+  var key = Object.keys(proofs)[0];
+  var jwt = key && proofs[key] && proofs[key][0];
   if (!jwt) {
     setValue("jwt_header", "");
     setValue("jwt_payload", "");
@@ -1152,8 +1273,10 @@ function tokenRequestBody() {
     grant_type: sdJwtVc.PRE_AUTHORIZED_GRANT,
     "pre-authorized_code": offer.code
   };
-  var clientId = sdJwtVc.get("client_id") || "";
-  if (clientId) params.client_id = clientId;
+  // The client's identity and authentication are vc_client_auth_pane.js's to
+  // add (OID4VCI section 6.1 leaves it to the authorization server whether
+  // this grant needs client authentication; when it does, it is the method
+  // chosen on step 1).
   var typed = (el("vc_tx_code") && el("vc_tx_code").value || "").trim();
   if (typed) params.tx_code = typed;
   // A pre-authorized issuance has no authorization request, so this is the ONLY
@@ -1179,16 +1302,16 @@ function renderTokenRequest() {
     log.debug("Leaving renderTokenRequest(). Nothing to render.");
     return "";
   }
-  var text = vciWallet.describeCall({
-    method: "POST",
-    url: endpoint ||
-        "(no token_endpoint is configured — retrieve the metadata in step 1)",
-    contentType: "application/x-www-form-urlencoded",
-    body: vciWallet.encodeForm(params)
-  });
-  setValue("vc_token_request", text);
+  clientAuthPane.applyTo(params, endpoint ||
+      "(no token_endpoint is configured — retrieve the metadata in step 1)")
+    .then(function (applied) {
+      setValue("vc_token_request", applied.text + (applied.notes.length ?
+        "\n\n# " + applied.notes.join("\n# ") : ""));
+    }).catch(function (e) {
+      setValue("vc_token_request", "Client authentication: " + e.message);
+    });
   log.debug("Leaving renderTokenRequest().");
-  return text;
+  return "";
 }
 
 function onTxCodeChange() {
@@ -1207,6 +1330,11 @@ function showPreAuthorizedPane() {
     log.debug("Leaving showPreAuthorizedPane().");
     return false;
   }
+  // The client authentication pane belongs to the token call, which this
+  // page makes only in the pre-authorized flow (the authorization code is
+  // exchanged on oauth2_oidc_2.html).
+  if (el("pane_client_auth")) el("pane_client_auth").style.display =
+      offer ? "" : "none";
   if (!offer) {
     pane.style.display = "none";
     log.debug("Leaving showPreAuthorizedPane(). Not a pre-authorized " +
@@ -1273,20 +1401,20 @@ function sendTokenRequest() {
   ensureDpopKey()
     .then(function (pair) {
       if (pair) pageDpopKey = pair;
-      return vciWallet.fetchProtected({
-        url: endpoint,
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: vciWallet.encodeForm(params),
-        context: dpopContext()
-        // No accessToken: this request is how one is obtained, so the proof
-        // carries no ath.
+      // Client authentication (step 1's method) is applied by the pane, which
+      // also answers an attestation challenge once. No accessToken: this
+      // request is how one is obtained, so the DPoP proof carries no ath.
+      return clientAuthPane.sendToken(vciWallet, params, endpoint,
+                                      dpopContext(), function (text) {
+        status("vc_token_status", "Redeeming the pre-authorized code: " +
+               text, "vc-pending");
       });
     })
     .then(function (result) {
       recordTokenBinding(result);
       return { ok: result.response.ok, statusCode: result.response.status,
-               body: result.body, raw: result.text };
+               body: result.body, raw: result.text,
+               challengeSource: result.challengeSource };
     })
     .then(function (response) {
       var box = el("vc_token_response");
@@ -1324,8 +1452,10 @@ function sendTokenRequest() {
       buildRequestBody();
       renderDpopPane();
       status("vc_token_status",
-        "An access token was issued. The credential request below can now be " +
-            "authorized with it.", "vc-ok");
+        "An access token was issued" + (response.challengeSource ? " (the " +
+            "Client Attestation PoP carried a challenge from " +
+            response.challengeSource + ")" : "") + ". The credential " +
+            "request below can now be authorized with it.", "vc-ok");
       // Through showRequestConfig(), because the token response is what says
       // which claims were granted — the approval pane described the request
       // this page was ABOUT to make, and now there is an answer to describe.
@@ -1832,6 +1962,8 @@ function showRequestConfig(idTokenClaims) {
   log.debug("Entering showRequestConfig().");
   var cfg = sdJwtVc.storedRequestConfig();
   request.config = cfg;
+  // The proof-type choices depend on this config, so refill the select now.
+  populateProofTypeSelect();
   setText("vc_credential_endpoint", cfg.credentialEndpoint || "—");
   setText("vc_credential_issuer", cfg.credentialIssuer || "—");
   setText("vc_credential_config",
@@ -1876,6 +2008,11 @@ function togglePane(id) {
 
 function onload() {
   log.debug("Entering onload().");
+  // Client authentication: the method chosen on step 1, and the secret or
+  // key typed on this page when it is not (or cannot be) kept.
+  clientAuthPane.render("vc_client_auth_pane", "call", function () {
+    renderTokenRequest();
+  });
   // The hand-off has done its job; from here the workflow is on its own pages.
   sdJwtVc.endFlow();
   sdJwtVc.renderUseCaseBadge();
@@ -1948,6 +2085,7 @@ module.exports = {
   showPreAuthorizedPane: showPreAuthorizedPane,
   pollDeferred: pollDeferred,
   renderProofJwt: renderProofJwt,
+  onProofTypeChange: onProofTypeChange,
   renderAssembledCall: renderAssembledCall,
   denyIssuance: denyIssuance,
   regenerateHolderKey: regenerateHolderKey,

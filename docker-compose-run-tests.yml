@@ -37,11 +37,18 @@
 x-mirror-contexts: &mirror-contexts
   ubuntu: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/ubuntu:latest
   "node:24.22.1-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-bookworm-slim
+  "rust:1.97-bookworm": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/rust:1.97-bookworm
   "eclipse-temurin:11-jdk": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/eclipse-temurin:11-jdk
   # Not a copy of anything upstream: the Shibboleth side-car's two archives,
   # built into an image by .github/scripts/mirror-builds.sh
   # (.github/image-mirror-builds.txt) so that build downloads nothing.
   "shibboleth-idp-dist:4.3.3": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/shibboleth-idp-dist:4.3.3
+  # Not a copy either: anoncreds-rs and its node binding, installed without
+  # their install script's download (tests/anoncreds-witness/Dockerfile).
+  "anoncreds-witness:0.5.0-0.2.3": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/anoncreds-witness:0.5.0-0.2.3
+  # Blockchain Commons' bc-envelope-cli, built from crates.io into the
+  # mirror (tests/gordian-witness/Dockerfile).
+  "gordian-witness:0.35.0": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/gordian-witness:0.35.0
 services:
   postgres:
     image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/postgres:18
@@ -156,8 +163,7 @@ services:
       sts:
         condition: service_healthy
     # The stack's TLS pair, generated on the host before compose starts. See
-    # the same mount in local-tests.yml and the header of
-    # common/tls_listener.js: ONE pair for the api and the client, because the
+    # the header of common/tls_listener.js: ONE pair for the api and the client, because the
     # mock STS has to be handed the api's anchor in order to push to it.
     volumes:
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
@@ -201,8 +207,7 @@ services:
       args:
         CONFIG_FILE: ${CONFIG_FILE}
     # The stack's TLS pair, generated on the host before compose starts. See
-    # the same mount in local-tests.yml and the header of
-    # common/tls_listener.js: ONE pair for the api and the client, because the
+    # the header of common/tls_listener.js: ONE pair for the api and the client, because the
     # mock STS has to be handed the api's anchor in order to push to it.
     volumes:
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
@@ -256,7 +261,7 @@ services:
     # version's. tests/module_paths.js and common/common.sh read it from here.
     #
     # IYA_STS_IMAGE overrides it, for a candidate image or a digest pin.
-    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
+    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.1.0-candidate}
     # ---------------------------------------------------------------------
     # THE SAME UID AS THE TESTS CONTAINER, BECAUSE THE SPIRE SOCKET IS
     # PRIVATE NOW.
@@ -322,10 +327,11 @@ services:
       # THE REASON THE LEVEL DID NOT REACH IT is the trap the mock's own
       # launcher documents at length: `STS_LOG_LEVEL` reaches the loggers
       # `config.js` registers, and NOT the modules that build a bunyan logger
-      # at load from `require(process.env.CONFIG_FILE).logLevel` — the mock's
-      # six vendored ones, and this project's own `common/` crypto modules.
-      # `xmldsig` alone was 208,966 lines, which is every canonicalization of
-      # every signed document.
+      # at load from `require(process.env.CONFIG_FILE).logLevel`. In
+      # 2026-08 those were iya-sts's copies of this project's `common/` modules
+      # (it carries no copies now; its own modules still read the level that
+      # way). `xmldsig` alone was 208,966 lines, which is every
+      # canonicalization of every signed document.
       #
       # `sts/env/test.js` is `env/local.js` with one key changed, so this
       # swaps the level and nothing else. A debug run is
@@ -454,8 +460,7 @@ services:
       # every other job in the pool would see change under it.
       - STS_KEYS_EDDSA_SIGNING=true
       # The stack's anchor, so this service can PUSH a Security Event Token to
-      # the api over TLS (RFC 8935). See the long note on the same line in
-      # local-tests.yml: this is the only outbound connection from the mock to
+      # the api over TLS (RFC 8935). This is the only outbound connection from the mock to
       # the api, and without the anchor the push fails the handshake and reads
       # as a transmitter that sent nothing.
       - NODE_EXTRA_CA_CERTS=/etc/idptools/tls/stack-tls-cert.pem
@@ -472,6 +477,20 @@ services:
       # ---------------------------------------------------------------------
       - STS_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
       - STS_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+      # ---------------------------------------------------------------------
+      # WHERE A CERTIFICATE THIS SERVICE MINTS SAYS ITS ISSUER IS. iya-sts
+      # writes an Authority Information Access caIssuers URL into every
+      # certificate it issues, <base>/pki/ca/<file>.cer, and <base> defaults
+      # to http://<first tls.hostname, i.e. localhost>:<pki.httpPort> — a
+      # URL nothing but that container can follow. tests/
+      # vc_verifier_oid4vc_wallet.js follows it from the issuer's x5c to
+      # reach iya-sts's root out of band (the way an operator configures a
+      # Verifier's trust), so it must name this service by its compose name.
+      # 8082 is pki.httpPort inside the container. Plain HTTP is right for
+      # caIssuers (RFC 5280 section 4.2.2.1). It applies to certificates
+      # minted after start, and the stack starts fresh.
+      # ---------------------------------------------------------------------
+      - PKI_DISTRIBUTION_BASE_URL=http://sts:8082
     volumes:
       # Shared with the tests container so `spiffe_protocol.js` can dial it.
       # A socket is a rendezvous point rather than a file — it holds no bytes,
@@ -508,8 +527,7 @@ services:
           #
           # The certificate is generated with SANs localhost, sts, sts-mock,
           # sts.example.com and 127.0.0.1, so this name must stay OUT of that
-          # list. local-tests.yml provides the same name through the api's
-          # extra_hosts, because that stack has no Docker DNS at all.
+          # list.
           - sts-not-in-the-certificate
     ports:
       - 8081:8081
@@ -546,7 +564,7 @@ services:
   # them for that reason — and a browser-based wallet cannot read a response
   # without them. This IS the address the wallet uses, and the address the
   # issuer's baseUrl names, because every URL walt.id publishes is built from it.
-  # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
+  # A stock node image runs it: tests/cors-proxy/cors-proxy.js has no dependencies.
   waltid-issuer:
     container_name: waltid-issuer
     image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
@@ -554,12 +572,12 @@ services:
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
     user: "node"
-    command: ["node", "/waltid/cors-proxy.js"]
+    command: ["node", "/cors-proxy/cors-proxy.js"]
     environment:
-      - WALTID_UPSTREAM=waltid-issuer-api:7006
-      - WALTID_PROXY_PORT=7005
+      - CORS_PROXY_UPSTREAM=waltid-issuer-api:7006
+      - CORS_PROXY_PORT=7005
     volumes:
-      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+      - ./tests/cors-proxy/cors-proxy.js:/cors-proxy/cors-proxy.js:ro
     healthcheck:
       # The whole chain: this proxy answering, and the issuer behind it serving
       # the metadata a wallet asks for first. The probe lives here rather than on
@@ -615,12 +633,12 @@ services:
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
     user: "node"
-    command: ["node", "/waltid/cors-proxy.js"]
+    command: ["node", "/cors-proxy/cors-proxy.js"]
     environment:
-      - WALTID_UPSTREAM=waltid-verifier-api:7004
-      - WALTID_PROXY_PORT=7003
+      - CORS_PROXY_UPSTREAM=waltid-verifier-api:7004
+      - CORS_PROXY_PORT=7003
     volumes:
-      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+      - ./tests/cors-proxy/cors-proxy.js:/cors-proxy/cors-proxy.js:ro
     healthcheck:
       # /livez is the health endpoint walt.id's service-commons registers for
       # every service. The probe lives on the proxy, not the verifier, because
@@ -681,6 +699,11 @@ services:
     # /idp/status answers only once the IdP's services have loaded, and only
     # to the loopback address (conf/access-control.xml), which is where the
     # probe runs.
+    # The debugger's SP metadata arrives here at run time, written by the tests
+    # container, and the LocalDynamic metadata provider reads it on first use
+    # of each entityID (shibboleth-idp/conf/metadata-providers.xml, #425).
+    volumes:
+      - shibboleth-sp-metadata:/opt/shibboleth-idp/metadata/sp
     healthcheck:
       test: ["CMD-SHELL", "curl -sf -o /dev/null http://localhost:8080/idp/status || exit 1"]
       interval: 10s
@@ -712,7 +735,7 @@ services:
     # therefore fetches no source from GitHub. tests/image_mirror_coverage.js
     # holds this tag to IYA_STS_IMAGE's release. IYA_STS_COMPANION_IMAGE
     # overrides it, for a companion built by hand from a candidate tag.
-    image: ${IYA_STS_COMPANION_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts-companion:v1.0.0}
+    image: ${IYA_STS_COMPANION_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts-companion:v1.1.0-candidate}
     environment:
       - COMPANION_PORT=9700
       - COMPANION_PUBLIC_URL=http://companion:9700
@@ -734,6 +757,65 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    networks:
+      - keycloak
+
+  # POLARIS (#423): polaris-oid4vp, an OpenID4VP 1.0 + HAIP 1.0 verifier
+  # somebody else wrote, from its own published image, UNMODIFIED. Its
+  # entrypoint is replaced by tests/polaris/serve-loop.sh, which runs the
+  # image's own `polaris-oid4vp` command. 1.2.0 starts each request on
+  # POST /control/request, so one process serves every case. Plain HTTP
+  # inside; the https URLs HAIP hands the wallet are the proxy's below.
+  # --cors-origin is not set: the proxy terminates TLS and replaces CORS.
+  polaris-verifier:
+    container_name: polaris-verifier
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/polaris-oid4vp:v1.2.0
+    user: "10001:10001"
+    entrypoint: ["sh", "/serve-loop.sh"]
+    environment:
+      - POLARIS_PORT=9080
+      - POLARIS_PUBLIC_BASE_URL=https://polaris:7010
+    volumes:
+      - polaris-data:/data
+      - ./tests/polaris/serve-loop.sh:/serve-loop.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /data/pki/client.pem"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    networks:
+      - keycloak
+
+  # TLS in front of Polaris. HAIP's request_uri and response_uri are https,
+  # and the stack certificate (whose SANs carry `polaris`) is what the
+  # wallet trusts. tests/cors-proxy/cors-proxy.js terminates that TLS and
+  # sets CORS; it replaces any Access-Control-* Polaris would send, so
+  # --cors-origin is left off. Healthy once the proxy's own /__proxy/health
+  # answers, which does not touch Polaris: polaris-verifier's healthcheck
+  # already gates on Polaris (#431).
+  polaris:
+    container_name: polaris
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
+    user: "node"
+    command: ["node", "/cors-proxy/cors-proxy.js"]
+    environment:
+      - CORS_PROXY_UPSTREAM=polaris-verifier:9080
+      - CORS_PROXY_PORT=7010
+      - CORS_PROXY_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - CORS_PROXY_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+    volumes:
+      - ./tests/cors-proxy/cors-proxy.js:/cors-proxy/cors-proxy.js:ro
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('https').get({host:'localhost',port:7010,path:'/__proxy/health',rejectUnauthorized:false},function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    depends_on:
+      polaris-verifier:
+        condition: service_healthy
     networks:
       - keycloak
 
@@ -799,10 +881,9 @@ services:
       # transmitter itself and the test would wait for an event that had
       # already arrived somewhere else.
       #
-      # `tests` is this service's compose DNS name. The local launcher needs
-      # no such entry and deliberately has none: local-tests.yml puts every
-      # service on HOST networking, where the test's own default of
-      # `localhost` is already the right answer.
+      # `tests` is this service's compose DNS name. A HOST-networked stack
+      # (keycloak-tests.yml) needs no such entry, since the test's own
+      # default of `localhost` is already the right answer there.
       SSF_RECEIVER_HOST: tests
       COMPANION_URL: http://companion:9700
       # The SPKI pin for the stack's own certificate, so Chrome in here
@@ -816,6 +897,11 @@ services:
       # container. It is the `local` entity and the only route to a method
       # SPIRE's own table marks local-only.
       SPIFFE_SERVER_SOCKET: unix:///spire-sock/server.sock
+      # The volume shared with polaris-verifier; its presence schedules
+      # tests/vc_presentation_polaris.js. The control URL is Polaris's own
+      # plain-HTTP listener, where POST /control/request starts a case.
+      POLARIS_DATA_DIR: /polaris-data
+      POLARIS_CONTROL_URL: http://polaris-verifier:9080
     # Chrome crashes tabs on heavy pages when limited to Docker's default 64MB
     # /dev/shm. The tests also pass --disable-dev-shm-usage; this raises the cap
     # as a belt-and-suspenders mitigation.
@@ -832,7 +918,7 @@ services:
         # iya-sts's release image, the same one the `sts` service runs. The
         # tests image copies its whole /usr/src/sts tree in for the jobs that
         # load iya-sts's modules in process; see stage 2 of tests/Dockerfile.
-        iyasts: docker-image://${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
+        iyasts: docker-image://${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.1.0-candidate}
     # Persist the generated report/logs to the host (gitignored).
     volumes:
       - ./tests/report:/usr/src/app/report
@@ -841,6 +927,12 @@ services:
       # variable that test SKIPS its local-socket section with a reason rather
       # than passing vacuously.
       - spire-server-socket:/spire-sock
+      # Shared with polaris-verifier (tests/polaris/serve-loop.sh).
+      - polaris-data:/polaris-data
+      # Where saml11_sso.js and saml11_peers.js register the debugger with the
+      # Shibboleth side-car: its SP metadata, written as <SHA-1 of the
+      # entityID>.xml (#425). See the shibboleth-idp service and the volume.
+      - shibboleth-sp-metadata:/shibboleth-sp-metadata
       # The stack's TLS pair. The jobs in here fetch https://api:4000 and
       # https://client:3000, so this container needs the anchor for node
       # and the SPKI pin for Chrome — run-tests-in-container.sh installs
@@ -871,6 +963,8 @@ services:
         condition: service_healthy
       companion:
         condition: service_healthy
+      polaris:
+        condition: service_healthy
     networks:
      - keycloak
 
@@ -882,7 +976,26 @@ volumes:
   # creates a plain one root:root 0755 and the mock, running as 10001, could
   # not bind a socket in it. 0700 is what the mock itself would make the
   # directory, so it has nothing to warn about.
+  # Shared by polaris-verifier and the tests container, both uid 10001 (a
+  # plain named volume is root:root, which neither could write).
+  polaris-data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=10001,gid=10001,mode=0700"
   spire-server-socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=10001,gid=10001,mode=0700"
+  # The debugger's SAML 1.1 SP metadata, shared between the tests container
+  # (which writes it) and the Shibboleth side-car (which reads it), #425. A
+  # tmpfs owned by 10001 for the spire-server-socket reason: both containers
+  # run as that uid, and a plain named volume is created root:root. It holds
+  # only what one run wrote, and nothing survives the stack.
+  shibboleth-sp-metadata:
     driver: local
     driver_opts:
       type: tmpfs

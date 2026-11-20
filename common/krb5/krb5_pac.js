@@ -82,6 +82,9 @@ var asn1 = require("./krb5_asn1.js");
 var msgs = require("./krb5_messages.js");
 var ndr = require("./krb5_ndr.js");
 var bunyan = require("bunyan");
+// Why CONFIG_FILE gave no log level, kept until the logger below exists to
+// report it (#322).
+var logLevelProblem = null;
 var log = bunyan.createLogger({
   name: "krb5_pac",
   level: (function () {
@@ -89,10 +92,16 @@ var log = bunyan.createLogger({
       return require(process.env.CONFIG_FILE).logLevel || "info";
     } catch (e) {
       // No CONFIG_FILE resolvable here — a node caller rather than a bundle.
+      // The logger does not exist yet, so the error is kept for it.
+      logLevelProblem = e;
       return "info";
     }
   })()
 });
+if (logLevelProblem) {
+  log.debug("No log level from CONFIG_FILE, using info: " +
+      ((logLevelProblem && logLevelProblem.message) || logLevelProblem));
+}
 
 // The authorization-data types this module has to walk through or name. The
 // first two are RFC 4120's; the rest are MS-KILE's.
@@ -707,6 +716,7 @@ function parseSignature(bytes) {
   } catch (e) {
     // An unknown signature type is a fact to report, not a parse failure: the
     // signature bytes are still worth showing.
+    log.debug("Caught in parseSignature(): " + ((e && e.message) || e));
     expected = null;
   }
   var signature = expected === null ? rest : rest.subarray(0,

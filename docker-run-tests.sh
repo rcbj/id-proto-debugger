@@ -13,11 +13,9 @@ set -x
 # tests passed (--exit-code-from tests). On that default run the stack is
 # always torn down at the end.
 #
-# This is the command CLAUDE.md documents. It also carries every option
-# ./local-run-tests.sh had — the focused loops, --saml-dev, --sts-url and
-# --krb5-real-dc — which that launcher is being retired in favour of; see
-# usage() below. To run against an already-deployed site, use
-# ./remote-run-tests.sh.
+# This is the command CLAUDE.md documents, and it carries the focused
+# loops, --saml-dev, --sts-url and --krb5-real-dc; see usage() below. To run
+# against an already-deployed site, use ./remote-run-tests.sh.
 #
 # Usage:
 #   ./docker-run-tests.sh
@@ -49,6 +47,11 @@ NO_HOST_PORTS=auto
 SAML_SIG_VALIDATION=true
 KRB5_REAL_DC_WHAT=test
 STS_EXTERNAL_URL="${STS_EXTERNAL_URL:-}"
+# --select with no value reads TEST_SELECT from the environment, so it is
+# kept here: the mode handling below resets TEST_SELECT for every mode.
+ENV_TEST_SELECT="${TEST_SELECT:-}"
+# --repeat=<N>: run the selection N times against one stack.
+REPEAT=1
 
 usage()
 {
@@ -108,6 +111,22 @@ Usage: $(basename "$0") [one mode] [--sts-url=<base>] [--keep-stack] [-h|--help]
                of password, webauthn. The realms are left configured on the
                running stack, at https://localhost:8081/realm/<id>/admin/.
 
+  --select[=<selectors>]
+               Bring up the WHOLE stack, as the default run does, and run only
+               the jobs <selectors> names: tests/run-report.js's TEST_SELECT
+               syntax, space-separated, each a script with optional
+               ?NAME=value&... to pick one of its jobs (for example
+               caep_page.js, or saml_sso.js?SAML_IDP=sts). With no value it
+               takes TEST_SELECT from the environment. A selector that
+               matches no job fails the run, naming it. The stack is torn
+               down at the end unless --keep-stack is given too.
+
+  --repeat=<N> With --select, run the selection N times against the same
+               stack, every one of them even after a failure, and fail when
+               any did, saying how many. For a job that flakes: each run's
+               report is under tests/report/ as usual. Torn down at the end
+               like --select, for every N, unless --keep-stack is given.
+
   --krb5-real-dc[=test|capture|both]
                Create a Windows Server 2025 domain controller on AWS, run
                tests/krb5_real_dc.js (test, the default), refresh
@@ -129,7 +148,8 @@ Usage: $(basename "$0") [one mode] [--sts-url=<base>] [--keep-stack] [-h|--help]
                focused mode.
 
   The focused modes run their jobs one at a time (TEST_CONCURRENCY=1) unless
-  TEST_CONCURRENCY says otherwise, and leave the stack up. Stop it with
+  TEST_CONCURRENCY says otherwise, and leave the stack up (all but --select,
+  which tears it down unless --keep-stack is given). Stop it with
   \`docker compose -f docker-compose-run-tests.yml down -v\`, or by running this
   script again, which always starts from a clean stack.
 USAGE
@@ -158,6 +178,9 @@ do
     --delegation-only=*) setMode "$1" delegation-only "${1#*=}" ;;
     --federation-only) setMode "$1" federation-only both ;;
     --federation-only=*) setMode "$1" federation-only "${1#*=}" ;;
+    --select) setMode "$1" select "${ENV_TEST_SELECT}" ;;
+    --select=*) setMode "$1" select "${1#*=}" ;;
+    --repeat=*) REPEAT="${1#*=}" ;;
     --krb5-real-dc) setMode "$1" krb5-real-dc test ;;
     --krb5-real-dc=*) setMode "$1" krb5-real-dc "${1#*=}" ;;
     --sts-url=*) STS_EXTERNAL_URL="${1#*=}" ;;
@@ -259,6 +282,15 @@ case "${MODE}" in
       exit 1
     fi
     ;;
+  select)
+    if [ -z "${MODE_WHAT}" ];
+    then
+      echo "--select needs selectors: --select=<script>[?NAME=value] ..., or" \
+           "TEST_SELECT in the environment." >&2
+      usage; exit 1
+    fi
+    TEST_SELECT="${MODE_WHAT}"
+    ;;
   saml-dev)
     SAML_SIG_VALIDATION=false
     NEED_KEYCLOAK=1
@@ -271,15 +303,31 @@ case "${MODE}" in
     KEEP_STACK=1
     ;;
 esac
+case "${REPEAT}" in
+  ''|*[!0-9]*|0)
+    echo "--repeat takes a whole number of runs, at least 1: ${REPEAT}" >&2
+    exit 1 ;;
+esac
+if [ "${REPEAT}" != "1" ] && [ "${MODE}" != "select" ];
+then
+  echo "--repeat runs a --select selection again; it needs --select." >&2
+  exit 1
+fi
+# --select (with or without --repeat, whatever N is) TEARS DOWN at the end
+# unless --keep-stack is given as well. It is a measurement rather than a
+# stack to look at, and a stack it left up collided with the next run's
+# fixed container names: --repeat=1 did exactly that, because only N > 1
+# used to tear down. It is no longer in the list of modes above that keep
+# their stack, so KEEP_STACK is 1 for it only when --keep-stack set it.
 
 # CONFIG_FILE selects the api/client build-time config baked into their images.
 # The whole stack runs on a private compose network, so the browser (running
 # INSIDE the tests container) reaches the api/client by their compose DNS names.
 # That requires ./env/docker-tests.js (apiUrl=http://api:4000, uiUrl=
 # http://client:3000, spEntityId=http://client:3000/saml/sp) — NOT ./env/local.js,
-# whose localhost URLs only work when the browser runs on the host (see
-# ./local-run-tests.sh). It must also match the runtime CONFIG_FILE the compose
-# file pins for the api/client services. Baking local.js here made the SAML
+# whose localhost URLs only work when the browser runs on the host. It must
+# also match the runtime CONFIG_FILE the compose file pins for the api/client
+# services. Baking local.js here made the SAML
 # metadata load hit http://localhost:4000 from inside the container → connection
 # refused. The tests container sets its own correct in-container SAML defaults
 # (SAML_SP_ENTITY_ID, API_BASE_URL, ...) in tests/run-tests-in-container.sh, so
@@ -718,13 +766,18 @@ onExit()
 {
   local status=$?
   echo "Entering onExit()."
+  local stackLine
   if [ "${KEEP_STACK}" = "1" ];
   then
     printKeptStack
+    stackLine="docker-run-tests.sh: the stack was LEFT UP (see above)."
   else
     teardown
+    stackLine="docker-run-tests.sh: the stack was torn down."
   fi
   launcherExitStatus "${status}" "docker-run-tests.sh"
+  # The last line, so whoever runs next knows whether containers remain.
+  echo "${stackLine}"
   exit "${status}"
 }
 trap onExit EXIT
@@ -736,20 +789,6 @@ trap onExit EXIT
 # user"). -v also guarantees a fresh DB. This likewise sidesteps a docker-compose
 # v1 recreate bug ("KeyError: 'ContainerConfig'") pre-existing containers trigger.
 docker_compose "${COMPOSE_ARGS[@]}" down -v --remove-orphans 2>/dev/null || true
-
-# And tear down the LOCAL stack's containers as well, because several services —
-# keycloak-wsfed among them — carry the same hard-coded `container_name` in both
-# compose files while the two files configure them completely differently: the
-# local one runs keycloak-wsfed on host networking with a WildFly port-offset of 2
-# (so it binds 8082/8445), the containerized one on a bridge network with no offset
-# (8080/8443, published as 8082:8080). A container left over from a local run is
-# therefore the wrong container for this run, and the giveaway is a log that shows
-# WildFly binding 8082 when this stack expects 8080. Best-effort and quiet: the
-# file may not exist in a trimmed checkout, and nothing here should fail a run.
-if [ -f "local-tests.yml" ];
-then
-  docker_compose -f local-tests.yml down --remove-orphans 2>/dev/null || true
-fi
 
 # THE BIND MOUNTS, CREATED HERE AND MADE WRITABLE BY ANY UID.
 #
@@ -834,7 +873,11 @@ runPartialStack()
   # certificate at startup and the RFC 9700 realm the tests container creates
   # is on it; it starts in seconds.
   local services
-  if [ "${MODE}" = "suite" ] || [ "${MODE}" = "saml-dev" ];
+  # --select runs whatever it names, so it gets the whole stack too: which
+  # services a job needs is the job's business, and a guess here would read
+  # as that job failing.
+  if [ "${MODE}" = "suite" ] || [ "${MODE}" = "saml-dev" ] ||
+     [ "${MODE}" = "select" ];
   then
     services="$(docker_compose "${COMPOSE_ARGS[@]}" config --services \
                   2>/dev/null | grep -xE '[a-z0-9_-]+' | grep -vx tests |
@@ -875,10 +918,9 @@ runPartialStack()
   fi
   if inList sts "${services}";
   then
-    # No requireStsReachable() / requireStsSpiffeListeners() here, unlike
-    # ./local-run-tests.sh: those guard against a stranger holding a HOST
-    # port under host networking, and on this bridge network every listener
-    # is in the container's own namespace — a squatter on the host can only
+    # No requireStsReachable() here: it guards against a stranger holding a
+    # HOST port under host networking, and on this bridge network every
+    # listener is in the container's own namespace — a squatter on the host can only
     # make the port PUBLISH fail, which `up` reports itself.
     composeUpAndWait --no-deps sts
     check_return_code $?
@@ -918,9 +960,24 @@ runPartialStack()
     run_env+=(-e TEST_PROVISION_ONLY=1)
     run_env+=(-e "SAML_SIG_VALIDATION=${SAML_SIG_VALIDATION}")
   fi
-  docker_compose "${COMPOSE_ARGS[@]}" run --rm -T --no-deps --use-aliases \
-    "${run_env[@]}" tests
-  local rc=$?
+  # --repeat: every run, even after a failure, so a flake's rate is counted
+  # rather than its first occurrence.
+  local rc=0 n failed=0
+  for n in $(seq 1 "${REPEAT}");
+  do
+    [ "${REPEAT}" != "1" ] && echo "=== --repeat: run ${n} of ${REPEAT} ==="
+    docker_compose "${COMPOSE_ARGS[@]}" run --rm -T --no-deps --use-aliases \
+      "${run_env[@]}" tests
+    if [ $? -ne 0 ];
+    then
+      failed=$((failed + 1))
+      rc=1
+    fi
+  done
+  if [ "${REPEAT}" != "1" ];
+  then
+    echo "=== --repeat: ${failed} of ${REPEAT} run(s) failed ==="
+  fi
   echo "Leaving runPartialStack(). rc=${rc}"
   return ${rc}
 }
@@ -944,6 +1001,44 @@ then
   exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# REQUIRE THAT THE SUITE ACTUALLY RAN, not only that compose exited 0.
+#
+# --exit-code-from tests reports the tests container's exit status, and a
+# container that never started has one: 0. When a service the tests container
+# waits on fails to start, compose aborts the stack, stops the tests container
+# it never started, and exits 0. On 2026-11-16 the api refused its
+# configuration ("oid4vpMaxRequestBytes is not a setting this service has"),
+# every other service reported "dependency failed to start", and this launcher
+# printed a passing banner for a run that had run nothing.
+#
+# A run that ran writes tests/report/<run>/report.xml (run-report.js). This
+# requires one newer than the marker made just before `up`, and when there is
+# none it says so and lists what compose left behind, so the service that did
+# not start is named.
+#
+# $1 the marker file.
+# ---------------------------------------------------------------------------
+requireSuiteReported()
+{
+  echo "Entering requireSuiteReported()."
+  local marker="$1"
+  local report
+  report="$(find tests/report -mindepth 2 -maxdepth 2 -name report.xml \
+              -newer "${marker}" 2>/dev/null | head -1)"
+  if [ -n "${report}" ];
+  then
+    echo "Leaving requireSuiteReported(). ${report}"
+    return 0
+  fi
+  echo "ERROR: compose exited 0 but the suite wrote no report: the tests" \
+       "container never ran." >&2
+  echo "       A service it waits on did not start. What compose left:" >&2
+  docker_compose "${COMPOSE_ARGS[@]}" ps -a 2>&1 | sed 's/^/         /' >&2
+  echo "Leaving requireSuiteReported(). No report."
+  return 1
+}
+
 # Start the WS-Federation side-car FIRST, on its own, and stop here if it does not
 # stay up.
 #
@@ -966,9 +1061,13 @@ check_return_code $?
 # this script) exit with the tests container's status. The side-car started above
 # is left alone: compose does not recreate a service whose configuration is
 # unchanged.
+SUITE_MARKER="$(mktemp)"
 docker_compose "${COMPOSE_ARGS[@]}" up --build --abort-on-container-exit \
   --exit-code-from tests
 check_return_code $?
+requireSuiteReported "${SUITE_MARKER}"
+check_return_code $?
+rm -f "${SUITE_MARKER}"
 
 # The banner is printed by the EXIT trap, after the teardown, so it is the last
 # thing on the screen rather than the thing the teardown scrolls away.

@@ -1,7 +1,7 @@
 # THE THIRD-PARTY IMAGES THE STACKS USE, AND WHERE THEIR COPIES LIVE.
 #
-# Every image the four compose files (docker-compose-run-tests.yml,
-# docker-compose.yml, local-tests.yml, keycloak-tests.yml, and the overlays on
+# Every image the three compose files (docker-compose-run-tests.yml,
+# docker-compose.yml, keycloak-tests.yml, and the overlays on
 # top of them) pull or build FROM is copied into a PRIVATE package under
 #
 #   ghcr.io/rcbj/id-proto-debugger/mirror/<mirror path>
@@ -34,6 +34,7 @@
 ubuntu:latest                            ubuntu:latest
 node:24.22.1-alpine                      node:24.22.1-alpine
 node:24.22.1-bookworm-slim               node:24.22.1-bookworm-slim
+rust:1.97-bookworm                       rust:1.97-bookworm
 eclipse-temurin:11-jdk                   eclipse-temurin:11-jdk
 postgres:18                              postgres:18
 quay.io/keycloak/keycloak:26.6.4         keycloak/keycloak:26.6.4
@@ -44,4 +45,5 @@ waltid/verifier-api2:0.23.0              waltid/verifier-api2:0.23.0
 # repository's area; the weekly refresh re-copies the tag. A release bump
 # changes this line together with the IYA_STS_IMAGE defaults in the compose
 # files, which tests/image_mirror_coverage.js holds to it.
-ghcr.io/rcbj/iya-sts:1.0.0               iya-sts:1.0.0
+ghcr.io/rcbj/iya-sts:1.1.0-candidate     iya-sts:1.1.0-candidate
+ghcr.io/egorkhaklin/polaris-oid4vp:v1.2.0 polaris-oid4vp:v1.2.0

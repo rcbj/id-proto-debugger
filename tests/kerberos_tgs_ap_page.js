@@ -303,6 +303,14 @@ async function theTgsPageRefusesWithNoTgt(driver) {
       "localStorage.removeItem('krb_ccache');");
   await driver.navigate().refresh();
   await driver.wait(until.elementLocated(By.id("krb_tgs_button")), 20000);
+  // WAIT FOR THE PANE'S CONTENT, NOT ITS ELEMENT (#527). The pane is static
+  // markup and renderHeldTgt() fills it after load, so a single read right
+  // after elementLocated twice came back EMPTY (2 runs in about 10). The
+  // regex is the same one asserted below; waitForText() fails naming the
+  // last text it saw.
+  const pane = await waitForText(driver, "krb_tgt_pane",
+      /No TGT held[\s\S]*AS exchange|AS exchange[\s\S]*No TGT held/, 20000,
+      "the TGS page never said it holds no TGT and where to get one");
   const disabled = await driver.findElement(By.id("krb_tgs_button")).getAttribute("disabled");
   assert.ok(disabled, "with no TGT held the TGS button must be DISABLED, not " +
       "merely fail when pressed");
@@ -311,7 +319,6 @@ async function theTgsPageRefusesWithNoTgt(driver) {
   // all — mutation-testing showed exactly that. The assertion that carries the
   // weight is the opposite direction, in theTgsPageSpendsTheTgt: the button
   // must become ENABLED once a TGT is held, which only the logic can do.
-  const pane = await driver.findElement(By.id("krb_tgt_pane")).getText();
   assert.ok(/No TGT held/.test(pane) && /AS exchange/.test(pane),
     "and the page must say where to get one: " + pane.slice(0, 200));
   log.debug("Leaving theTgsPageRefusesWithNoTgt().");
@@ -321,7 +328,17 @@ async function theTgsPageSpendsTheTgt(driver) {
   log.debug("Entering theTgsPageSpendsTheTgt().");
   await loadUrl(driver, baseUrl + "/kerberos_tgs.html");
   await driver.wait(until.elementLocated(By.id("krb_tgs_button")), 20000);
-  const tgtPane = await driver.findElement(By.id("krb_tgt_pane")).getText();
+  // On the content, as above (#527).
+  const tgtPane = await waitForText(driver, "krb_tgt_pane", /krbtgt/, 20000,
+      "the TGS page never showed the held TGT");
+  // renderHeldTgt() enables the button in the same pass; wait for it rather
+  // than reading it once.
+  await driver.wait(async function () {
+    return !(await driver.findElement(By.id("krb_tgs_button"))
+      .getAttribute("disabled"));
+  }, 20000).catch(function () {
+    // Reported by the assertion below, with its reason.
+  });
   assert.ok(/krbtgt/.test(tgtPane),
     "the TGS page must show the held TGT, and it is a ticket for krbtgt: " +
         tgtPane.slice(0, 200));
@@ -430,7 +447,9 @@ async function theApPagePresentsItAndChecksTheEcho(driver) {
         "the button: " +
     environment.slice(0, 220));
 
-  const ticketPane = await driver.findElement(By.id("krb_ticket_pane")).getText();
+  const ticketPane = await waitForText(driver, "krb_ticket_pane",
+      new RegExp(spn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), 20000,
+      "the AP page never offered the ticket the TGS page bought");
   assert.ok(ticketPane.indexOf(spn) !== -1,
     "the ticket the TGS page bought must be offered here: " +
         ticketPane.slice(0, 200));

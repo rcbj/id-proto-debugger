@@ -66,7 +66,7 @@ var apiUrl = process.env.API_URL || "https://localhost:4000";
 // PASS each time, because a skip is a pass here. That variable is a WS-Trust
 // ENDPOINT and carries a path: the launchers set it to
 // `https://localhost:8081/sts` (`https://sts:8081/sts` containerized), and its
-// own comment in local-run-tests.sh says it may be pointed at a real Apache
+// launchers have said it may be pointed at a real Apache
 // CXF STS that answers nothing else at all. The mock serves SSF at the ROOT,
 // so `/sts/.well-known/ssf-configuration` is a 404 and preconditions() read
 // that as "the sts/ gitlink predates SSF".
@@ -644,17 +644,18 @@ async function thePageCanSignAndPushAnEvent(driver) {
       "Crypto — which does not exist on this suite's http origin.");
   const priv = await valueOf(driver, "ssf_tx_private_key");
   assert.ok(priv.indexOf('"kty"') >= 0, "No private JWK: " + priv);
-  // THE RECEIVER IS THE api's OWN PUSH INBOX, until #363. This pushed to
-  // iya-sts's `/ssf/receive`, which iya-sts #593 deleted; its receiver for a
-  // third party's signals is now a federation relationship, which needs the
-  // sender to be a full SSF transmitter — rcbj/id-proto-debugger#363. The
-  // inbox stores what arrives as text and verifies nothing, so what this
-  // asserts is the push itself and that the token arrived whole.
+  // THE RECEIVER IS THE api's OWN PUSH INBOX. This pushed to iya-sts's
+  // `/ssf/receive`, which iya-sts #593 deleted; its receiver for a third
+  // party's signals is now a federation relationship, which needs the sender
+  // to be a full SSF transmitter — the api's hosted transmitter (#363), which
+  // section 7b below and ssf_protocol.js section 7 drive. "Push it" is the
+  // one-shot push to an endpoint somebody gave you, and the inbox stores
+  // what arrives as text, so what this asserts is the push itself and that
+  // the token arrived whole.
   //
   // A DEPLOYED STATIC SITE HAS NO api, and so no inbox to push to: there the
   // event is still built and signed in the page and checked, and the push is
-  // left out and said so, for #363's push to a federation relationship to
-  // restore.
+  // left out and said so.
   const apiThere = await fetch(apiUrl + "/ssf/limits").then(function (r) {
     return r.ok;
   }).catch(function () {
@@ -704,7 +705,7 @@ async function thePageCanSignAndPushAnEvent(driver) {
   if (!apiThere) {
     log.info("[transmit] OK — signed in the JavaScript engine. The push is " +
              "not exercised: no api answers at " + apiUrl + " (a static " +
-             "site), so there is no inbox to deliver to until #363.");
+             "site), so there is no inbox to deliver to.");
     log.debug("Leaving thePageCanSignAndPushAnEvent(). No api.");
     return;
   }
@@ -731,6 +732,140 @@ async function thePageCanSignAndPushAnEvent(driver) {
       "what it is for.");
   log.info("[transmit] OK — signed in the JavaScript engine and delivered.");
   log.debug("Leaving thePageCanSignAndPushAnEvent().");
+}
+
+// ---------------------------------------------------------------------------
+// 7b. THE HOSTED TRANSMITTER (#363), from the page's buttons.
+//
+// The page asks the api to host a transmitter publishing the key generated
+// above; THIS TEST plays the receiver — it creates a push stream at the
+// hosted transmitter (into an api inbox) with the receiver credential the
+// page showed, and asks for a verification event. The page's own buttons
+// then sign and deliver an event and answer the verification request, and
+// what landed in the inbox is checked: the transmitter's issuer, the
+// stream's aud, and the state the receiver asked for. ssf_protocol.js
+// section 7 drives the same thing with iya-sts as the receiver.
+// ---------------------------------------------------------------------------
+async function thePageHostsATransmitter(driver) {
+  log.debug("Entering thePageHostsATransmitter().");
+  log.info("=== The hosted transmitter ===");
+  const apiThere = await fetch(apiUrl + "/ssf/limits").then(function (r) {
+    return r.ok ? r.json() : null;
+  }).catch(function () {
+    return null;
+  });
+  if (!apiThere || !apiThere.transmitter || !apiThere.transmitter.enabled) {
+    log.info("[hosted] Not exercised: no api with a hosted transmitter " +
+             "answers at " + apiUrl + " (a static site has no api).");
+    log.debug("Leaving thePageHostsATransmitter(). No api.");
+    return;
+  }
+  await driver.executeScript(
+      "document.getElementById('ssf_host_status').value = '';");
+  await click(driver, "btn_ssf_host");
+  const hostedStatus = await waitForValue(driver, "ssf_host_status",
+      "hosting status");
+  assert.ok(hostedStatus.indexOf("Hosted") === 0,
+      "The api would not host a transmitter: " + hostedStatus);
+  const issuer = await valueOf(driver, "ssf_host_issuer");
+  const credential = await valueOf(driver, "ssf_host_credential");
+  assert.ok(/\/ssf\/transmitter\/[0-9a-f]{32}$/.test(issuer),
+      "The issuer is not a hosted transmitter's: " + issuer);
+  assert.strictEqual(await valueOf(driver, "ssf_tx_iss"), issuer,
+      "Hosting has to set the Transmit pane's iss to the issuer a receiver " +
+      "will check every SET against.");
+  const metadata = await fetch(await valueOf(driver, "ssf_host_discovery"))
+    .then(function (r) {
+      return r.json();
+    });
+  assert.strictEqual(metadata.issuer, issuer,
+      "The configuration metadata the page points at does not name the " +
+      "issuer: " + JSON.stringify(metadata));
+  const keys = await fetch(metadata.jwks_uri).then(function (r) {
+    return r.json();
+  });
+  assert.ok(keys.keys.length === 1 && keys.keys[0].d === undefined,
+      "The hosted JWKS should be the page's public key only: " +
+      JSON.stringify(keys));
+
+  // The receiver's part.
+  const inbox = await openApiInbox();
+  const receiver = { "Content-Type": "application/json",
+                     Authorization: "Bearer " + credential };
+  const stream = await fetch(metadata.configuration_endpoint, {
+    method: "POST", headers: receiver,
+    body: JSON.stringify({ delivery: { method: "urn:ietf:rfc:8935",
+      endpoint_url: inbox.endpoint } }) }).then(function (r) {
+    return r.json();
+  });
+  assert.ok(stream.stream_id, "The receiver could not create a stream at " +
+      "the hosted transmitter: " + JSON.stringify(stream));
+
+  await driver.executeScript(
+      "document.getElementById('ssf_host_status').value = '';");
+  await click(driver, "btn_ssf_host_refresh");
+  const refreshed = await waitForValue(driver, "ssf_host_status",
+      "refresh status");
+  assert.ok(refreshed.indexOf("1 stream(s)") === 0,
+      "The page does not see the stream the receiver created: " + refreshed);
+  await driver.executeScript(
+      "document.getElementById('ssf_tx_type').value = " +
+      "'https://schemas.openid.net/secevent/ssf/event-type/stream-updated';" +
+      "window.ssf.transmitTypeChanged();" +
+      "document.getElementById('ssf_host_status').value = '';");
+  await click(driver, "btn_ssf_host_deliver");
+  const delivered = await waitForValue(driver, "ssf_host_status",
+      "delivery status");
+  assert.ok(delivered.indexOf("Pushed to the receiver: accepted (202)") === 0,
+      "The hosted delivery said: " + delivered);
+
+  await fetch(metadata.verification_endpoint, { method: "POST",
+    headers: receiver, body: JSON.stringify({ stream_id: stream.stream_id,
+      state: "from-ssf-page" }) });
+  await driver.executeScript(
+      "document.getElementById('ssf_host_status').value = '';");
+  await click(driver, "btn_ssf_host_refresh");
+  const asked = await waitForValue(driver, "ssf_host_status",
+      "refresh status");
+  assert.ok(asked.indexOf("1 verification event(s) asked for") >= 0,
+      "The page does not see the receiver's verification request: " + asked);
+  await driver.executeScript(
+      "document.getElementById('ssf_host_status').value = '';");
+  await click(driver, "btn_ssf_host_verify");
+  const verified = await waitForValue(driver, "ssf_host_status",
+      "verification status");
+  assert.ok(verified.indexOf("Pushed to the receiver: accepted (202)") === 0,
+      "Answering the verification request said: " + verified);
+
+  const arrived = await fetch(apiUrl + "/ssf/receiver/" +
+      encodeURIComponent(inbox.id) + "/events").then(function (r) {
+    return r.json();
+  });
+  const claims = (arrived.events || []).map(function (one) {
+    return one.claims || {};
+  });
+  assert.strictEqual(claims.length, 2,
+      "The receiver's inbox should hold the event and the verification: " +
+      JSON.stringify(arrived).slice(0, 300));
+  claims.forEach(function (c) {
+    assert.strictEqual(c.iss, issuer, "A hosted SET's iss: " + c.iss);
+    assert.strictEqual(c.aud, stream.aud, "A hosted SET's aud: " + c.aud);
+  });
+  const answered = claims[1].events[
+    "https://schemas.openid.net/secevent/ssf/event-type/verification"];
+  assert.ok(answered && answered.state === "from-ssf-page",
+      "The verification event does not carry the receiver's state: " +
+      JSON.stringify(claims[1]));
+
+  await driver.executeScript(
+      "document.getElementById('ssf_host_status').value = '';");
+  await click(driver, "btn_ssf_host_delete");
+  const deleted = await waitForValue(driver, "ssf_host_status",
+      "delete status");
+  assert.ok(deleted.indexOf("Deleted") === 0, "Delete said: " + deleted);
+  log.info("[hosted] OK — hosted, discovered, streamed, delivered, verified " +
+           "and deleted from the page.");
+  log.debug("Leaving thePageHostsATransmitter().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1242,6 +1377,97 @@ async function theHandoffAsksForTheScopesTheEndpointsNeed(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// 14. THE SCOPE IS EDITABLE, AND A REFUSAL OF IT SAYS WHY (#311).
+//
+// An authorization server may issue a scope only to a client allowed to
+// request it — iya-sts does since its #110, and its seeded `webapp1` is
+// allowed neither SSF scope — so the page's default can be the wrong thing to
+// ask for, and when it is the answer is `invalid_scope` on the OAuth2 / OIDC
+// page, which names neither the workflow that asked nor the fix. Asserted:
+//
+//   * the field holds the default, and what is typed there is what the
+//     hand-off asks for (here, `ssf.manage` dropped);
+//   * on the results page, an `invalid_scope` while that hand-off is waiting
+//     puts a sentence in the banner naming the scope asked for and the
+//     registration to change — and any other error puts nothing there.
+//
+// The refusal is driven by calling the page's own function rather than by an
+// authorization server that refuses: the grant half is caep_page.js's, which
+// runs the page's default through a client declared to be allowed it.
+// ---------------------------------------------------------------------------
+async function theScopeIsEditableAndARefusalSaysWhy(driver) {
+  log.debug("Entering theScopeIsEditableAndARefusalSaysWhy().");
+  log.info("=== The hand-off's scope field and an invalid_scope ===");
+  await loadUrl(driver, baseUrl + "/ssf.html");
+  await driver.wait(until.elementLocated(By.id("ssf_handoff_scope")), WAIT,
+      "ssf.html has no ssf_handoff_scope field");
+  await driver.executeScript(
+      "localStorage.removeItem('ssf_handoff_scope');");
+  await loadUrl(driver, baseUrl + "/ssf.html");
+  await driver.wait(until.elementLocated(By.id("ssf_handoff_scope")), WAIT,
+      "ssf.html did not come back");
+  const initial = await valueOf(driver, "ssf_handoff_scope");
+  assert.strictEqual(initial, "openid ssf.read ssf.manage",
+      "the hand-off scope field reads \"" + initial + "\" with nothing " +
+      "stored; its default is the CAEP Interoperability Profile's two names " +
+      "and the openid this pane names the user from.");
+
+  await driver.executeScript(
+      "localStorage.setItem('scope', '');" +
+      "localStorage.setItem('token_scope', '');" +
+      "document.getElementById('ssf_handoff_scope').value = " +
+      "  'openid ssf.read';");
+  await click(driver, "btn_ssf_get_token");
+  await driver.wait(async function () {
+    return /oauth2_oidc_1\.html/.test(await driver.getCurrentUrl());
+  }, WAIT, "the button did not go to the OAuth2 / OIDC workflow");
+  await driver.wait(async function () {
+    return await driver.executeScript(
+        "return !!document.getElementById('token_handoff_banner');");
+  }, WAIT, "no hand-off banner appeared on the OAuth2 / OIDC page");
+  const asked = (await valueOf(driver, "scope")).split(/\s+/)
+      .filter(Boolean);
+  assert.ok(asked.indexOf("ssf.read") >= 0 &&
+      asked.indexOf("ssf.manage") < 0,
+      "the hand-off was started with \"openid ssf.read\" typed in its " +
+      "scope field and the authorization request's Scope field reads \"" +
+      asked.join(" ") + "\". What the reader typed is what has to be " +
+      "asked for, or a client allowed only ssf.read can never get a token.");
+
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
+  await driver.wait(async function () {
+    return await driver.executeScript(
+        "return !!document.getElementById('token_handoff_banner');");
+  }, WAIT, "no hand-off banner on the results page");
+  const other = await driver.executeScript(
+      "return window.oauth2_oidc_2.noteHandoffScopeRefusal('access_denied');");
+  assert.strictEqual(other, false,
+      "an access_denied was explained as a scope refusal.");
+  const shown = await driver.executeScript(
+      "return window.oauth2_oidc_2.noteHandoffScopeRefusal('invalid_scope');");
+  const note = await driver.executeScript(
+      "var e = document.getElementById('token_handoff_scope_refusal');" +
+      "return e ? String(e.textContent || '') : '';");
+  assert.ok(shown === true && /invalid_scope/.test(note) &&
+      /openid ssf\.read/.test(note) && /oauthAllowedScope/.test(note),
+      "an invalid_scope while the Shared Signals hand-off is waiting should " +
+      "put a sentence in its banner naming the scope asked for and the " +
+      "registration to change. The banner says: " + JSON.stringify(note));
+
+  await driver.executeScript(
+      "['token_handoff_active','token_handoff_return','token_handoff_label'," +
+      " 'token_handoff_token','token_handoff_meta','token_handoff_set'," +
+      " 'token_handoff_scope'].forEach(function (k) {" +
+      "  sessionStorage.removeItem(k); });" +
+      "localStorage.removeItem('scope');" +
+      "localStorage.removeItem('token_scope');" +
+      "localStorage.removeItem('ssf_handoff_scope');");
+  log.info("[scope] OK — the typed scope is the one asked for, and an " +
+      "invalid_scope says which scope and what to change.");
+  log.debug("Leaving theScopeIsEditableAndARefusalSaysWhy().");
+}
+
+// ---------------------------------------------------------------------------
 async function preconditions() {
   log.debug("Entering preconditions().");
   try {
@@ -1351,6 +1577,7 @@ async function test() {
     await theSubjectPaneChecksBeforeItSends(driver);
     await verificationAndPollProduceAnEvent(driver);
     await thePageCanSignAndPushAnEvent(driver);
+    await thePageHostsATransmitter(driver);
     await bothHistoriesRecordWhatTheyShould(driver);
     await everyVocabularyIsNamedAndHonest(driver);
     // THE STYLE CHECK RUNS BEFORE THE HAND-OFF SECTION AND THE ORDER IS
@@ -1375,6 +1602,7 @@ async function test() {
     // those two pages log would otherwise fail the check above with a
     // message about a page this file does not test.
     await theHandoffAsksForTheScopesTheEndpointsNeed(driver);
+    await theScopeIsEditableAndARefusalSaysWhy(driver);
     log.info("Test completed successfully.");
   } finally {
     // driver.quit() in a FINALLY and never after a process.exit(): the

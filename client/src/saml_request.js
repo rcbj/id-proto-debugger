@@ -28,7 +28,7 @@
 // TWO PROTOCOL VERSIONS ARE FUNCTIONAL HERE, AND THEY ARE TWO PROTOCOLS.
 //
 // **SAML 1.1 has no request message.** There is no `<AuthnRequest>` in it: the
-// browser profiles (saml-profile-1.1 sections 4.1 and 4.2) are
+// browser profiles (sstc-saml-bindings-1.1 sections 4.1.1 and 4.1.2) are
 // IDENTITY-PROVIDER-INITIATED, and a flow begins when a browser arrives at the
 // inter-site transfer service carrying a `TARGET`. What a real SAML 1.1 service
 // provider actually sends is Shibboleth's request profile — identified by
@@ -100,7 +100,7 @@ var xmldsig = require("./xmldsig");
 // tests (tests/saml_message_engine.js).
 var samlMessage = require("./saml_message");
 // The post-quantum SignatureMethods and the bridge to the engines that
-// perform them. See docs/xmldsig-pqc.md.
+// perform them. See docs/v0.9.5/xmldsig-pqc.md.
 var xdPqc = require("./xmldsig_pqc");
 var pqc = require("./pqc");
 var hbs = require("./hbs");
@@ -133,6 +133,13 @@ var SIG_ALG_RSA_SHA256 = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
 // signer certificate back out under this same prefix.
 var STORE_PREFIX = "samltools_";
 var NAMEID_OPTIONS_KEY = STORE_PREFIX + "nameid_options";
+// EVERY signing certificate the last metadata document named, as a JSON list
+// of bare base64 DER (#425). The Signer Certificate field holds one, and an
+// identity provider may publish several: Shibboleth lists a back-channel key
+// FIRST and the front-channel key that signs a Browser/POST response second,
+// and any identity provider rolling a key over lists the old and the new. The
+// SAML Response page verifies against this list (saml_response.js).
+var SIGNER_CERTS_KEY = STORE_PREFIX + "saml_signer_certs";
 
 // SAML 1.1's vocabulary. Every URI here carries `1.0` EXCEPT the protocol
 // support one, and that is not a typo anywhere: the assertion and protocol
@@ -344,7 +351,10 @@ function persistedEls() {
 // button beside the fields) and pastes it back here, and pastes the private key
 // into the Decryption Key field on the response page, which is already written
 // to cope with an empty prefill.
-var KEYPAIR_FIELDS = ['saml_sp_private_key', 'saml_sp_public_key'];
+// The model's (models/storage/, class `keypair`), not a list typed here:
+// the fields this page's save checkbox gates, as field ids.
+var KEYPAIR_FIELDS = require("./secret_storage")
+  .keyPairKeys(STORE_PREFIX + 'saml_save_keypair', STORE_PREFIX);
 
 function keyPairMayBeStored() {
   log.debug("Entering keyPairMayBeStored().");
@@ -466,10 +476,17 @@ function applyMetadata(xmlText, url) {
   setVal('saml_metadata_doc', xmlText);
   try {
     parseMetadata(xmlText);
+    // Loaded either way: this is a debugger, and an expired document is
+    // worth reading. It is said, because a relying party must not use one.
+    var expiry = samlMessage.metadataExpiry(xmlText, new Date());
     setStatus('saml_metadata_status', 'Loaded and parsed.' +
       (metadataVersionSwitch ? ' The document describes a SAML ' +
        metadataVersionSwitch + ' identity provider, so Protocol Version was ' +
-       'set to ' + metadataVersionSwitch + '.' : ''));
+       'set to ' + metadataVersionSwitch + '.' : '') +
+      (expiry.expired ? ' WARNING: it EXPIRED at ' + expiry.validUntil +
+       ' (validUntil, saml-metadata-2.0-os section 2.2.1). A relying party ' +
+       'must not use expired metadata; ask the identity provider for a ' +
+       'current copy.' : ''));
     // Recorded after the parse so the IdP entityID it just populated is shown.
     opSuccess('Load IdP Metadata', url ? ('loaded from ' +
               url) : 'loaded from a local file', { binding: '—' });
@@ -640,19 +657,34 @@ function parseMetadata(xmlText) {
 
   // Signer certificate: KeyDescriptor[use=signing] X509Certificate. Fall back
   // to any KeyDescriptor if none is explicitly marked "signing".
+  // Every one of them is kept as well, in SIGNER_CERTS_KEY: the field shows
+  // the first, and the response is verified against all of them.
   var signerCert = '';
+  var signerCerts = [];
   var kds = tags(idp, 'KeyDescriptor');
   for (var m = 0; m < kds.length; m++) {
     var use = kds[m].getAttribute('use');
-    if (use === 'signing' || use === '' || use === null) {
-      var certEl = tags(kds[m], 'X509Certificate')[0];
+    if (use !== 'signing' && use !== '' && use !== null) continue;
+    var certEls = tags(kds[m], 'X509Certificate');
+    for (var c = 0; c < certEls.length; c++) {
+      var b64 = (certEls[c].textContent || '').replace(/\s+/g, '');
+      if (b64 && signerCerts.indexOf(b64) < 0) signerCerts.push(b64);
+    }
+  }
+  for (var n = 0; n < kds.length; n++) {
+    var kuse = kds[n].getAttribute('use');
+    if (kuse === 'signing' || kuse === '' || kuse === null) {
+      var certEl = tags(kds[n], 'X509Certificate')[0];
       if (certEl) {
         signerCert = (certEl.textContent || '').replace(/\s+/g, '');
-        if (use === 'signing') break; // prefer an explicit signing key
+        if (kuse === 'signing') break; // prefer an explicit signing key
       }
     }
   }
   setVal('saml_signer_cert', signerCert);
+  if (window.localStorage) {
+    localStorage.setItem(SIGNER_CERTS_KEY, JSON.stringify(signerCerts));
+  }
   // Default the encryption certificate to the IdP signer cert. A freshly loaded
   // metadata document OVERWRITES any previous value; between loads the user's
   // edits persist (localStorage). loadMetadata() calls saveState() after this.
@@ -2789,7 +2821,7 @@ function validateConfigUrls() {
 window.onload = function () {
   // The sixteen post-quantum SignatureMethods, appended to this page's menu
   // FROM THE REGISTRY, before any stored selection is restored. See
-  // client/src/xmldsig_pqc.js and docs/xmldsig-pqc.md.
+  // client/src/xmldsig_pqc.js and docs/v0.9.5/xmldsig-pqc.md.
   xdPqc.appendSignatureOptions(document.getElementById('saml_sig_alg'),
       xmldsig.SIG_METHODS, xmldsig.PQ_SIG_URIS);
   log.debug('Entering onload().');

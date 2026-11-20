@@ -8,8 +8,9 @@ set -x
 # the local dev server, https://test.idptools.com, or https://idptools.com —
 # using the local identity-provider stack this script starts (keycloak-tests.yml).
 #
-# Unlike local-run-tests.sh, this does NOT start the debugger/api stack: the target
-# site is already deployed (or served by your own local dev server). It DOES start
+# Unlike docker-run-tests.sh, this does NOT start the debugger/api stack: the
+# target site is already deployed (or served by your own local dev server).
+# It DOES start
 # everything the suite needs on the other side of the protocol, all on this host's
 # loopback:
 #
@@ -78,7 +79,7 @@ init()
   fi
 
   # Dedicated Keycloak container (isolated compose project so it never clashes
-  # with local-run-tests.sh's stack).
+  # with another launcher's stack).
   KEYCLOAK_COMPOSE_FILE="${KEYCLOAK_COMPOSE_FILE:-keycloak-tests.yml}"
   KEYCLOAK_COMPOSE_PROJECT="${KEYCLOAK_COMPOSE_PROJECT:-idptools-kctest}"
 
@@ -118,6 +119,9 @@ init()
       # same reason: a local dev server has the api, so POST /tls/connect is
       # there and the pane is live.
       PKI_TLS_AVAILABLE="${PKI_TLS_AVAILABLE:-true}"
+      # The api itself, which the two API-document jobs replay requests
+      # against (api_model_wire.js, api_model_gaps.js).
+      API_AVAILABLE="${API_AVAILABLE:-true}"
       # WS-Trust STS (mock) started on the host (keycloak-tests.yml). A local dev
       # site has the api backend, so the WS-Trust jobs can run here.
       WSTRUST_STS_URL="${WSTRUST_STS_URL:-https://localhost:8081/sts}"
@@ -181,6 +185,11 @@ init()
       # in place of the section it cannot run. Set this to true for a remote
       # target that IS api-backed.
       PKI_TLS_AVAILABLE="${PKI_TLS_AVAILABLE:-false}"
+      # A static site deploys no api, so the two jobs that replay requests
+      # against one (api_model_wire.js, api_model_gaps.js) have nothing to
+      # reach: API_BASE_URL is the site itself. Set this to true for a
+      # remote target that IS api-backed.
+      API_AVAILABLE="${API_AVAILABLE:-false}"
       # SAML_ACS_URL / SAML_SLO_URL are NOT decided here. Where the IdP should
       # return its response depends on whether this target has the edge landings
       # deployed, which probeEdgeLandings() finds out with a real POST before
@@ -209,7 +218,7 @@ init()
   KERBEROS_PAGES_AVAILABLE="${KERBEROS_AVAILABLE}"
   export KERBEROS_AVAILABLE KERBEROS_PAGES_AVAILABLE
   export LDAP_AVAILABLE LDAP_URL
-  export PKI_TLS_AVAILABLE
+  export PKI_TLS_AVAILABLE API_AVAILABLE
   # Only exported when set (backendless targets); otherwise common.sh derives them.
   [ -n "${SAML_ACS_URL:-}" ] && export SAML_ACS_URL
   [ -n "${SAML_SLO_URL:-}" ] && export SAML_SLO_URL
@@ -413,9 +422,17 @@ init()
 
 prepTestEnv()
 {
+  echo "Entering prepTestEnv()."
   npm install --prefix tests
+  check_return_code $?
+  # models/'s own TypeSpec install: data_model.js compiles models/ to check
+  # that common/model/ is what it generates. The tests image makes this
+  # install itself (tests/Dockerfile); a host run has to.
+  npm ci --prefix models --no-audit --no-fund
+  check_return_code $?
   # (iya-sts's own dependencies come with its tree out of the image; see
   # warmIyaStsTree() below.)
+  echo "Leaving prepTestEnv()."
 }
 
 # ---------------------------------------------------------------------------
@@ -599,7 +616,7 @@ startSideCars()
       # into RFC 9700 mode is a broken stack, not five optional jobs.
       echo "ERROR: the mock STS this launcher started has no RFC 9700 trust" >&2
       echo "realm, so the five RFC 9700 flow jobs cannot run. The run stops." >&2
-      echo "See the reason above, and docs/rfc9700.md." >&2
+      echo "See the reason above, and docs/v0.9.5/rfc9700.md." >&2
       exit 1
     fi
   fi
@@ -674,7 +691,7 @@ check_return_code $?
 # sts_jws_verification.js died on `Cannot find module './enrollment_profiles'`
 # on the 2026-09-28 live run, loading a checkout). Copied out of the image the
 # stack runs, once, into a cache; see warmIyaStsTree(). Fatal when it cannot
-# be had, as local-run-tests.sh's is.
+# be had, as docker-run-tests.sh's is.
 warmIyaStsTree "${CURRENT_DIR}"
 check_return_code $?
 resetKeycloakRealm

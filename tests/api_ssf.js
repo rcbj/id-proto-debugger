@@ -597,6 +597,309 @@ async function theThreeOutcomesAreDistinct() {
   log.info("[outcomes] OK.");
 }
 
+// ---------------------------------------------------------------------------
+// 6. THE HOSTED TRANSMITTER (#363), driven by a receiver over HTTP.
+//
+// The mirror of section 4. This file plays BOTH parties the api stands
+// between: the page (which creates the transmitter, signs every SET and
+// hands it over) and a receiver that treats the page as a full SSF 1.0
+// transmitter — it discovers it, reads its keys, creates a push stream (to
+// the api's OWN inbox, so no other service is needed) and a poll stream,
+// pauses and resumes, asks for verification, and polls. Each answer is SSF's
+// or RFC 8935/8936's, and the push is checked by draining the inbox it
+// landed in and verifying it against the published JWKS.
+// ---------------------------------------------------------------------------
+const madeTransmitters = [];
+
+async function theApiHostsATransmitter() {
+  log.info("[transmitter] A receiver that treats its partner as a full SSF " +
+      "transmitter discovers it, creates its stream there and polls it. A " +
+      "page cannot be that server; the api answers for it, and the page " +
+      "signs.");
+  if (!limits.transmitter || !limits.transmitter.enabled) {
+    skip('the hosted transmitter',
+        'this api has ssfTransmitterEnabled off, so there is nothing to ' +
+        'drive.');
+    log.info("[transmitter] SKIPPED.");
+    return;
+  }
+  const alg = 'ES256';
+  const pair = jws.generateKey(alg);
+  const priv = jws.privateJwk(alg, pair.privateKey, pair.publicKey);
+  const pub = Object.assign(jws.publicJwk(alg, pair.publicKey),
+                            { kid: 'page-key-1', use: 'sig', alg: alg });
+  const caep = events.CAEP_PREFIX + 'session-revoked';
+  const risc = events.RISC_PREFIX + 'account-disabled';
+
+  const leaked = await json('POST', '/ssf/transmitter', {
+    jwks: { keys: [Object.assign({}, pub, { d: priv.d })] } });
+  check('a JWK Set holding a PRIVATE key is refused, since it would be ' +
+    'published at jwks_uri', function () {
+    assert.strictEqual(leaked.status, 400);
+    assert.ok(/PRIVATE/.test(leaked.body.error), leaked.text);
+  });
+
+  const made = await json('POST', '/ssf/transmitter', {
+    label: 'api_ssf.js', jwks: { keys: [pub] },
+    eventsSupported: [caep, risc] });
+  assert.strictEqual(made.status, 200,
+      'POST /ssf/transmitter answered ' + made.status + ': ' + made.text);
+  const t = made.body.transmitter;
+  madeTransmitters.push({ id: t.id, ownerKey: made.body.ownerKey });
+  const owner = { Authorization: 'Bearer ' + made.body.ownerKey };
+  const receiver = { Authorization: 'Bearer ' +
+                     made.body.receiverCredential };
+  const base = t.issuer.slice(apiUrl.length);
+  check('the issuer is this api\'s address as the caller reached it',
+    function () {
+    assert.strictEqual(t.issuer.indexOf(apiUrl), 0, t.issuer);
+    assert.ok(made.body.ownerKey && made.body.receiverCredential);
+    assert.notStrictEqual(made.body.ownerKey, made.body.receiverCredential);
+  });
+
+  // Discovery: SSF 1.0 section 7 puts the well-known path BEFORE the
+  // issuer's own path.
+  const discovered = await json('GET', '/.well-known/ssf-configuration' +
+                                new URL(t.issuer).pathname);
+  check('the configuration metadata is at the well-known path, naming the ' +
+    'issuer, jwks_uri, configuration_endpoint and both deliveries',
+    function () {
+      assert.strictEqual(discovered.status, 200, discovered.text);
+      assert.strictEqual(discovered.body.issuer, t.issuer);
+      assert.strictEqual(discovered.body.jwks_uri, t.issuer + '/jwks');
+      assert.ok(discovered.body.configuration_endpoint);
+      assert.deepStrictEqual(discovered.body.delivery_methods_supported,
+        ['urn:ietf:rfc:8935', 'urn:ietf:rfc:8936']);
+      assert.strictEqual(t.discoveryUrl, apiUrl +
+        '/.well-known/ssf-configuration' + new URL(t.issuer).pathname);
+    });
+  const keys = await json('GET', base + '/jwks');
+  check('the JWKS publishes the page\'s public key and nothing private',
+    function () {
+      assert.strictEqual(keys.status, 200);
+      assert.strictEqual(keys.body.keys.length, 1);
+      assert.strictEqual(keys.body.keys[0].kid, 'page-key-1');
+      assert.strictEqual(keys.body.keys[0].d, undefined);
+    });
+
+  const anonymous = await json('POST', base + '/stream',
+    { delivery: { method: 'urn:ietf:rfc:8936' } });
+  const wrong = await json('POST', base + '/stream',
+    { delivery: { method: 'urn:ietf:rfc:8936' } },
+    { Authorization: 'Bearer not-the-credential' });
+  const ownerAsReceiver = await json('POST', base + '/stream',
+    { delivery: { method: 'urn:ietf:rfc:8936' } }, owner);
+  check('the stream management API refuses no credential, a wrong one, and ' +
+    'the OWNER key, each 401 authentication_failed', function () {
+      [anonymous, wrong, ownerAsReceiver].forEach(function (r) {
+        assert.strictEqual(r.status, 401, r.text);
+        assert.strictEqual(r.body.err, 'authentication_failed');
+      });
+    });
+  const noTransmitter = await json('GET', '/ssf/transmitter/' +
+    '0123456789abcdef0123456789abcdef', null, owner);
+  const notOwner = await json('GET', '/ssf/transmitter/' + t.id, null,
+                              receiver);
+  check('the page\'s own routes need the owner key, and an unknown id is a ' +
+    '404', function () {
+      assert.strictEqual(noTransmitter.status, 404);
+      assert.strictEqual(notOwner.status, 401);
+    });
+
+  // The receiver's push inbox — the api's own — and a push stream to it.
+  const inbox = await json('POST', '/ssf/receiver', {
+    label: 'api_ssf.js transmitter', authorization: 'Bearer push-secret' });
+  assert.strictEqual(inbox.status, 200, inbox.text);
+  madeInboxes.push(inbox.body.inbox.id);
+  const pushStream = await json('POST', base + '/stream', {
+    delivery: { method: 'urn:ietf:rfc:8935',
+      endpoint_url: inbox.body.deliveryEndpoint,
+      authorization_header: 'Bearer push-secret' },
+    events_requested: [caep, 'urn:example:not-offered'],
+    description: 'push' }, receiver);
+  check('a push stream is created: 201, Transmitter-Supplied aud, ' +
+    'events_delivered the intersection, and the authorization_header never ' +
+    'echoed', function () {
+      assert.strictEqual(pushStream.status, 201, pushStream.text);
+      assert.ok(pushStream.body.stream_id);
+      assert.strictEqual(pushStream.body.iss, t.issuer);
+      assert.ok(pushStream.body.aud.indexOf(t.issuer) === 0);
+      assert.deepStrictEqual(pushStream.body.events_delivered, [caep]);
+      assert.strictEqual(pushStream.body.delivery.authorization_header,
+                         undefined);
+    });
+  const pollStream = await json('POST', base + '/stream', {
+    delivery: { method: 'urn:ietf:rfc:8936' } }, receiver);
+  check('a poll stream is created with this transmitter\'s own poll ' +
+    'endpoint', function () {
+      assert.strictEqual(pollStream.status, 201, pollStream.text);
+      assert.ok(pollStream.body.delivery.endpoint_url.indexOf(
+        t.issuer + '/poll/') === 0);
+      assert.deepStrictEqual(pollStream.body.events_delivered, [caep, risc]);
+    });
+  const badDelivery = await json('POST', base + '/stream', {
+    delivery: { method: 'push' } }, receiver);
+  check('a delivery method spelt "push" is refused naming the URN',
+    function () {
+    assert.strictEqual(badDelivery.status, 400);
+    assert.ok(badDelivery.body.description.indexOf('urn:ietf:rfc:8935') >= 0);
+  });
+
+  const sign = function (stream, uri, payload) {
+    log.debug("Entering sign().");
+    log.debug("Leaving sign().");
+    return ssf.signSet(ssf.buildSetClaims({ issuer: t.issuer,
+      audience: stream.aud, uri: uri, payload: payload,
+      subject: { format: 'email', email: 'alice@example.com' } }),
+      priv, alg, { kid: 'page-key-1' });
+  };
+  const deliver = function (stream, token) {
+    log.debug("Entering deliver().");
+    log.debug("Leaving deliver().");
+    return json('POST', base + '/deliver', { stream_id: stream.stream_id,
+      token: token, sslValidate: true }, owner);
+  };
+
+  // A push, and what landed in the inbox.
+  const revoked = await sign(pushStream.body, caep,
+    { event_timestamp: Math.floor(Date.now() / 1000) });
+  const pushed = await deliver(pushStream.body, revoked);
+  check('a SET the page signed is PUSHED to the receiver with its ' +
+    'authorization_header and accepted 202', function () {
+      assert.strictEqual(pushed.status, 200, pushed.text);
+      assert.strictEqual(pushed.body.action, 'push');
+      assert.strictEqual(pushed.body.push.status, 202,
+        JSON.stringify(pushed.body.push));
+      assert.deepStrictEqual(pushed.body.findings, []);
+    });
+  const landed = await json('GET', '/ssf/receiver/' + inbox.body.inbox.id +
+                            '/events?after=0');
+  const verified = await ssf.verifySet(landed.body.events[0].token,
+    { jwk: keys.body.keys[0] }, alg, {});
+  check('it arrived as application/secevent+jwt and verifies against the ' +
+    'transmitter\'s published JWKS', function () {
+      assert.strictEqual(landed.body.events.length, 1);
+      assert.strictEqual(landed.body.events[0].correctMediaType, true);
+      assert.strictEqual(landed.body.events[0].authorization, true);
+      assert.ok(verified && verified.valid, JSON.stringify(verified));
+    });
+  const offList = await deliver(pushStream.body, await sign(pushStream.body,
+    risc, {}));
+  check('a SET outside events_delivered is still sent, with a FINDING ' +
+    'naming why a receiver may drop it', function () {
+      assert.strictEqual(offList.body.action, 'push');
+      assert.ok(offList.body.findings.some(function (f) {
+        return f.indexOf('events_delivered') >= 0;
+      }), JSON.stringify(offList.body.findings));
+    });
+
+  // Paused holds; enabled releases.
+  const paused = await json('POST', base + '/status',
+    { stream_id: pushStream.body.stream_id, status: 'paused',
+      reason: 'maintenance' }, receiver);
+  const heldAnswer = await deliver(pushStream.body,
+    await sign(pushStream.body, caep, {}));
+  const readPaused = await json('GET', base + '/status?stream_id=' +
+                                pushStream.body.stream_id, null, receiver);
+  check('a paused stream HOLDS what it is given (section 8.1.2)', function () {
+    assert.strictEqual(paused.status, 200, paused.text);
+    assert.strictEqual(readPaused.body.status, 'paused');
+    assert.strictEqual(readPaused.body.reason, 'maintenance');
+    assert.strictEqual(heldAnswer.body.action, 'held');
+  });
+  await json('POST', base + '/status',
+    { stream_id: pushStream.body.stream_id, status: 'enabled' }, receiver);
+  const deadline = Date.now() + 10000;
+  let after = null;
+  while (Date.now() < deadline) {
+    after = await json('GET', '/ssf/receiver/' + inbox.body.inbox.id +
+                       '/events?after=0');
+    if (after.body.events.length >= 3) {
+      break;
+    }
+    await new Promise(function (resolve) {
+      setTimeout(resolve, 200);
+    });
+  }
+  check('enabling it again releases what was held to the receiver',
+    function () {
+      assert.strictEqual(after.body.events.length, 3,
+        after.body.events.length + ' event(s) in the inbox');
+    });
+
+  // Poll: queued, returned until acknowledged.
+  const queued = await deliver(pollStream.body,
+    await sign(pollStream.body, risc, {}));
+  const pollPath = new URL(pollStream.body.delivery.endpoint_url).pathname;
+  const first = await json('POST', pollPath, { returnImmediately: true },
+                           receiver);
+  const jtis = Object.keys((first.body || {}).sets || {});
+  const again = await json('POST', pollPath, { ack: jtis,
+                                               returnImmediately: true },
+                           receiver);
+  check('a poll stream QUEUES; RFC 8936 returns it until it is acked',
+    function () {
+      assert.strictEqual(queued.body.action, 'queued');
+      assert.strictEqual(first.status, 200, first.text);
+      assert.strictEqual(jtis.length, 1);
+      assert.strictEqual(queued.body.jti, jtis[0]);
+      assert.deepStrictEqual(again.body.sets, {});
+      assert.strictEqual(again.body.moreAvailable, false);
+    });
+
+  // Verification: queued for the page, answered by the page.
+  const asked = await json('POST', base + '/verify',
+    { stream_id: pollStream.body.stream_id, state: 'from-the-receiver' },
+    receiver);
+  const pending = await json('GET', '/ssf/transmitter/' + t.id, null, owner);
+  const answer = await deliver(pollStream.body, await sign(pollStream.body,
+    events.SSF_PREFIX + 'verification', { state: 'from-the-receiver' }));
+  const settled = await json('GET', '/ssf/transmitter/' + t.id, null, owner);
+  check('a verification request is a 204 the PAGE answers: it is pending ' +
+    'until a verification SET with the same state is delivered',
+    function () {
+      assert.strictEqual(asked.status, 204, asked.text);
+      assert.strictEqual(pending.body.transmitter.pendingVerifications
+        .length, 1);
+      assert.strictEqual(answer.body.action, 'queued');
+      assert.strictEqual(settled.body.transmitter.pendingVerifications
+        .length, 0);
+    });
+
+  // Subjects, read and delete.
+  const added = await json('POST', base + '/subjects/add',
+    { stream_id: pollStream.body.stream_id,
+      subject: { format: 'email', email: 'alice@example.com' } }, receiver);
+  const removed = await json('POST', base + '/subjects/remove',
+    { stream_id: pollStream.body.stream_id,
+      subject: { format: 'email', email: 'alice@example.com' } }, receiver);
+  const all = await json('GET', base + '/stream', null, receiver);
+  const gone = await json('DELETE', base + '/stream?stream_id=' +
+                          pollStream.body.stream_id, null, receiver);
+  const missing = await json('GET', base + '/stream?stream_id=' +
+                             pollStream.body.stream_id, null, receiver);
+  check('add subject is an empty 200, remove a 204, read all is an array, ' +
+    'delete a 204, and a deleted stream is a 404', function () {
+      assert.strictEqual(added.status, 200);
+      assert.strictEqual(added.text, '');
+      assert.strictEqual(removed.status, 204);
+      assert.strictEqual(all.body.length, 2);
+      assert.strictEqual(gone.status, 204);
+      assert.strictEqual(missing.status, 404);
+      assert.strictEqual(missing.body.err, 'not_found');
+    });
+  const view = await json('GET', '/ssf/transmitter/' + t.id, null, owner);
+  check('the page reads every stream, its status and the log of what the ' +
+    'receiver did — and never the receiver\'s push secret', function () {
+      assert.strictEqual(view.body.transmitter.streams.length, 1);
+      assert.strictEqual(view.body.transmitter.streams[0].pushAuthorized,
+                         true);
+      assert.strictEqual(view.text.indexOf('push-secret'), -1);
+      assert.ok(view.body.transmitter.log.length > 5);
+    });
+  log.info("[transmitter] OK.");
+}
+
 async function cleanUp() {
   log.debug("Entering cleanUp().");
   let id;
@@ -605,7 +908,15 @@ async function cleanUp() {
       return null;
     });
   }
-  log.debug("Leaving cleanUp(). " + madeInboxes.length + " inbox(es).");
+  let made;
+  for (made of madeTransmitters) {
+    await json('DELETE', '/ssf/transmitter/' + made.id, null,
+      { Authorization: 'Bearer ' + made.ownerKey }).catch(function () {
+        return null;
+      });
+  }
+  log.debug("Leaving cleanUp(). " + madeInboxes.length + " inbox(es), " +
+            madeTransmitters.length + " transmitter(s).");
 }
 
 async function test() {
@@ -629,6 +940,7 @@ async function test() {
     await theAddressPolicyStillApplies();
     await theReceiverHostsAnEndpoint();
     await theThreeOutcomesAreDistinct();
+    await theApiHostsATransmitter();
   } finally {
     // An inbox left behind expires on its own, but it holds a slot against
     // ssfReceiverMaxInboxes meanwhile — and a later job in the pool refused

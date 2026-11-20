@@ -367,8 +367,9 @@ async function verifyResponse(token, report) {
   // No algId: this page reads a token somebody else issued, so the header's
   // `alg` is the only thing to go on — but the KEY is chosen by this page,
   // which is what keeps RFC 8725 section 3.1 satisfied.
-  var verdict = await jwsLib.verifyJwsAsync({ jws: token, publicKey: keyInput,
-                                              backend: "webcrypto" });
+  // jws.js's default pure-JS backend (#463, step 2c): every deployment.
+  var verdict = await jwsLib.verifyJwsAsync({ jws: token,
+                                              publicKey: keyInput });
   var first = verdict.signatures[0] || {};
   reportLine(report, verdict.valid, "signature",
     verdict.valid ? header.alg + " verified"

@@ -12,7 +12,7 @@
 // Digital Signature, JWT Tools and Encryption / Decryption pages, the key pair
 // on the PKI page — and a test that drives one writes a real file. Where it
 // writes it is the browser's default download directory, and on a host run
-// (./local-run-tests.sh, ./remote-run-tests.sh) the browser is the developer's
+// (./remote-run-tests.sh) the browser is the developer's
 // own Chrome, whose default is ~/Downloads.
 //
 // NOTHING FAILS WHEN THAT HAPPENS. The assertion is on the page's own status

@@ -35,7 +35,7 @@ It proxies token endpoint calls server-side and provides a `/claimdescription` e
 
 **AND SINCE 2026-08-31 IT DOES ONE THING THAT IS NOT A PROTOCOL A BROWSER CANNOT SPEAK.** `POST /ssf/receiver/:id` is an RFC 8935 **push endpoint hosted on a page's behalf**, and the reason is neither CORS nor a certificate: **a browser is not an HTTP server**, so it cannot be the far end of a push at all. That is a property of the specification rather than of this service, and no amount of proxying changes it. It is the only endpoint here that is unauthenticated AND accepts data, and `api/ssf_receiver.js` argues the five structural bounds that stand in for a gate.
 
-## Outbound calls: the address policy and the sixteen settings
+## Outbound calls: the address policy and the seventeen settings
 
 It fetches URLs its **caller** chooses (token, introspection, revocation, device-authorization and userinfo endpoints, the SAML ArtifactResolve back-channel, the WS-Trust STS, the generic proxy), so `api/ssrf_guard.js` refuses outbound calls to loopback and private networks — otherwise anyone who can reach the api can use it to probe `127.0.0.1`, the deployment's private neighbours, or `169.254.169.254` (cloud metadata, which hands out credentials). It is installed **once** on the shared axios instance in `server.js`, so every call site present and future is covered, and it works in two layers: a request interceptor for a readable error, plus the http/https **agents** — which is what catches **redirects** (axios follows them, so a public host answering `302 → http://127.0.0.1` walks past a URL-only check) and closes most of the DNS-rebinding window. The agent needs **two** hooks, not one: a custom DNS `lookup` for hosts given as names, and a wrapped `createConnection` for hosts given as literal addresses — Node never calls `lookup` for a literal, and a redirect `Location` usually is one. That gap was real and is what `tests/api_ssrf_guard.js` caught on its first run. Hostnames are judged by what they RESOLVE to, so `localtest.me` and `127.0.0.1.nip.io` are caught by the same rule, and IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is reduced to its IPv4 form because that is the address the socket reaches.
 
@@ -61,7 +61,7 @@ It is the one setting where **`0` is legal**: axios switches to the native trans
 
 All four go through one of those two resolvers, which is also what keeps the startup log honest about units (`milliseconds`, `bytes`, a count).
 
-A sixth setting, **`keepAlive`** (a boolean, default **true**, and only an explicit `false` turns it off), pools outbound connections, so a session that calls the token endpoint then introspection then userinfo on one host stops paying for a TCP connection and a TLS handshake each time. It is **why the outbound agents are cached** (`agentFor()` + `outboundAgentCache`) rather than built per call, and the two changes are not separable: an agent owns its idle-socket pool, so a per-call keep-alive agent reuses nothing *and* parks that call's socket in a pool nobody will ever read — a leaked descriptor per outbound call, strictly worse than not pooling. `tests/api_connect_timeout.js` reproduces that leak on a throwaway agent, which is what documents the reasoning. Sharing is safe because everything on these agents is stateless policy; the only per-call choice is `rejectUnauthorized`, now normalised so that **only an explicit `false`** disables verification — which bounds the cache to three agents (no growth from a caller-supplied value) and means a missing or oddly-typed `sslValidate` in a request body can no longer quietly stop certificates being checked. Two consequences of pooling: a reused socket never goes through `createConnection`, so it carries no connect timeout (correct — it is already connected, but it means `connectionTimeout` is not a per-request guarantee once pooling is on); and a reused socket goes back to the address that was already validated, so pooling narrows the DNS-rebinding window rather than widening it.
+A sixth setting, **`keepAlive`** (a boolean, default **true**, and only an explicit `false` turns it off), pools outbound connections, so a session that calls the token endpoint then introspection then userinfo on one host stops paying for a TCP connection and a TLS handshake each time. It is **why the outbound agents are cached** (`agentFor()` + `outboundAgentCache`) rather than built per call, and the two changes are not separable: an agent owns its idle-socket pool, so a per-call keep-alive agent reuses nothing *and* parks that call's socket in a pool nobody will ever read — a leaked descriptor per outbound call, strictly worse than not pooling. `tests/api_connect_timeout.js` reproduces that leak on a throwaway agent, which is what documents the reasoning. Sharing is safe because everything on these agents is stateless policy; the only per-call choice is `rejectUnauthorized`, now normalised so that **only `false` or the string `"false"`** disables verification — which bounds the cache to three agents (no growth from a caller-supplied value) and means a missing or oddly-typed `sslValidate` in a request body can no longer quietly stop certificates being checked. The string matters: the pages post what a radio button holds, so "SSL Validate: No" arrives as `"false"`, and until #434 five handlers passed it to `outboundHttpsAgent()` raw, which verified anyway. Every handler now reads a request's `sslValidate` through `verifiesCertificates()` in `api/ssl_validate.js`, and `tests/api_connect_timeout.js` fails on one that does not. Two consequences of pooling: a reused socket never goes through `createConnection`, so it carries no connect timeout (correct — it is already connected, but it means `connectionTimeout` is not a per-request guarantee once pooling is on); and a reused socket goes back to the address that was already validated, so pooling narrows the DNS-rebinding window rather than widening it.
 
 A fifth setting is not a limit but an identity: **`userAgent`**, default `Identity Protocol Debugger/{{VERSION}}`, sent as the `User-Agent` on all eleven calls (`withUserAgent()`, applied per call for the same reason the agents are — a per-call `headers` object replaces the defaults). Without it axios announces `axios/1.18.1`, which tells the operator of somebody else's identity provider nothing about who is calling, and this service turns up in other people's access logs by design. `{{VERSION}}` is the same placeholder the client's footer and error pages use, and it is replaced with the **build** version: `api/Dockerfile` now copies the repo-root `VERSION` and **the client's `version.js`** (one implementation of the M.N.P.B scheme for both services) and runs `--stamp .`, so the header names the build and does not change when a container restarts — `resolveAppVersion()` falls back to the client's copy and then to `api/package.json` so a bare checkout still starts. Both `BUILD_NUMBER` and `GIT_COMMIT` are now build args on the api service in all three compose files, as they already were on the client. A blank or non-string `userAgent` is refused with the default, because axios would otherwise send a `User-Agent:` with nothing after the colon — worse than what it replaced. Note that adding this made the api the **second** image that must `COPY VERSION`, and the existing warning applies unchanged: omit it and the version silently reads `0.0.x`, which `tests/api_connect_timeout.js` asserts against directly.
 
@@ -70,12 +70,12 @@ A fifth setting is not a limit but an identity: **`userAgent`**, default `Identi
 ## `sts_truststore.sh`: the image's entrypoint, and it is a truststore rather than a switch
 
 The mock STS serves its **main port over TLS** in this project's test stacks
-(`STS_HTTPS=true` on the `sts` service in `local-tests.yml`,
+(`STS_HTTPS=true` on the `sts` service in
 `docker-compose-run-tests.yml` and `keycloak-tests.yml`). That is not a
 preference: the RFC 9700 pass is a **trust realm** on that one instance now
 rather than a second container, a realm binds no socket of its own, and the pass
 is only honest over https — requirement 8.1 is that every configured endpoint is
-https and the client under test enforces it. `docs/rfc9700.md` argues all of it.
+https and the client under test enforces it. `docs/v0.9.5/rfc9700.md` argues all of it.
 
 This service reaches that port for SCIM, for the WS-Trust / SAML / OIDC proxying
 the browser asks it to do, and for the Kerberos MS-KKDCP relay, and every one of
@@ -156,7 +156,7 @@ What bounds the service endpoint is therefore the **payload check**, and it is s
 
 What bounds it is narrower than the other two and needs no setting of its own. The method is `GET` and nothing else, and the **only** header a caller can influence is `Authorization`, whose value this service builds itself as `Negotiate <base64>` from a token whose alphabet it has validated (node's base64 decoder is lenient — see the trap above — so an unreadable token would otherwise reach the far end shorter and different, and be refused by somebody else's machine). A caller cannot inject a header, a method or a body. Everything else is the shared axios instance, so the SSRF guard, the four limits and the `User-Agent` apply unchanged and automatically; there is no `krb5SpnegoPorts` because there is nothing here that the existing HTTP endpoints do not already do. `GET /krb5/limits` publishes `spnegoEnabled` so the page can tell an older api from a broken one, and `spnegoBodyChars` — a **display** cap on the body, separate from `maxContentLength`, because what is being debugged is the handshake in the headers and the body is a page meant for a browser.
 
-One thing it must not treat as a failure: **a 401 is the protocol.** The first request is supposed to be refused and the refusal carries the challenge, so `validateStatus` returns true for everything. A handler that threw on 4xx would make the normal case an error path. See `docs/spnego.md`.
+One thing it must not treat as a failure: **a 401 is the protocol.** The first request is supposed to be refused and the refusal carries the challenge, so `validateStatus` returns true for everything. A handler that threw on 4xx would make the normal case an error path. See `docs/v0.9.5/spnego.md`.
 
 One thing the Kerberos service endpoint must not report as a failure: a service that **closes the connection without answering**. A client that did not request mutual authentication is not owed a reply, so the handler answers 200 with a null reply and a note saying that nothing has proved the service is who it claims to be — which is the fact that matters, and is not an error.
 
@@ -180,7 +180,7 @@ The four existing limits are reused unchanged, and **a tenth setting is new**: `
 
 Two refusals are published rather than left to be discovered: **a referral is recorded and NOT followed** — chasing one means opening a connection to a URL the *directory* chose, which is a server-side request forgery with a specification citation attached, the same reason WS-Federation's `wreqptr` is never dereferenced — and there is no StartTLS and no SASL, simple bind only.
 
-One implementation detail that is not optional: **the bind waits for the socket.** ldapjs's client is created not-yet-connected, and an operation issued before its `connect` event is refused with result code 80 and the message "connection unavailable" when `queueDisable` is set — which looks exactly like a directory answering `other`. The first working version of this file reported a healthy local server as a failed bind with a code that has nothing to do with credentials. `reconnect` is off for a related reason: a silent retry turns an intermittent failure into a report saying everything worked. See `docs/ldap.md`.
+One implementation detail that is not optional: **the bind waits for the socket.** ldapjs's client is created not-yet-connected, and an operation issued before its `connect` event is refused with result code 80 and the message "connection unavailable" when `queueDisable` is set — which looks exactly like a directory answering `other`. The first working version of this file reported a healthy local server as a failed bind with a code that has nothing to do with credentials. `reconnect` is off for a related reason: a silent retry turns an intermittent failure into a report saying everything worked. See `docs/v0.9.5/ldap.md`.
 
 ## SCIM: an ordinary HTTP proxy, and the one workflow that does not need it
 
@@ -242,7 +242,73 @@ sanitises; `server.js` makes the call. That split is what lets
 server on the other end — so a rule that stopped being enforced fails a test
 naming the rule rather than timing out against a host. `GET /scim/limits`
 publishes the methods, the refused headers, the caps and the status rule, and is
-also how the page discovers whether there is an api at all. See `docs/scim.md`.
+also how the page discovers whether there is an api at all. See `docs/v0.9.5/scim.md`.
+
+## OpenID4VP: the wallet's route to a Verifier that sends no CORS headers
+
+`POST /oid4vp/call` (`api/oid4vp_proxy.js`) makes one OpenID4VP exchange on the
+**wallet's** behalf. That means fetching the Request Object from `request_uri`
+(a GET, or a POST carrying `wallet_metadata` and `wallet_nonce` under
+`request_uri_method=post`), or posting the answer to `response_uri`
+(`direct_post`, `direct_post.jwt`, and a SIOPv2 `post`). The VC Presentation
+pages use it when step 0's "Reach the Verifier through the debugger's api" is
+ticked, and from the browser otherwise. The option is enabled only where `GET
+/oid4vp/limits` answers, so a static deployment never offers it.
+
+It exists for one thing a browser cannot do: **use a Verifier that sends no CORS
+headers.** Most send none, because a wallet is normally a native app and has no
+CORS. Without this, a browser-based wallet can talk to such a Verifier only
+through a reverse proxy put in front of it, which is what the test stack does
+for walt.id and Polaris (`tests/cors-proxy/cors-proxy.js`, #431).
+
+It is **the SSF proxy's shape, narrowed to what OpenID4VP sends**:
+
+* **GET and POST only.** A Request Object is fetched and an answer is posted;
+  nothing else crosses.
+* **A string body**, because both OpenID4VP bodies are
+  `application/x-www-form-urlencoded`. A POST defaults to that content type.
+* **The reply comes back as TEXT**, because a Request Object is a compact JWS
+  and not JSON.
+* **Headers are refused by shape** with `ssf_proxy.js`'s own list and sanitiser,
+  not a copy of either.
+* **The seventeenth outbound setting is `oid4vpMaxRequestBytes`** (default
+  262144), the cap on the forwarded body. It sits **beside** `callTimeout`,
+  `connectionTimeout`, `maxContentLength` and `maxRedirects`, all of which the
+  handler sets, and does not replace them.
+
+**THE THREE OUTCOMES, with the spnego rule for a policy refusal.**
+
+* **200:** whatever the Verifier answered, including its `400 invalid_request`
+  naming a failed check, is a 200 here with that status inside. A Verifier's
+  refusal is its answer, and the wallet's step 3 exists to show it.
+* **400:** a refusal by this service, both the relay's own checks and the
+  address policy (`EBLOCKEDADDRESS`, on the first URL or a redirect hop) or the
+  scheme check (`EPROTOCOLNOTALLOWED`). That is the caller asking for something
+  this service will not do, as `POST /krb5/spnego` reports it. (The SSF and
+  SCIM handlers answer those 502, which is the older shape.) A name that does
+  not resolve is `EBLOCKEDADDRESS` too: the guard refuses an address it cannot
+  judge, and says so.
+* **502:** anything else with no response: a refused connection, a timeout, a
+  body past `maxContentLength`.
+
+**The address policy is not re-implemented**: this is an axios call through the
+shared instance, with `outboundHttpAgent()` / `outboundHttpsAgent()`, so the
+guard covers it, redirects included.
+
+**`tests/api_oid4vp_proxy.js` holds all of it, in node:**
+
+* every refusal by name;
+* the address policy, with the guard **enabled** as a deployed api runs it:
+  loopback, a name resolving to loopback, IPv6 loopback, a private range and the
+  metadata address are refused, as is a redirect hop to a loopback literal
+  through the guarded agent;
+* in a checkout, that the handler sets every outbound cap, uses both guarded
+  agents, and maps the outcomes as above.
+
+The suite's own api runs with the guard off (`env/docker-tests.js`), so a live
+call to it would prove nothing about the refusal. That is why the policy is
+asserted against an enabled guard. `tests/vc_presentation_polaris.js` carries a
+real HAIP exchange through the endpoint end to end.
 
 ## Shared Signals: the SCIM proxy's shape, and one thing that is neither
 
@@ -308,6 +374,27 @@ service holds no key of the transmitter's, and a receiver that refused what it
 could not verify would be unable to show anybody WHY — which is the question the
 workflow exists to answer. The page verifies.
 
+### The hosted transmitter is the receiver's mirror image (#363)
+
+A receiver that treats its partner as a full SSF 1.0 transmitter — iya-sts's
+federation relationships do — discovers it, creates its stream there, and may
+poll it. `api/ssf_transmitter.js` answers those requests for a page, and
+`server.js` registers seventeen routes for it: four for the PAGE (create,
+read, delete, deliver — authorized by an owner key returned once), the
+section 7 discovery document and the JWKS (public), and the stream
+management API, status, subjects, verification and RFC 8936 poll
+(authorized by a receiver credential, RFC 6750). It holds the page's PUBLIC
+key only and signs nothing: the page builds and signs every SET and hands it
+to `POST /ssf/transmitter/:id/deliver`.
+
+**It makes one outbound call, the RFC 8935 push** of a page-signed SET to the
+endpoint the receiver gave, with the `authorization_header` the receiver gave.
+That is `pushSet()` in `server.js`, an ordinary axios call with the shared
+agents, `callTimeout`, `maxContentLength`, `maxRedirects` and the User-Agent,
+so the address policy covers it like every other. The receiver's secret is
+never handed back to anybody. Bounds and expiry mirror the inbox's, under
+`ssfTransmitter*` in `api/env/*.js`; see `docs/v0.9.5/ssf.md`, *The other way round*.
+
 **THE BODY PARSER IS PART OF THIS AND IS EASY TO MISS.** A Security Event Token
 arrives as `application/secevent+jwt` (RFC 8417 section 2.3), which neither
 `bodyParser.json()` nor `bodyParser.urlencoded()` touches — so without the text
@@ -335,7 +422,7 @@ failed to connect, and went red on a GitHub Actions runner where
 themselves belong to `tests/api_ssrf_guard.js`, which drives the guard module
 directly and needs no network. The SCHEME check (`file:`, `data:`) is not
 configurable and is on either way. `tests/api_ssf.js` drives the routes;
-`tests/ssf_engine.js` drives both modules with no listener. See `docs/ssf.md`.
+`tests/ssf_engine.js` drives both modules with no listener. See `docs/v0.9.5/ssf.md`.
 
 ## GNAP: the page signs, and this service forwards the signed request
 
@@ -364,7 +451,7 @@ the length is a property of the body this service sends. `GET
 and it is how the page learns there is an api at all. A static
 deployment has no api. The page can then call the authorization server
 from the browser, which works when that server allows the origin. See
-`docs/gnap.md`.
+`docs/v0.9.5/gnap.md`.
 
 **mtls is the one GNAP proof this service MAKES rather than forwards**
 (RFC 9635 section 7.3.2): the key is the TLS client certificate and a
@@ -512,13 +599,13 @@ Both are handled from typed-out tables (`WRAPPED_FIELDS`, `STRUCT_FIELDS`)
 rather than by walking descriptors, because a descriptor's `typeName` is a
 RELATIVE protobuf name and resolving one means implementing protobuf's own
 name-resolution algorithm. `tests/spiffe_engine.js` reads every `.proto` and
-fails if such a field is missing from either table. See `docs/spiffe.md`.
+fails if such a field is missing from either table. See `docs/v0.9.5/spiffe.md`.
 
 ## The TLS probe: a second raw socket, and the ninth setting
 
 `POST /tls/connect` (`api/tls_probe.js`) opens a TLS — or **mutual** TLS —
 connection to a caller-named host and reports both sides of the handshake. It
-exists for the PKI page (`client/public/pki.html`, `docs/pki.md`), and it exists
+exists for the PKI page (`client/public/pki.html`, `docs/v0.9.5/pki.md`), and it exists
 **because a browser cannot do this and is not close**:
 
 * the **client certificate** is chosen by the browser's own UI from the browser's
@@ -670,7 +757,7 @@ server that said nothing — so the page can say what this service will do befor
 call fails rather than reporting its own limits as somebody else's fault. And **the
 no-response branch must answer**, as everywhere else here: a refusal by policy is
 a 400, a network failure is a 502, and a failed HANDSHAKE is neither — it
-resolves with a report, because the alert is the answer. See `docs/pki.md`.
+resolves with a report, because the alert is the answer. See `docs/v0.9.5/pki.md`.
 
 ## Smart cards: a reader on THIS machine, off by default
 
@@ -683,7 +770,7 @@ PIV and OpenPGP both have reset and terminate commands. So the relay
 answers 403 unless the env file sets **`smartcardReaderEnabled: true`**,
 and all four `api/env/*.js` ship it `false`. A transmit is a sequence of
 up to 16 APDUs on one connection (exclusive when there is more than one),
-with GET RESPONSE and the 6Cxx retry; see `docs/smartcard.md`.
+with GET RESPONSE and the 6Cxx retry; see `docs/v0.9.5/smartcard.md`.
 `POST /otp/verify` (`api/otp_verify.js`) is an ordinary outbound call on
 the shared agents, sent as the HTTP GET Validation Protocol 2.0 specifies.
 
@@ -771,13 +858,29 @@ namespace. Note SAML 1.1's is `urn:oasis:names:tc:SAML:1.0:protocol` and that is
 not a typo: the schemas were never renamed between 1.0 and 1.1 — the version
 travels in `MajorVersion`/`MinorVersion` attributes instead.
 
-See `docs/saml11.md`.
+See `docs/v0.9.5/saml11.md`.
 
 ## Dependency overrides
 
-`api/package.json` carries three, and each pins something this service does not depend on directly. Two are for `express-swagger-generator@1.1.17` — an unmaintained package the api uses once, at startup, to build the Swagger document out of the JSDoc in `server.js`:
+`api/package.json` carries one, the version-selective `brace-expansion` pair below. It carried two more until 2026-11-16, `validator` and `js-yaml`, both for `express-swagger-generator@1.1.17` — an unmaintained package the api used once, at startup, to build a Swagger 2.0 document out of the JSDoc in `server.js`. That package is gone: the api serves `common/model/openapi.json`, generated from `models/api/` (see "The API document" below), and its overrides went with it, along with 548 lines of lock.
 
-* **`validator: ^13.15.22`**, and
-* **`js-yaml: ^3.15.1`** (GHSA/CVE-2026-59870's weakness in the 3.x line: `resolveYamlOmap()` enforced key uniqueness with `objectKeys.indexOf()` inside the per-element loop, so an `!!omap` of *n* entries cost O(n²) and blocked the event loop — 80,000 entries took **4,690 ms** on 3.15.0 and **187 ms** on 3.15.1, which replaces the linear scan with a `hasOwnProperty` map). It arrives four levels down: `express-swagger-generator → swagger-parser → json-schema-ref-parser → js-yaml@^3.12.0`. **Nothing attacker-supplied reaches it** — the api parses no YAML of its own (`grep yaml api/server.js` is empty) and the only document `json-schema-ref-parser` sees is the one generated from this repository's own source — so the alert is hygiene rather than an open door. The override exists anyway, because the transitive range `^3.12.0` would happily resolve back to 3.15.0.
+Two traps when changing them. **npm will not re-resolve an override you edit**: `packages[""]` in this lock records no `overrides` key, so `npm install --package-lock-only` (even with `--force`) reports "up to date" and leaves the old version pinned. Delete the offending `node_modules/<pkg>` entry from `package-lock.json` and install again — npm then re-resolves that one package and honours the override, which is a three-line lock diff rather than a full regeneration. And **the override is version-selective on purpose**: `brace-expansion@1` / `brace-expansion@2` exist in two majors here, so a single unversioned entry makes npm prune one of them.
 
-Two traps when changing them. **npm will not re-resolve an override you edit**: `packages[""]` in this lock records no `overrides` key, so `npm install --package-lock-only` (even with `--force`) reports "up to date" and leaves the old version pinned. Delete the offending `node_modules/<pkg>` entry from `package-lock.json` and install again — npm then re-resolves that one package and honours the override, which is a three-line lock diff rather than a full regeneration. And **the third override is version-selective on purpose**: `brace-expansion@1` / `brace-expansion@2` exist in two majors here, so a single unversioned entry makes npm prune one of them.
+## The API document, and every route's validator
+
+**What every route accepts and answers is written in `models/api/<family>.tsp`**, compiled into `common/model/openapi.json` by `models/tools/generate.mjs`, and committed. `api/model_validate.js` builds each operation's request validator from that file, and a route opts in by naming its operation:
+
+```js
+app.post('/ldap/bind', model.route('ldapBind'), function (req, res) { ... });
+```
+
+**A new route gets a model and a `model.route()` in the same commit**, and a recording in `tests/fixtures/api_model/` before its first hand-written check is deleted: `tests/api_model_wire.js` fails on an operation in the document that no fixture replays. `models/CLAUDE.md` has the rules and the five-step switch every family went through; the one to remember here is that **the schema refuses only what no handler could use** (a wrong JSON type, a missing required member) and never the content of a protocol message the api forwards, which is `@passthrough`. Every check about a value — the address policy, a port allow-list, a URL's scheme — stays in the code that makes it and is named in the model with `@checkedInCode`.
+
+**The configuration is held to a model too.** `server.js` checks its `CONFIG_FILE` against `ApiConfig` (`models/config/api_config.tsp`) before anything reads it and refuses to start on a misspelt or mistyped key, naming it. A new setting is a property there first; the outbound-policy ones carry `@outboundPolicy`, and `tests/data_model.js` holds that list to the seventeen this file describes.
+
+**`validateResponses`** (on in `env/docker-tests.js` only) checks every answer against its operation's documented response, logs a mismatch as `MODEL GAP`, and keeps the record at `GET /model/gaps`, which `tests/api_model_gaps.js` reads LAST in the suite. A non-JSON answer has its status checked. The answer itself is never changed.
+
+**`GET /api-docs.json`** is the document, with this build's version and the server this api is reached at (embedded: `uiUrl` + `/api`). **`GET /api-docs`** is Swagger UI over it, which can try an operation, served with its assets from this api's own `node_modules` (`/api-docs/assets/`, static and outside the document) and never from a CDN; every path in it is relative, so it works embedded under `/api`. `swagger-ui-dist` depends on **`@scarf/scarf`, an install-time analytics hook**, which `scarfSettings.enabled: false` in `package.json` and `SCARF_ANALYTICS=false` in the Dockerfile both turn off; keep both. **`GET /api-docs/operations`** is the same document as a page with no script at all.
+
+**A request body that is neither JSON nor a form** (a Security Event Token pushed to the SSF receiver as `application/secevent+jwt`) is validated against the string schema the document gives its media type.
+

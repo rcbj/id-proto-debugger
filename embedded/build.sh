@@ -140,6 +140,10 @@ trap cleanup EXIT
 #    client/dist, the version stamps, and the four files api/Dockerfile copies
 #    INTO api/ (a stale one left in a checkout must not be what ships — they
 #    are written fresh in step 4). `.git` is the submodule's pointer FILE.
+#    Then what the api has no use for at run time: its repository files,
+#    native.js, and everything of ldapjs but lib/, package.json and LICENSE.
+#    api/Dockerfile.dockerignore keeps the same out of the api image; keep
+#    the two lists in step.
 # ---------------------------------------------------------------------------
 log "copying sources to ${WORK}/tree"
 mkdir -p "${WORK}/tree"
@@ -156,6 +160,26 @@ tar -C "${REPO_ROOT}" \
     --exclude=api/version.js \
     --exclude=api/version.json \
     --exclude=api/sts-ca.pem \
+    --exclude=api/CLAUDE.md \
+    --exclude=api/Dockerfile \
+    --exclude=api/Dockerfile.dockerignore \
+    --exclude=api/.gitignore \
+    --exclude=api/example.json \
+    --exclude=api/native.js \
+    --exclude=api/node-ldapjs/test \
+    --exclude=api/node-ldapjs/test-integration \
+    --exclude=api/node-ldapjs/docs \
+    --exclude=api/node-ldapjs/examples \
+    --exclude=api/node-ldapjs/scripts \
+    --exclude=api/node-ldapjs/.github \
+    --exclude=api/node-ldapjs/docker-compose.yml \
+    --exclude=api/node-ldapjs/.eslintrc.js \
+    --exclude=api/node-ldapjs/.eslintignore \
+    --exclude=api/node-ldapjs/.taprc.yml \
+    --exclude=api/node-ldapjs/dt.png \
+    --exclude=api/node-ldapjs/CHANGES.md \
+    --exclude=api/node-ldapjs/README.md \
+    --exclude=api/node-ldapjs/.gitignore \
     -cf - VERSION client api common \
   | tar -C "${WORK}/tree" -xf -
 
@@ -183,13 +207,17 @@ log "installing the api's production dependencies"
 (cd "${WORK}/tree/api" && "${NPM}" install --omit=dev --no-audit --no-fund)
 
 # ---------------------------------------------------------------------------
-# 4. What api/Dockerfile stages beside the api: data.js and xmldsig.js from
-#    common/, the repo-root VERSION and the client's version.js (one
-#    implementation of M.N.P.B), and the stamp.
+# 4. What api/Dockerfile stages beside the api: data.js, xmldsig.js and the
+#    central crypto module from common/, the repo-root VERSION and the
+#    client's version.js (one implementation of M.N.P.B), and the stamp.
 # ---------------------------------------------------------------------------
-log "staging common/data.js, common/xmldsig.js, VERSION and version.js"
+log "staging common/data.js, common/xmldsig.js, common/crypto, VERSION" \
+    "and version.js"
 cp "${WORK}/tree/common/data.js" "${WORK}/tree/api/data.js"
 cp "${WORK}/tree/common/xmldsig.js" "${WORK}/tree/api/xmldsig.js"
+# The central crypto module (#463), flat beside xmldsig.js as api/Dockerfile
+# stages it: xmldsig.js requires ./crypto_provider.
+cp "${WORK}/tree/common/crypto/"*.js "${WORK}/tree/api/"
 cp "${WORK}/tree/VERSION" "${WORK}/tree/api/VERSION"
 cp "${WORK}/tree/client/version.js" "${WORK}/tree/api/version.js"
 (cd "${WORK}/tree/api" && node version.js --stamp .)
@@ -202,11 +230,15 @@ log "writing ${OUT}"
 rm -rf "${OUT}/ui" "${OUT}/api" "${OUT}/common" "${OUT}/version.json"
 cp -a "${WORK}/ui" "${OUT}/ui"
 cp -a "${WORK}/tree/api" "${OUT}/api"
-# What the api requires as ../common/... — api/Dockerfile's two COPYs into
-# /usr/src/common, and nothing more.
+# What the api requires as ../common/... — api/Dockerfile's four COPYs into
+# /usr/src/common, and nothing more. common/model is the generated API
+# document and configuration schema (models/CLAUDE.md): the api refuses to
+# start without them, and the embedded tree's contract is one of them.
 mkdir -p "${OUT}/common"
 cp -a "${WORK}/tree/common/tls_listener.js" "${OUT}/common/tls_listener.js"
 cp -a "${WORK}/tree/common/spiffe" "${OUT}/common/spiffe"
+cp -a "${WORK}/tree/common/model" "${OUT}/common/model"
+cp -a "${WORK}/tree/common/model_config.js" "${OUT}/common/model_config.js"
 cp "${OUT}/api/version.json" "${OUT}/version.json"
 
 # ---------------------------------------------------------------------------

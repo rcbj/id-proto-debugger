@@ -435,8 +435,37 @@ function pageWiring() {
     assert.ok(!/require\(["'][^"']*iya-sts/.test(text), name);
     assert.ok(!/require\(["'][^"']*\/sts\//.test(text), name);
   });
+  assert.ok(css.indexOf(".gnap-tip") >= 0 &&
+    css.indexOf("pointer-events: none") >= 0,
+    "gnap.css does not restyle the field tooltips");
+  ["gnap_alg", "gnap_save_keypair", "gnap_public", "gnap_private",
+   "gnap_mtls_cert", "gnap_mtls_key", "gnap_grant", "gnap_proof",
+   "gnap_via", "gnap_insecure", "gnap_api", "gnap_display",
+   "gnap_class", "gnap_request", "gnap_client_nonce",
+   "gnap_redirect", "gnap_user_code", "gnap_user_code_uri",
+   "gnap_as_nonce", "gnap_finish_url", "gnap_interact_ref",
+   "gnap_hash", "gnap_hash_expected", "gnap_continue_uri",
+   "gnap_continue_token", "gnap_token", "gnap_manage_uri",
+   "gnap_manage_token", "gnap_call_method", "gnap_call_url",
+   "gnap_call_token", "gnap_call_body", "gnap_signed",
+   "gnap_response"].forEach(function (id) {
+    fieldHasTooltip(html, id);
+  });
   log.info("OK — the page, the card and the client are wired.");
   log.debug("Leaving pageWiring().");
+}
+
+// The house tooltip is a .tooltip wrapper whose .tooltiptext sits
+// beside the control. A native title on the control is not that.
+function fieldHasTooltip(html, id) {
+  log.debug("Entering fieldHasTooltip().");
+  var at = html.indexOf('id="' + id + '"');
+  assert.ok(at >= 0, id);
+  var slice = html.slice(Math.max(0, at - 900), at + 900);
+  assert.ok(slice.indexOf("tooltiptext") >= 0 &&
+    slice.indexOf('class="tooltip ') >= 0,
+    id + " has no tooltip");
+  log.debug("Leaving fieldHasTooltip().");
 }
 
 function tamper(prepared) {
@@ -726,6 +755,25 @@ function samplesAreWhatTheySay() {
   log.debug("Leaving samplesAreWhatTheySay().");
 }
 
+// A signed request with no key is refused with the page's own sentence,
+// whichever JWK proof is chosen, and an unsigned one (Discover) still needs
+// none. Until 2026-11-17 only Send grant request checked, and the other
+// signed buttons died with a raw script error about null (#445).
+async function aMissingKeyIsNamed() {
+  log.debug("Entering aMissingKeyIsNamed().");
+  for (const proof of ["httpsig", "jwsd", "jws"]) {
+    await assert.rejects(gnap.prepare(null, "POST",
+      "https://as.example/continue", { proof: proof, json: {} }),
+      /Generate or paste a client key first/, proof);
+  }
+  var unsigned = await gnap.prepare(null, "OPTIONS",
+    "https://as.example/gnap", { sign: false });
+  assert.strictEqual(unsigned.method, "OPTIONS");
+  log.info("OK — a signed request with no key is refused by name, and an " +
+           "unsigned one needs none.");
+  log.debug("Leaving aMissingKeyIsNamed().");
+}
+
 async function main() {
   log.debug("Entering main().");
   await signatureAgreesWithNode();
@@ -735,6 +783,7 @@ async function main() {
   await targetUriIsTheUriAsSent();
   theProxyRefusesWhatItShould();
   await mtlsIsACertificateAndNoSignature();
+  await aMissingKeyIsNamed();
   samplesAreWhatTheySay();
   pageWiring();
   try {

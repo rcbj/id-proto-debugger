@@ -164,8 +164,8 @@ function isOn(value) {
 // serving TLS at all.
 //
 // The environment OUTRANKS the configuration file, which is the rule the rest
-// of this tree already follows for a value compose has to set (see the
-// CONFIG_FILE note in local-run-tests.sh): a compose file cannot edit a
+// of this tree already follows for a value compose has to set: a compose
+// file cannot edit a
 // checked-in `env/*.js`, so the variables are how a stack says what it wants.
 function materialFor(appconfig, serviceName) {
   log.debug("Entering materialFor(). service=" + serviceName);

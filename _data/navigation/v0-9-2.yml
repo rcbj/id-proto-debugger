@@ -1,0 +1,68 @@
+# The sidebar of docs/v0.9.2/, a frozen snapshot of release 0.9.2.
+# Converted from that release's _data/navigation.yml: every /docs/ address
+# is now inside the version, and `/` is the snapshot's index.md (that
+# release's README). Not edited after the release.
+- section: Start here
+  items:
+    - { title: Overview, url: / }
+    - { title: What a protocol debugger is,
+        url: /what-is-a-protocol-debugger.html }
+    - title: "User guide: OAuth2 / OIDC"
+      url: /oauth2-oidc/
+      children:
+        - { title: OAuth 2.0 grants,
+            url: /oauth2-oidc/oauth2-grants.html }
+        - { title: OpenID Connect flows,
+            url: /oauth2-oidc/oidc-flows.html }
+
+- section: OAuth 2.0 and OpenID Connect
+  items:
+    - { title: The six OIDC flows, url: /oidc-flows.html }
+    - { title: DPoP (RFC 9449), url: /dpop.html }
+    - { title: RFC 9700 compliance mode, url: /rfc9700.html }
+    - { title: What is left to implement, url: /spec-roadmap.html }
+
+- section: SAML and WS-*
+  items:
+    - { title: SAML 1.1, url: /saml11.html }
+    - { title: WS-Federation, url: /wsfed.html }
+    - { title: Post-quantum XML Signature, url: /xmldsig-pqc.html }
+
+- section: Verifiable credentials
+  items:
+    - { title: SD-JWT VC issuance, url: /sd-jwt-vc-issuance.html }
+    - { title: SD-JWT VC presentation,
+        url: /sd-jwt-vc-presentation.html }
+    - { title: DIDs, url: /dids.html }
+
+- section: Authentication
+  items:
+    - { title: WebAuthn, url: /webauthn.html }
+    - { title: Kerberos v5, url: /kerberos.html }
+    - { title: SPNEGO, url: /spnego.html }
+
+- section: Directories, provisioning and workloads
+  items:
+    - { title: LDAP, url: /ldap.html }
+    - { title: SCIM 2.0, url: /scim.html }
+    - { title: SPIFFE / SPIRE, url: /spiffe.html }
+
+- section: Shared Signals
+  items:
+    - { title: "SSF: the pipe", url: /ssf.html }
+    - { title: "CAEP: sessions", url: /caep.html }
+    - { title: "RISC: accounts", url: /risc.html }
+
+- section: Cryptography and PKI
+  items:
+    - { title: PKI and TLS, url: /pki.html }
+    - { title: Encryption / Decryption, url: /encryption.html }
+    - { title: Hashing, url: /hashing.html }
+    - { title: Stateful hash-based signatures, url: /hbs.html }
+
+- section: Development
+  items:
+    - { title: The mock STS, url: /mock-sts.html }
+    - { title: What each test covers, url: /test-suite-map.html }
+    - { title: Kerberos design plan, url: /kerberos-plan.html }
+    - { title: WebAuthn design plan, url: /webauthn-plan.html }

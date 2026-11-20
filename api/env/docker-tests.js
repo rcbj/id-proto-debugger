@@ -227,7 +227,7 @@ var config = {
   // "any".
   scimMaxRequestBytes: 1048576,
   // ---------------------------------------------------------------------------
-  // SHARED SIGNALS (client/public/ssf.html, docs/ssf.md).
+  // SHARED SIGNALS (client/public/ssf.html, docs/v0.9.5/ssf.md).
   //
   // `POST /ssf/call` is the SCIM proxy's shape and not the LDAP relay's: SSF's
   // management API is ordinary HTTPS with a JSON body, so the page calls a
@@ -241,8 +241,11 @@ var config = {
   // scimAllowedPorts: SSF is HTTP, and a port allowlist for HTTP would have to
   // carry 80, 443 and every alternate somebody runs a service on.
   ssfMaxRequestBytes: 262144,
+  // The cap on a body POST /oid4vp/call forwards (an OpenID4VP answer
+  // or a request_uri POST); see api/oid4vp_proxy.js.
+  oid4vpMaxRequestBytes: 262144,
   // ---------------------------------------------------------------------------
-  // GNAP (client/public/gnap.html, docs/gnap.md).
+  // GNAP (client/public/gnap.html, docs/v0.9.5/gnap.md).
   //
   // POST /gnap/call forwards one request the page has already signed.
   // This bounds that request body. maxContentLength bounds the
@@ -290,6 +293,59 @@ var config = {
   // The most one inbox holds in total, oldest dropped first. Without it
   // the three caps above multiply out to a quarter of a gigabyte.
   ssfReceiverMaxInboxBytes: 1048576,
+  // ---------------------------------------------------------------------------
+  // THE OPENID4VP VERIFIER ROLE (issue #364, api/oid4vp_verifier.js). When
+  // the VC Presentation workflow plays the Verifier, a Wallet needs a
+  // request_uri to fetch the signed Request Object from and a response_uri
+  // to post its answer to — and a page is not an HTTP server, so this
+  // service hosts both on its behalf, exactly as it hosts the SSF push
+  // receiver above. The page signs; this service stores, serves and records.
+  // Only an explicit `false` turns it off.
+  oid4vpVerifierEnabled: true,
+  // A session's absolute lifetime and its lifetime with nothing touching it.
+  // Each is the default for a session and its CEILING: the page may ask for
+  // less (ttlMs / idleTtlMs on POST /oid4vp/verifier), never more.
+  oid4vpVerifierTtlMs: 1800000,
+  oid4vpVerifierIdleTtlMs: 600000,
+  // How many sessions in all, and one caller's share of them by address.
+  oid4vpVerifierMaxSessions: 100,
+  oid4vpVerifierMaxSessionsPerCaller: 10,
+  // Events kept per session (fetches and answers), oldest dropped.
+  oid4vpVerifierMaxEvents: 50,
+  // The largest Wallet answer kept, the most of them one session holds in
+  // total (oldest dropped first: without it the caps above multiply out to
+  // over a gigabyte), and the largest Request Object or CA certificate the
+  // page may publish.
+  oid4vpVerifierMaxResponseBytes: 262144,
+  oid4vpVerifierMaxSessionBytes: 1048576,
+  oid4vpVerifierMaxRequestObjectBytes: 65536,
+  // LIVE SIGNING under request_uri_method=post (section 5.10), for a
+  // session created with liveSigning: a Wallet's POST to request_uri is
+  // held this long for the page to sign a Request Object carrying its
+  // wallet_nonce, then served the pre-signed object; and at most this many
+  // Wallets wait on one session at once.
+  oid4vpVerifierLiveSignWaitMs: 15000,
+  oid4vpVerifierMaxPendingSignings: 4,
+  // The base the three URLs a session hands a Wallet are built from
+  // (request_uri, response_uri, the root's caIssuers URL), e.g.
+  // "https://verifier.example.net:4000". Empty: the base the PAGE reached
+  // this api at, which is what a wallet on the same machine needs and
+  // what a phone scanning the QR code usually cannot reach (`localhost`,
+  // `api`). An absolute https URL with no query or fragment; anything
+  // else is logged and ignored. A page may still choose its own on
+  // create (publicBaseUrl), since the base only shapes those strings.
+  oid4vpVerifierPublicBaseUrl: "",
+  // The hosted SSF transmitter (#363, api/ssf_transmitter.js): a receiver
+  // discovers it, creates its stream there and polls it; the page signs.
+  // Each lifetime is the default AND the ceiling for one transmitter.
+  ssfTransmitterEnabled: true,
+  ssfTransmitterTtlMs: 3600000,
+  ssfTransmitterIdleTtlMs: 1800000,
+  ssfTransmitterMaxInstances: 10,
+  ssfTransmitterMaxInstancesPerCaller: 3,
+  ssfTransmitterMaxStreams: 5,
+  ssfTransmitterMaxQueued: 200,
+  ssfTransmitterMaxEventBytes: 65536,
   // The ports POST /tls/connect may open a TLS connection to — the TLS / mutual
   // TLS test the PKI page (client/public/pki.html) runs.
   //
@@ -361,7 +417,7 @@ var config = {
   // a reader on the machine this api runs on, with any APDU the caller
   // sends (a wrong-PIN VERIFY blocks a PIN; PIV and OpenPGP have
   // reset/terminate commands). Off unless this is true. See
-  // docs/smartcard.md.
+  // docs/v0.9.5/smartcard.md.
   //
   // ON on the containerized test stacks, because there it reaches NOTHING:
   // the api container has no pcscd socket mounted and no HID device, so
@@ -420,7 +476,14 @@ var config = {
     "::1/128",            // IPv6 loopback
     "fe80::/10",          // IPv6 link-local
     "fc00::/7"            // IPv6 unique local
-  ]
+  ],
+  // HOLD EVERY ANSWER TO THE API DOCUMENT (api/model_validate.js). Each
+  // answer is checked against its operation's response schema in
+  // common/model/openapi.json, and one that does not match is logged as
+  // MODEL GAP and kept at GET /model/gaps, which the suite's last job reads.
+  // The answer itself is never changed. A test setting only: it costs a
+  // schema check per answer and protects nobody using the tool.
+  validateResponses: true
 };
 
 module.exports = config;

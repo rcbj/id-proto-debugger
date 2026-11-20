@@ -529,9 +529,16 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   // in its `problems` list, so treating "no key in storage" as a problem
   // strands the user one page before the only field that can supply it.
   // Absent-by-choice and absent-and-lost have to be told apart.
+  //
+  // The request itself must be one step 1 ACCEPTS, or Continue is off for a
+  // reason that has nothing to do with the key and both halves below test
+  // the request instead. A `redirect_uri:` Client Identifier IS the URL the
+  // answer goes to (OpenID4VP 1.0 section 5.9.3), so it names the
+  // response_uri; this fixture had them differ until step 1 began checking
+  // that (2026-11-16), which is how this assertion came to fail.
   var vpRequest = {
     params: { response_type: "vp_token", nonce: "N",
-             client_id: "redirect_uri:http://v/cb",
+             client_id: "redirect_uri:http://v/oid4vp/response",
               response_mode: "direct_post",
                   response_uri: "http://v/oid4vp/response" },
     dcql: { credentials: [{ id: "c1", format: "dc+sd-jwt",
@@ -566,6 +573,16 @@ async function sdJwtVcHolderKeyOptOut(driver) {
     "[SD-JWT VC] with saving ON and the key still absent it was never " +
         "generated here, there is nothing " +
     "to paste, and step 1 should block as it always did.");
+  // ...and blocks FOR THAT REASON. A Continue that is off for anything else
+  // (a request step 1 refuses on its own terms) would pass the line above
+  // and say nothing about the key.
+  var blockedBecause = await read(
+    "return (document.getElementById('vp_request_status') || " +
+    "{}).textContent || '';");
+  assert.ok(/holder key/.test(blockedBecause) &&
+            !/redirect_uri|response_uri|response_type/.test(blockedBecause),
+    "[SD-JWT VC] step 1 should block on the missing holder key and nothing " +
+        "else; it said: " + blockedBecause);
   log.info("[SD-JWT VC] OK — step 1 tells absent-by-choice from " +
            "absent-and-lost.");
 

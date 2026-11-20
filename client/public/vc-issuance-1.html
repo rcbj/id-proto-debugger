@@ -367,7 +367,9 @@ function vcSetAllPanes(expand) {
     <details class="vc-hint"><summary>When you need this</summary><p class="vc-note">In a cross-device flow the issuer shows a QR code on its own screen and your wallet is
     somewhere else, so the offer does not arrive in this browser by itself. Paste what the QR code contains
     &mdash; an <code>openid-credential-offer://</code> URI, an <code>https://</code> link carrying
-    <code>credential_offer</code> or <code>credential_offer_uri</code>, or the Credential Offer JSON itself.</p></details>
+    <code>credential_offer</code> or <code>credential_offer_uri</code>, or the Credential Offer JSON itself.
+    Or hand it the QR code as a picture: choose an image file, or paste a screenshot into the box. It is
+    decoded here, whichever issuer drew it.</p></details>
     <table border="0">
       <tbody>
         <tr>
@@ -377,6 +379,14 @@ function vcSetAllPanes(expand) {
             </div>
           </td>
           <td><textarea id="scan_offer_input" name="scan_offer_input" rows="3" cols="90" placeholder="openid-credential-offer://?credential_offer=%7B%22credential_issuer%22..."></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="scan_offer_image">Or its QR code</label>
+              <span class="tooltiptext">An image of the QR code itself &mdash; a screenshot, a photo, the issuer's SVG. It is decoded in this page and what it encodes goes in the box above. You can also paste an image straight into that box.</span>
+            </div>
+          </td>
+          <td><input type="file" id="scan_offer_image" name="scan_offer_image" accept="image/*" onchange="return vcissuance1.readOfferImage(this);" /></td>
         </tr>
         <tr>
           <td>
@@ -415,6 +425,15 @@ function vcSetAllPanes(expand) {
       <input class="btn2" id="config_defaults_button" type="button" value="Restore Defaults" onclick="return vcissuance1.restoreDefaults();" />
       <span class="vc-status" id="config_status">&nbsp;</span>
     </p>
+  </fieldset>
+</div>
+
+<!-- ============ Client authentication at the token endpoint ============ -->
+<div class="step0 dbg-pane" id="pane_client_auth">
+  <legend class="dbg-legend">Client Authentication (token endpoint)</legend>
+  <fieldset>
+    <p class="vc-note">How the wallet authenticates to the authorization server's token endpoint, for every token call in this workflow: the authorization code exchange, the pre-authorized code grant and the refresh. Defaults to the first method the server advertises. A client secret is never stored; it is typed on the page that sends it.</p>
+    <div id="vc_client_auth_pane"></div>
   </fieldset>
 </div>
 

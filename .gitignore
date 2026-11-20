@@ -14,7 +14,19 @@ saml-idp-metadata.xml
 # The SAML SP key pair is generated per test run (common/common.sh
 # generateSpKeyPair) and lives only in the run's environment. These names are
 # listed so a stray copy can never be committed.
-tests/fixtures/
+tests/fixtures/*
+# ...except the abstract data model's recorded api answers, which ARE the
+# baseline tests/api_model_wire.js replays (models/CLAUDE.md). A directory
+# pattern above would hide them; `/*` lets this one directory back in.
+!tests/fixtures/api_model/
+# ...and the W3C vc-di-bbs specification's own test vectors, which
+# tests/bbs2023_cryptosuite.js asserts against (their source is inside).
+!tests/fixtures/vc_di_bbs_vectors.json
+# ...and the vc-di-ecdsa ecdsa-sd-2023 ones, for tests/ecdsa_sd_2023_engine.js.
+!tests/fixtures/vc_di_ecdsa_sd_vectors.json
+!tests/fixtures/jwp_jpa15_vectors.json
+!tests/fixtures/sd_cwt_09_vectors.json
+!tests/fixtures/acdc_vectors.json
 sp-key.pem
 sp-cert.pem
 

@@ -54,6 +54,9 @@ var log = bunyan.createLogger({
 });
 
 var metadataClient = require("./metadata_client");
+// Digests, key generation and export by crypto_provider.js (#463): pure JS,
+// on every deployment.
+var provider = require("./crypto_provider");
 var jws = require("./jws");
 var bytes = require("./crypto_bytes");
 
@@ -172,18 +175,17 @@ function privateJwkOf(alg, pair) {
     return Promise.resolve(jws.privateJwk(alg, pair.privateKey,
                                           pair.publicKey));
   }
-  // A PEM: import it as an EXTRACTABLE key and let Web Crypto write the JWK.
-  // `bytes.pemToDer()` and not `jws.pkcs8PrivateBits()` — the latter extracts
-  // the key's own bits for the raw algorithms and returns 257 bytes for an RSA
-  // key, which importKey refuses with `Invalid keyData`, a message that names
-  // neither the function nor the format.
-  var spec = jws.algSpec(alg);
-  return crypto.subtle.importKey("pkcs8", bytes.pemToDer(pair.privateKey),
-      jws.webCryptoImportParams(spec), true, ["sign"])
-    .then(function (key) {
-      log.debug("Leaving privateJwkOf(). Web Crypto export.");
-      return crypto.subtle.exportKey("jwk", key);
-    });
+  // A PEM: crypto_provider.js reads it and writes the JWK (#463), so this
+  // works on a plain-HTTP page as well.
+  var jwk;
+  try {
+    jwk = provider.exportKey(provider.importKey(pair.privateKey), "jwk");
+  } catch (e) {
+    log.debug("Leaving privateJwkOf(). Unreadable PEM.");
+    return Promise.reject(e);
+  }
+  log.debug("Leaving privateJwkOf(). Provider export.");
+  return Promise.resolve(jwk);
 }
 
 function generateKeyPair(alg) {
@@ -327,7 +329,8 @@ function thumbprint(jwk) {
   log.debug("Entering thumbprint().");
   var canonical = canonicalJwk(jwk);
   log.debug("Leaving thumbprint().");
-  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical))
+  return Promise.resolve(provider.digest("sha256",
+      new TextEncoder().encode(canonical)))
     .then(function (digest) {
       log.debug("Leaving thumbprint().");
       return metadataClient.bytesToB64u(digest);
@@ -384,7 +387,8 @@ function athFor(accessToken) {
     bytes[i] = String(accessToken).charCodeAt(i) & 0x7f;
   }
   log.debug("Leaving athFor().");
-  return crypto.subtle.digest("SHA-256", bytes).then(function (digest) {
+  return Promise.resolve(provider.digest("sha256", bytes))
+    .then(function (digest) {
     log.debug("Leaving athFor().");
     return metadataClient.bytesToB64u(digest);
   });
@@ -459,14 +463,11 @@ function proof(opts) {
         protectedHeader: header,
         payload: payload,
         privateKey: { jwk: key.privateJwk },
-        // THE BACKEND IS ASKED FOR ONLY WHERE IT EXISTS. This said
-        // `backend: "webcrypto"` unconditionally, which was harmless while the
-        // wallet offered ES256 and RS256 and became a refusal the moment it
-        // offered the post-quantum ones: `crypto.subtle` has no name for
-        // ML-DSA or SLH-DSA, so every proof signed with one failed with
-        // "alg=ML-DSA-44 has no Web Crypto equivalent" — an algorithm this
-        // tool implements, refused because of the engine it was asked to use.
-        backend: jws.webCryptoKnowsAlg(jws.algSpec(alg)) ? "webcrypto" : "js"
+        // THE PURE-JS BACKEND, for every alg (#463, step 2c). This chose
+        // Web Crypto where crypto.subtle knew the alg, which made a DPoP
+        // proof depend on a secure context; jws.js's default backend is
+        // crypto_provider.js and works on every deployment.
+        backend: "js"
       }).then(function (signed) {
         log.debug("Leaving proof().");
         return { proof: signed.serialized, header: header, payload: payload };

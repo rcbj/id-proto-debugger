@@ -49,6 +49,7 @@
 // ---------------------------------------------------------------------------
 const assert = require("assert");
 const fs = require("fs");
+const nodeCrypto = require("crypto");
 const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
@@ -636,6 +637,64 @@ async function pkcs12CarriesTheWholeChain() {
   log.debug("Leaving pkcs12CarriesTheWholeChain().");
 }
 
+// With crypto.subtle removed, as on a page served over plain HTTP (#463):
+// EVERY format still works, PKCS#12 and password-protected PKCS#8 included,
+// because their cryptography (PBES2, the RFC 7292 MAC) is crypto_provider.js's
+// rather than PKI.js's Web Crypto engine. What is produced there is handed
+// to OpenSSL and to node, which must open it with the password and refuse
+// it without.
+async function keystoresNeedNoWebCrypto() {
+  log.debug("Entering keystoresNeedNoWebCrypto().");
+  const pair = await keyFor("ec-p256");
+  const desc = keys.keyAlg("ec-p256");
+  const cert = await certFor("ec-p256");
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  const real = globalThis.crypto;
+  Object.defineProperty(globalThis, "crypto", { configurable: true,
+    writable: true, value: { getRandomValues: function (a) {
+      return real.getRandomValues(a);
+    } } });
+  let p12, pem;
+  try {
+    const jwk = await keys.privToJwk(pair.privatePem, desc, "ES256", "sig");
+    assert.strictEqual(jwk.kty, "EC", "a JWK with no Web Crypto");
+    p12 = writeFiles(await keys.exportKeyPair({ format: "pkcs12",
+      privatePem: pair.privatePem, publicPem: pair.publicPem, desc: desc,
+      password: PASSWORD, baseName: "nowc", certs: [cert.pem] }));
+    pem = writeFiles(await keys.exportKeyPair({ format: "pem",
+      privatePem: pair.privatePem, publicPem: pair.publicPem, desc: desc,
+      password: PASSWORD, baseName: "nowc" }));
+  } finally {
+    Object.defineProperty(globalThis, "crypto", descriptor);
+  }
+  const dump = openssl(["pkcs12", "-in", p12["nowc.p12"], "-passin",
+                        "pass:" + PASSWORD, "-nodes"], { stdio: "pipe" });
+  assert.ok(/BEGIN PRIVATE KEY/.test(dump) && /BEGIN CERTIFICATE/.test(dump),
+    "OpenSSL did not open the PKCS#12 made with no Web Crypto");
+  assert.throws(function () {
+    openssl(["pkcs12", "-in", p12["nowc.p12"], "-passin", "pass:wrong",
+             "-nodes"], { stdio: "pipe" });
+  }, undefined, "OpenSSL opened the PKCS#12 with the WRONG password");
+  const encrypted = Object.keys(pem).map(function (n) {
+    return fs.readFileSync(pem[n], "utf8");
+  }).filter(function (text) {
+    return /PRIVATE KEY/.test(text);
+  })[0] || "";
+  assert.ok(/BEGIN ENCRYPTED PRIVATE KEY/.test(encrypted),
+    "the password-protected PEM is not an EncryptedPrivateKeyInfo");
+  const opened = nodeCrypto.createPrivateKey({ key: encrypted,
+    passphrase: PASSWORD });
+  assert.strictEqual(opened.asymmetricKeyType, "ec",
+    "node did not open the encrypted PKCS#8");
+  assert.throws(function () {
+    nodeCrypto.createPrivateKey({ key: encrypted, passphrase: "wrong" });
+  }, undefined, "node opened the encrypted PKCS#8 with the WRONG password");
+  log.info("[no web crypto] OK — PKCS#12 and encrypted PKCS#8 made with no " +
+           "Web Crypto; OpenSSL and node open both with the password and " +
+           "refuse both without.");
+  log.debug("Leaving keystoresNeedNoWebCrypto().");
+}
+
 // ---------------------------------------------------------------------------
 // 4. The refusals, by name.
 // ---------------------------------------------------------------------------
@@ -861,6 +920,7 @@ async function test() {
   await hmacSecretsExportAsOctJwkOnly();
   await everyFormatIsReadableByOpenssl();
   await pkcs12CarriesTheWholeChain();
+  await keystoresNeedNoWebCrypto();
   await refusalsSayWhichMistakeItWas();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");

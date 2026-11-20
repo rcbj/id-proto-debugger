@@ -198,7 +198,7 @@ function load(dir) {
 // Every project in the repo carries the release, M.N.P, as its package.json
 // version — a valid semver as it stands; the build number lives only in
 // version.json, because M.N.P.B is not one. These
-// helpers keep the three in step with VERSION — a bump that updates only
+// helpers keep the four in step with VERSION — a bump that updates only
 // VERSION would otherwise leave them silently stale.
 //
 // `sts` IS NOT ONE OF THEM, and was until the sts/ submodule moved to
@@ -206,7 +206,7 @@ function load(dir) {
 // releases (its common/version.js, #1298/#1317), and since 2026-11-13 this
 // repository has no checkout of it at all: the stacks run its release image
 // (IYA_STS_IMAGE), whose tag is the pin.
-const MANIFESTS = ['api', 'client', 'tests'];
+const MANIFESTS = ['api', 'client', 'models', 'tests'];
 
 function manifestVersion() {
   log.debug("Entering manifestVersion().");

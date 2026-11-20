@@ -7,7 +7,7 @@
 # THE API'S ENTRYPOINT, AND ITS ONLY JOB IS A TRUSTSTORE.
 #
 # The mock STS serves its main port over TLS in this project's test stacks
-# (STS_HTTPS=true in local-tests.yml and docker-compose-run-tests.yml), because
+# (STS_HTTPS=true in keycloak-tests.yml and docker-compose-run-tests.yml), because
 # the RFC 9700 pass is only honest over https — requirement 8.1 is that every
 # configured endpoint is https, and the debugger enforces it. That pass used to
 # have a mock instance of its own; it is a TRUST REALM on the one instance now,

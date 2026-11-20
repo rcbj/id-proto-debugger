@@ -32,8 +32,79 @@ var waitTime = appconfig.waitTime;
 // whatever an earlier run had put in this profile's localStorage, and left the
 // registration below with nothing to be registered AGAINST. Naming it here is
 // what makes "the application is configured before the protocol starts" a
-// statement about this test rather than about the page's markup.
-const APPLIES_TO = process.env.WSTRUST_APPLIES_TO || "urn:wstrust:test:rp";
+// statement about this test rather than about the page's markup. An
+// encryption job moves off this value so its map does not cover the
+// relying party the other jobs issue for.
+var appliesTo = process.env.WSTRUST_APPLIES_TO || "urn:wstrust:test:rp";
+
+// WS-Trust's wst:EncryptionAlgorithm and wst:EncryptWith name a cipher
+// only when response encryption is already on. They do not say which
+// element is encrypted. An issued SAML assertion, and a request element
+// the application requires to arrive encrypted, are the XPath maps.
+//
+// wstrustAcceptEncryptedElements stays false on the encrypted request.
+// That switch (wstrust.acceptEncryptedElements, off by default) is what
+// admits ciphertext no map names. This job names the RST, which is the
+// element the page encrypts, and does not open the wider door.
+const ASSERTION_XPATH = "//*[local-name()='Assertion' and " +
+  "namespace-uri()='urn:oasis:names:tc:SAML:2.0:assertion']";
+const RST_XPATH = "//*[local-name()='RequestSecurityToken']";
+
+function encryptionFields(assertion, message) {
+  log.debug("Entering encryptionFields().");
+  var fields = {};
+  if (assertion) {
+    fields.wstrustEncryptResponse = "true";
+    fields.wstrustEncryptResponseElements = [ASSERTION_XPATH];
+  }
+  if (message) {
+    fields.wstrustEncryptRequest = "true";
+    fields.wstrustEncryptRequestElements = [RST_XPATH];
+    fields.wstrustAcceptEncryptedElements = "false";
+  }
+  log.debug("Leaving encryptionFields().");
+  return fields;
+}
+
+// The certificate this request is encrypted to. An application that
+// holds its own WS-Trust decryption key must be encrypted to THAT
+// certificate. Encrypting it to the realm's key is STS-WSTRUST-0083.
+// GET /sts/cert is the signing certificate and is not this key.
+// Issue replaces a pair the application already holds. The private key
+// is not in the answer.
+async function issueDecryptionKey(stsUrl, application) {
+  log.debug("Entering issueDecryptionKey().");
+  var wrote = await registry.adminPost(registry.baseOf(stsUrl),
+    "/applications/issue-wstrust-decryption-key", {
+      application: application,
+      keyAlg: "rsa-3072"
+    });
+  var state = (wrote && wrote.wstrustDecryption) || {};
+  var pem = state.certificatePem || "";
+  if (!wrote || wrote.ok === false || pem.indexOf("CERTIFICATE") < 0) {
+    log.debug("Leaving issueDecryptionKey(). Refused.");
+    throw new Error("issue-wstrust-decryption-key on " + application +
+      " was refused: " + JSON.stringify((wrote && wrote.errors) || wrote) +
+      ". If the message names an unknown action, this iya-sts has no " +
+      "per-application WS-Trust decryption key. Bump IYA_STS_IMAGE.");
+  }
+  log.debug("Leaving issueDecryptionKey().");
+  return pem;
+}
+
+async function removeDecryptionKey(stsUrl, application) {
+  log.debug("Entering removeDecryptionKey().");
+  var wrote = await registry.adminPost(registry.baseOf(stsUrl),
+    "/applications/remove-wstrust-decryption-key", {
+      application: application
+    });
+  if (!wrote || wrote.ok === false) {
+    log.debug("Leaving removeDecryptionKey(). Refused.");
+    throw new Error("remove-wstrust-decryption-key on " + application +
+      " was refused: " + JSON.stringify((wrote && wrote.errors) || wrote));
+  }
+  log.debug("Leaving removeDecryptionKey().");
+}
 
 // Set a field's value and fire change/input so the page persists it and
 // rebuilds the request (the .stored controls auto-save + auto-rebuild on
@@ -103,7 +174,7 @@ async function configureAndSend(driver, stsUrl, op, opts) {
   if (opts.version) await setField(driver, "wst_trust_version", opts.version);
   await setField(driver, "wst_operation", op);
   await setField(driver, "wst_token_type", opts.tokenType || "saml2");
-  await setField(driver, "wst_applies_to", APPLIES_TO);
+  await setField(driver, "wst_applies_to", appliesTo);
   // UsernameToken credential (the mock STS accepts wstrust/wstrust).
   await setField(driver, "wst_cred_mode", "usernametoken");
   await setField(driver, "wst_username", "wstrust");
@@ -150,8 +221,23 @@ async function configureAndSend(driver, stsUrl, op, opts) {
     // The generated request should now contain a signature.
     await driver.wait(async function () {
       var r = await textOf(driver, "wst_generated_request");
-      return r.indexOf("Signature") >= 0;
-    }, keygenWait, "Signed request did not contain a ds:Signature.");
+      return r.indexOf("Signature") >= 0 &&
+             r.indexOf("BinarySecurityToken") >= 0 &&
+             r.indexOf("X509Certificate") < 0;
+    }, keygenWait, "Signed request did not name its certificate as a " +
+       "BinarySecurityToken.");
+  }
+
+  if (opts.encryptRequest) {
+    await setField(driver, "wst_enc_cert", opts.encryptionCert);
+    await setChecked(driver, "wst_encrypt_request", true);
+    await driver.wait(async function () {
+      var r = await textOf(driver, "wst_generated_request");
+      return r.indexOf("EncryptedData") >= 0 &&
+             r.indexOf("EncryptWith") < 0 &&
+             r.indexOf("EncryptionAlgorithm") < 0;
+    }, Math.max(waitTime, 10000),
+       "The request did not encrypt the RST as EncryptedData.");
   }
 
   log.info("Send the RequestSecurityToken.");
@@ -169,7 +255,7 @@ async function configureAndSend(driver, stsUrl, op, opts) {
 }
 
 async function wstrustActivities(driver, stsUrl, op, sign, route, version,
-                                 encrypt) {
+                                 encrypt, encryptRequest, encryptionCert) {
   log.debug("Entering wstrustActivities().");
   var targetToken = null;
 
@@ -189,7 +275,8 @@ async function wstrustActivities(driver, stsUrl, op, sign, route, version,
 
   await configureAndSend(driver, stsUrl, op, { sign: sign,
                          targetToken: targetToken, route: route,
-                         version: version });
+                         version: version, encryptRequest: !!encryptRequest,
+                         encryptionCert: encryptionCert });
 
   var respXml = await textOf(driver, "wst_response_xml");
   var fields = await textOf(driver, "wst_fields_table");
@@ -200,15 +287,14 @@ async function wstrustActivities(driver, stsUrl, op, sign, route, version,
   assert(respXml && respXml.indexOf("RequestSecurityTokenResponse") >= 0,
     "Response is not a RequestSecurityTokenResponse — see the logged RSTR.");
 
-  // Encrypted-token scenario: the STS returned an <saml:EncryptedAssertion>;
-  // decrypt it on the response page with the requestor key (prefilled from the
-  // signing key generated on the tools page) and confirm a plaintext assertion.
+  // The issued assertion is xenc:EncryptedData. WS-Trust does not wrap
+  // it as saml:EncryptedAssertion, and the RST does not ask for it.
   if (encrypt) {
     var encToken = await textOf(driver, "wst_token_xml");
-    assert(encToken.indexOf("EncryptedData") >= 0 ||
-           encToken.indexOf("EncryptedAssertion") >= 0,
-      "Expected an encrypted token in the response, got: " + (encToken ||
-          "").slice(0, 160));
+    assert(encToken.indexOf("EncryptedData") >= 0 &&
+           encToken.indexOf("EncryptedAssertion") < 0,
+      "Expected xenc:EncryptedData in the issued token, got: " +
+      (encToken || "").slice(0, 160));
     log.info("Encrypted token received; decrypting on the response page.");
     await clickByValue(driver, "Decrypt");
     await driver.wait(async function () {
@@ -256,7 +342,7 @@ async function test() {
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
 
   // The mock STS serves https on a certificate it generated at startup (see
-  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
+  // STS_HTTPS in keycloak-tests.yml). This trusts THAT KEY and no other, and adds
   // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
   // makes the whole argument. This file builds its Chrome options by hand
   // rather than through addBrowserAccessFlags(), which is why the call is here
@@ -277,8 +363,10 @@ async function test() {
   // which is how a run of this suite once left 559 of them on the machine.
   // Record the failure, let the finally quit the driver, THEN exit.
   let testFailed = false;
+  var issuedKey = false;
+  var stsUrl = "";
   try {
-    const stsUrl = process.env.WSTRUST_STS_URL;
+    stsUrl = process.env.WSTRUST_STS_URL;
     const op = (process.env.WSTRUST_OP || "issue").toLowerCase();
     const sign = (process.env.WSTRUST_SIGN === "true" ||
         process.env.WSTRUST_SIGN === "1");
@@ -286,6 +374,8 @@ async function test() {
     const version = (process.env.WSTRUST_VERSION || "").trim();
     const encrypt = (process.env.WSTRUST_ENCRYPT === "true" ||
         process.env.WSTRUST_ENCRYPT === "1");
+    const encryptRequest = (process.env.WSTRUST_ENCRYPT_REQUEST === "true" ||
+        process.env.WSTRUST_ENCRYPT_REQUEST === "1");
     assert(stsUrl, "WSTRUST_STS_URL environment variable is not set.");
     assert(["issue", "renew", "validate", "cancel"].indexOf(op) >= 0,
            "WSTRUST_OP must be issue, renew, validate, or cancel.");
@@ -304,31 +394,39 @@ async function test() {
     // the delegation map instead of a URL. See the mock's common/CLAUDE.md.
     //
     // stsUrl here is the WS-Trust ENDPOINT (…/sts), which is what baseOf()
-    // exists to turn back into the service. It may carry ?encrypt=1 in the
-    // encrypted-token job; that is a query on the endpoint and not part of the
-    // application, which is why this is done before effectiveStsUrl is built.
+    // exists to turn back into the service. Encryption is an attribute of
+    // this application, not a query on the endpoint. A job that turns a
+    // map on uses its own AppliesTo, so the shared test relying party
+    // stays in the clear for every other job.
+    if (!process.env.WSTRUST_APPLIES_TO && (encrypt || encryptRequest)) {
+      appliesTo = encrypt
+        ? "urn:wstrust:test:rp:encrypted-assertion"
+        : "urn:wstrust:test:rp:encrypted-request";
+    }
     await registry.provision(registry.baseOf(stsUrl), {
-      identifier: APPLIES_TO,
+      identifier: appliesTo,
       name: "WS-Trust test relying party",
       protocols: ["wstrust"],
-      fields: {
-        wstrustAppliesTo: [APPLIES_TO],
-        samlEntityId: [APPLIES_TO]
-      },
+      fields: Object.assign({
+        wstrustAppliesTo: [appliesTo],
+        samlEntityId: [appliesTo]
+      }, encryptionFields(encrypt, encryptRequest)),
       why: "the relying party every RequestSecurityToken in this job names"
     });
 
-    // Encrypted-token scenario: ask the STS to encrypt (?encrypt=1) and sign
-    // the request so it carries the requestor cert the STS encrypts to.
-    var effectiveStsUrl = stsUrl, effectiveSign = sign;
-    if (encrypt) {
-      effectiveStsUrl = stsUrl + (stsUrl.indexOf("?") >= 0 ? "&" : "?") +
-          "encrypt=1";
-      effectiveSign = true;
+    // An encrypted assertion is sealed to the certificate the signature
+    // names. The RST carries no EncryptWith and no EncryptionAlgorithm.
+    // An encrypted request is sealed to the decryption key just issued
+    // for this application, and that key is removed when the job ends.
+    var effectiveSign = sign || encrypt;
+    var encryptionCert = "";
+    if (encryptRequest) {
+      encryptionCert = await issueDecryptionKey(stsUrl, appliesTo);
+      issuedKey = true;
     }
 
-    await wstrustActivities(driver, effectiveStsUrl, op, effectiveSign, route,
-                            version, encrypt);
+    await wstrustActivities(driver, stsUrl, op, effectiveSign, route,
+                            version, encrypt, encryptRequest, encryptionCert);
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);
@@ -360,6 +458,14 @@ async function test() {
     }
     testFailed = true;
   } finally {
+    if (issuedKey) {
+      try {
+        await removeDecryptionKey(stsUrl, appliesTo);
+      } catch (removeError) {
+        log.error(removeError.message);
+        testFailed = true;
+      }
+    }
     await driver.quit();
   }
   if (testFailed) {

@@ -601,7 +601,9 @@ async function startAtTheVerifierWebsite(driver, opts) {
 // the portal page; the caller hands the offer to the wallet.
 //
 // `opts`: { By, until, stsBase, username, password, mode, configuration,
-// wait, consentScreen }. Answers { txCode, offerUri, qr, page, username }.
+// wait, consentScreen }. Answers { txCode, offerUri, qr, qrMarkup, page,
+// username }: `qrMarkup` is the QR code as the page drew it (an <svg>), for
+// a wallet that reads the offer from the picture (#365).
 async function offerFromThePortalWallet(driver, opts) {
   log.debug("Entering offerFromThePortalWallet(). mode=" + opts.mode);
   const By = opts.By;
@@ -627,10 +629,23 @@ async function offerFromThePortalWallet(driver, opts) {
     "the portal let this browser in with no sign-in screen although its " +
     "cookies for " + base + " were cleared, so the offer would be made for " +
     "somebody other than " + opts.username + ".");
-  await driver.findElement(By.id("username")).sendKeys(opts.username);
-  await driver.findElement(By.id("password"))
-      .sendKeys(opts.password || "any-password");
+  // Cleared first: on a second visit in the same run the browser may have
+  // pre-filled the username, and sendKeys would append to it (#authn
+  // "pepdemo1pepdemo1").
+  const portalUser = await driver.findElement(By.id("username"));
+  await portalUser.clear();
+  await portalUser.sendKeys(opts.username);
+  const portalPass = await driver.findElement(By.id("password"));
+  await portalPass.clear();
+  await portalPass.sendKeys(opts.password || "any-password");
   await driver.findElement(By.id("kc-login")).click();
+  // A second factor, where the authorization server asks for one (a
+  // product-mode iya-sts), answered by the caller — the documentation run
+  // has the account's authenticator secret. Other callers pass none and the
+  // sign-in has no second step.
+  if (typeof opts.afterLogin === "function") {
+    await opts.afterLogin(driver);
+  }
   if (opts.consentScreen) {
     await opts.consentScreen.passInBrowser(driver, By);
   }
@@ -649,6 +664,20 @@ async function offerFromThePortalWallet(driver, opts) {
   assert.strictEqual(chosen, true,
     "the portal's wallet page does not offer " + opts.configuration + " in " +
     "mode " + opts.mode + "; it offers " + JSON.stringify(chosen) + ".");
+  // The algorithm the credential is signed with, where the page offers the
+  // choice (iya-sts 2026-10-16: one select, name="signingAlg").
+  if (opts.signingAlg) {
+    const picked = await driver.executeScript(
+      "var s = document.querySelector('select[name=signingAlg]');" +
+      "if (!s) { return null; }" +
+      "var known = Array.prototype.map.call(s.options, function (o) {" +
+      "  return o.value; });" +
+      "if (known.indexOf(arguments[0]) < 0) { return known; }" +
+      "s.value = arguments[0]; return true;", opts.signingAlg);
+    assert.strictEqual(picked, true,
+      "the portal's wallet page cannot sign with " + opts.signingAlg +
+      "; it offers " + JSON.stringify(picked) + ".");
+  }
   await driver.findElement(By.id("wallet-make")).click();
   await driver.wait(until.elementLocated(By.id("tx_code")), opts.wait,
     "making the offer should draw it, with its Transaction Code (#tx_code).");
@@ -657,11 +686,13 @@ async function offerFromThePortalWallet(driver, opts) {
     "return { txCode: document.getElementById('tx_code').textContent.trim()," +
     "  offerUri: document.getElementById('offer_uri').textContent.trim()," +
     "  qr: qr ? qr.tagName.toLowerCase() : ''," +
+    "  qrMarkup: qr ? qr.outerHTML : ''," +
     "  page: document.body.textContent };");
   log.debug("Leaving offerFromThePortalWallet(). " +
             shown.offerUri.slice(0, 60));
   return { txCode: shown.txCode, offerUri: shown.offerUri, qr: shown.qr,
-           page: shown.page, username: opts.username };
+           qrMarkup: shown.qrMarkup, page: shown.page,
+           username: opts.username };
 }
 
 // A REQUEST, GOT THE WAY A PERSON GETS ONE: the Verifier's website, its
@@ -669,6 +700,49 @@ async function offerFromThePortalWallet(driver, opts) {
 // `{ params, location, query }` parsed off the URL the browser landed on —
 // for the checks that need the request's state or DCQL query. `opts`:
 // { By, until, siteUrl, format, byReference, wait }.
+// A pre-authorized offer, redeemed the way a wallet does it but in node: the
+// offer document by reference, then the token endpoint with the
+// pre-authorized code and the Transaction Code. Answers the access token,
+// which carries whatever the offer chose (the signing algorithm among it).
+async function redeemPreAuthorizedOffer(issuerBase, offerUri, txCode) {
+  log.debug("Entering redeemPreAuthorizedOffer().");
+  const query = offerUri.slice(offerUri.indexOf("?") + 1);
+  const params = new URLSearchParams(query);
+  let offer = params.get("credential_offer") ?
+      JSON.parse(params.get("credential_offer")) : null;
+  if (!offer) {
+    const byRef = await httpJson(params.get("credential_offer_uri"));
+    assert.ok(byRef.ok, "the offer by reference should be fetchable: " +
+              byRef.status + " " + String(byRef.raw).slice(0, 200));
+    offer = byRef.body;
+  }
+  const grant = ((offer.grants || {})[
+      "urn:ietf:params:oauth:grant-type:pre-authorized_code"]) || {};
+  assert.ok(grant["pre-authorized_code"], "the offer carries no " +
+            "pre-authorized code: " + JSON.stringify(offer).slice(0, 300));
+  const meta = await issuerMetadata(issuerBase);
+  const as = ((meta && meta.authorization_servers) || [])[0] ||
+      (meta && meta.credential_issuer) || issuerBase;
+  const asMeta = await httpJson(String(as).replace(/\/+$/, "") +
+      "/.well-known/oauth-authorization-server");
+  const tokenEndpoint = (asMeta.body && asMeta.body.token_endpoint) ||
+      String(as).replace(/\/+$/, "") + "/oauth2/token";
+  const form = new URLSearchParams({
+    grant_type: "urn:ietf:params:oauth:grant-type:pre-authorized_code",
+    "pre-authorized_code": grant["pre-authorized_code"],
+    client_id: WALLET_CLIENT_ID });
+  if (txCode) form.set("tx_code", txCode);
+  const token = await httpJson(tokenEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form.toString() });
+  assert.ok(token.ok && token.body && token.body.access_token,
+    "the pre-authorized code should redeem for an access token: " +
+    token.status + " " + String(token.raw).slice(0, 300));
+  log.debug("Leaving redeemPreAuthorizedOffer().");
+  return token.body.access_token;
+}
+
 async function requestThroughTheVerifierWebsite(driver, opts) {
   log.debug("Entering requestThroughTheVerifierWebsite().");
   await driver.get(opts.siteUrl);
@@ -803,7 +877,13 @@ async function provisionWallet(issuerBase, options) {
   const entry = await registry.provision(registry.stsBaseFor(issuerBase), {
     identifier: clientId,
     name: opts.name || "OID4VCI wallet (debugger tests)",
-    protocols: ["oauth2", "oid4vci"],
+    // oauth2 and oid4vci by default; oidc too when the caller asks for an
+    // openid scope, because an openid scope has the issuer mint an ID token,
+    // whose issuance a product-mode XACML policy refuses to an application
+    // not declared for the oidc family (STS-XACML-0084).
+    protocols: opts.protocols || ([].concat(opts.scopes || [])
+      .indexOf("openid") >= 0 ? ["oauth2", "oidc", "oid4vci"]
+      : ["oauth2", "oid4vci"]),
     fields: fields,
     why: opts.why || "the wallet that collects credentials from this issuer"
   });
@@ -874,6 +954,7 @@ module.exports = {
   startAtTheVerifierWebsite: startAtTheVerifierWebsite,
   requestThroughTheVerifierWebsite: requestThroughTheVerifierWebsite,
   offerFromThePortalWallet: offerFromThePortalWallet,
+  redeemPreAuthorizedOffer: redeemPreAuthorizedOffer,
   verificationResult: verificationResult,
   verdictOfWhatWasSent: verdictOfWhatWasSent,
   verdictFor: verdictFor

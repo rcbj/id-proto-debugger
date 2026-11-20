@@ -1,0 +1,755 @@
+{
+  "family": "saml",
+  "about": "SAML 2.0 and SAML 1.1: GET /samlmetadata, POST /samlsign, POST /samlartifactctx, the assertion consumer and Single Logout landings (POST and GET /samlacs, GET /samlacs/artifact, POST and GET /samlslo) and GET /samlresponse. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md). The landings are what an IDENTITY PROVIDER's browser reaches, so they are sent as forms (or as query strings) and answer with a 302 whose Location carries a stash id that is new every run, hence volatile. Every outbound target is a .invalid name (RFC 6761). The signing key is a throwaway generated for this file, signs nothing anywhere else, and is here because RSA PKCS#1 v1.5 is deterministic, so a signed redirect is the same bytes on every machine.",
+  "cases": [
+    {
+      "name": "metadata: no url is refused for its scheme",
+      "method": "GET",
+      "path": "/samlmetadata",
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http(s) URL."
+        }
+      }
+    },
+    {
+      "name": "metadata: a url that is not http(s) once decoded is refused",
+      "method": "GET",
+      "path": "/samlmetadata?url=ZnRwOi8vbWV0YWRhdGEuaW52YWxpZC9tZA%3D%3D",
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http(s) URL."
+        }
+      }
+    },
+    {
+      "name": "metadata: a url that is not base64 decodes to nothing usable",
+      "method": "GET",
+      "path": "/samlmetadata?url=not%20base64%20at%20all!",
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http(s) URL."
+        }
+      }
+    },
+    {
+      "name": "metadata: a repeated url is the wrong type",
+      "method": "GET",
+      "path": "/samlmetadata?url=aHR0cHM6Ly9tZXRhZGF0YS5pbnZhbGlkL21k&url=aHR0cHM6Ly9tZXRhZGF0YS5pbnZhbGlkL21k",
+      "changed": "A repeated ?url= is a list, not the one string the endpoint takes; it used to be joined with a comma, decoded into a URL nobody wrote and fetched. The model refuses it.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "metadata fetch failed: getaddrinfo ENOTFOUND metadata.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: query parameter `url` must be a string. GET /api-docs describes what samlMetadata takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "metadata: a well-formed request reaches the network (a name that cannot resolve)",
+      "method": "GET",
+      "path": "/samlmetadata?url=aHR0cHM6Ly9tZXRhZGF0YS5pbnZhbGlkL2lkcC9tZA%3D%3D",
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "metadata fetch failed: getaddrinfo ENOTFOUND metadata.invalid"
+        }
+      }
+    },
+    {
+      "name": "metadata: an unexpected query parameter is ignored",
+      "method": "GET",
+      "path": "/samlmetadata?url=aHR0cDovL21ldGFkYXRhLmludmFsaWQvbWQ%3D&extra=1",
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "metadata fetch failed: getaddrinfo ENOTFOUND metadata.invalid"
+        }
+      }
+    },
+    {
+      "name": "sign: an empty body is refused",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "xml and privateKeyPem are required."
+        }
+      }
+    },
+    {
+      "name": "sign: xml without privateKeyPem is refused",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {
+        "xml": "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer></samlp:AuthnRequest>"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "xml and privateKeyPem are required."
+        }
+      }
+    },
+    {
+      "name": "sign: an empty privateKeyPem is refused",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {
+        "xml": "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer></samlp:AuthnRequest>",
+        "privateKeyPem": ""
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "xml and privateKeyPem are required."
+        }
+      }
+    },
+    {
+      "name": "sign: an empty xml is refused",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {
+        "xml": "",
+        "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCEZUzACFkkv7rD\nVpQ22mX9H/mzHQIiehsQbMH0acfFa3NTprgb0K44Eo1C6TwsycQejuR3somJfuPn\ndtuGyYHC6SRXChQEWD1EEjo2O/UGzsp1oSMGTZFiFdTNYvGwbmdqypkldQpwnvYq\nErjqFUI5YVMgSxhvrQwUhGIgrwDzJ0bKHx7c9Ncb+umIxV7UWOWYN/ZffssUtZhw\nF4K7YCrXUbBcpCxA9G2c1d0yCFcbxbav2v/bL3mawGPAMiIgSpZi73rZnzgKgcvv\n+TviJV8uVgWhcRrl8fVJQp2768fgpXof4LocDn6TDRoFRffQcltu0DwZRRbjpy12\nAi3KBSmdAgMBAAECggEAELGpQimLUVaaWRkoqoX9XYko9iHOlsRTd026Dcnsy62R\n0YFwg5QGSRcQbYMf+FHKA0RnSy8y/ShdL7QirYCTy8eUB87t2Te7JJiGczePh405\npX1s/4AhDdTM4XJRdrq6cD0dnxspTCwZxBJaSKySOM6sfveZHDPIwH7ff1mHGCG0\nSEGjV+eTtPR+thqfIKkp4dnlJGp55Fs5etZMSqaYTTOYQtbak8fQQtELPOfrkPng\nw3XBqdZP9G3vEyGznCWbsKTqtaipb0Nqlmd4vS/3KVrx4oAPnRCAURW9Y9l0AoS+\n6FudgiaLWpTcJ4Aq458EQYyNe2f4tjgsgK9b7cfdzQKBgQC2UvRrdo5aUQ8A07kN\nakVyrQLW1ge7ToCj6R4ppz66SCdVpzBMobFjCX6GjjZVMW22FxTVYu4LwuAR0GYu\npDjj4YhGDGC7zlIIvrL4osie/kIdpq5tZsJsgOGm+a9TyWPn6LvSmNvIvyK0hJHj\ndXMp6pqpBBHMUokPtTjYAKmb4wKBgQC55VyMTEw//tNiTUS+hh+jRsnNRzPZLH7w\nJZ/QkPAp9uWJIgJ/iWDspqb71O1uDlE3NmucSe6zc2JFiGKsAAsNW+j8pmUve1jV\nu9oZrIf0oreksJFF5jKUP1i9YLLRdl6DUlZ8NWM30nFRcrt2CerdXCjMxvwqakNh\n2WihdBwcfwKBgQCNwzBywirrRK2CuhzftmqrQKS9gItgcyiIygB+6KBYXTPgYG+o\nleyEEeTEIJ1UXmtsssOrKxHmKS7qCvz4dQ4a+cholsU8Ia8dR5GGy6NsJEwqG+jx\n/X1culU57FgLsMIyln47wEjb7OnCLHX2wuK5i8WXdyeTk/UoNoMtSE6YewKBgEd5\nZoIS++ZHJiNPrjTLAPMYTpL843SG5S+UZ8QbVhvscAiv6OH8giW7VczR65A7NQLT\ni8CFtJ+Op6Qwci/LvHQgeI5bs9/zvw4+sfbZHVT0E0PhF5oWji/tw0LdISPkLSa0\ny8fqBwH5idRVFrqlyYXe31kM0PvF6659lvss13olAoGAICaXEHrz8HKXXoA41hZz\nhNUHnI1G9Z9duXYLa3NHZHR/j8rTfqct+9SCDCAqll5mUwDA5l7M5Nht8h5tNbTr\nfBtdaO0qc1BHVMcQetqbTohwfQELAk3TnE6V2HRwD7Rsmn8OhNp89mf44YvVecE3\n3qYUlWAfcczayq0vFo6pMfk=\n-----END PRIVATE KEY-----\n"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "xml and privateKeyPem are required."
+        }
+      }
+    },
+    {
+      "name": "sign: a body that is an array is refused",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": [
+        "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer></samlp:AuthnRequest>"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "xml and privateKeyPem are required."
+        }
+      }
+    },
+    {
+      "name": "sign: a SignatureMethod that is not RSA is refused",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {
+        "xml": "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer></samlp:AuthnRequest>",
+        "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCEZUzACFkkv7rD\nVpQ22mX9H/mzHQIiehsQbMH0acfFa3NTprgb0K44Eo1C6TwsycQejuR3somJfuPn\ndtuGyYHC6SRXChQEWD1EEjo2O/UGzsp1oSMGTZFiFdTNYvGwbmdqypkldQpwnvYq\nErjqFUI5YVMgSxhvrQwUhGIgrwDzJ0bKHx7c9Ncb+umIxV7UWOWYN/ZffssUtZhw\nF4K7YCrXUbBcpCxA9G2c1d0yCFcbxbav2v/bL3mawGPAMiIgSpZi73rZnzgKgcvv\n+TviJV8uVgWhcRrl8fVJQp2768fgpXof4LocDn6TDRoFRffQcltu0DwZRRbjpy12\nAi3KBSmdAgMBAAECggEAELGpQimLUVaaWRkoqoX9XYko9iHOlsRTd026Dcnsy62R\n0YFwg5QGSRcQbYMf+FHKA0RnSy8y/ShdL7QirYCTy8eUB87t2Te7JJiGczePh405\npX1s/4AhDdTM4XJRdrq6cD0dnxspTCwZxBJaSKySOM6sfveZHDPIwH7ff1mHGCG0\nSEGjV+eTtPR+thqfIKkp4dnlJGp55Fs5etZMSqaYTTOYQtbak8fQQtELPOfrkPng\nw3XBqdZP9G3vEyGznCWbsKTqtaipb0Nqlmd4vS/3KVrx4oAPnRCAURW9Y9l0AoS+\n6FudgiaLWpTcJ4Aq458EQYyNe2f4tjgsgK9b7cfdzQKBgQC2UvRrdo5aUQ8A07kN\nakVyrQLW1ge7ToCj6R4ppz66SCdVpzBMobFjCX6GjjZVMW22FxTVYu4LwuAR0GYu\npDjj4YhGDGC7zlIIvrL4osie/kIdpq5tZsJsgOGm+a9TyWPn6LvSmNvIvyK0hJHj\ndXMp6pqpBBHMUokPtTjYAKmb4wKBgQC55VyMTEw//tNiTUS+hh+jRsnNRzPZLH7w\nJZ/QkPAp9uWJIgJ/iWDspqb71O1uDlE3NmucSe6zc2JFiGKsAAsNW+j8pmUve1jV\nu9oZrIf0oreksJFF5jKUP1i9YLLRdl6DUlZ8NWM30nFRcrt2CerdXCjMxvwqakNh\n2WihdBwcfwKBgQCNwzBywirrRK2CuhzftmqrQKS9gItgcyiIygB+6KBYXTPgYG+o\nleyEEeTEIJ1UXmtsssOrKxHmKS7qCvz4dQ4a+cholsU8Ia8dR5GGy6NsJEwqG+jx\n/X1culU57FgLsMIyln47wEjb7OnCLHX2wuK5i8WXdyeTk/UoNoMtSE6YewKBgEd5\nZoIS++ZHJiNPrjTLAPMYTpL843SG5S+UZ8QbVhvscAiv6OH8giW7VczR65A7NQLT\ni8CFtJ+Op6Qwci/LvHQgeI5bs9/zvw4+sfbZHVT0E0PhF5oWji/tw0LdISPkLSa0\ny8fqBwH5idRVFrqlyYXe31kM0PvF6659lvss13olAoGAICaXEHrz8HKXXoA41hZz\nhNUHnI1G9Z9duXYLa3NHZHR/j8rTfqct+9SCDCAqll5mUwDA5l7M5Nht8h5tNbTr\nfBtdaO0qc1BHVMcQetqbTohwfQELAk3TnE6V2HRwD7Rsmn8OhNp89mf44YvVecE3\n3qYUlWAfcczayq0vFo6pMfk=\n-----END PRIVATE KEY-----\n",
+        "sigAlg": "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "samlsign: SignatureMethod http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256 is not an RSA method this signer implements (http://www.w3.org/2000/09/xmldsig#rsa-sha1, http://www.w3.org/2001/04/xmldsig-more#rsa-sha256, http://www.w3.org/2001/04/xmldsig-more#rsa-sha384, http://www.w3.org/2001/04/xmldsig-more#rsa-sha512, http://www.w3.org/2007/05/xmldsig-more#sha256-rsa-MGF1, http://www.w3.org/2007/05/xmldsig-more#sha384-rsa-MGF1, http://www.w3.org/2007/05/xmldsig-more#sha512-rsa-MGF1)."
+        }
+      }
+    },
+    {
+      "name": "sign: xml of the wrong JSON type",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {
+        "xml": 12345,
+        "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCEZUzACFkkv7rD\nVpQ22mX9H/mzHQIiehsQbMH0acfFa3NTprgb0K44Eo1C6TwsycQejuR3somJfuPn\ndtuGyYHC6SRXChQEWD1EEjo2O/UGzsp1oSMGTZFiFdTNYvGwbmdqypkldQpwnvYq\nErjqFUI5YVMgSxhvrQwUhGIgrwDzJ0bKHx7c9Ncb+umIxV7UWOWYN/ZffssUtZhw\nF4K7YCrXUbBcpCxA9G2c1d0yCFcbxbav2v/bL3mawGPAMiIgSpZi73rZnzgKgcvv\n+TviJV8uVgWhcRrl8fVJQp2768fgpXof4LocDn6TDRoFRffQcltu0DwZRRbjpy12\nAi3KBSmdAgMBAAECggEAELGpQimLUVaaWRkoqoX9XYko9iHOlsRTd026Dcnsy62R\n0YFwg5QGSRcQbYMf+FHKA0RnSy8y/ShdL7QirYCTy8eUB87t2Te7JJiGczePh405\npX1s/4AhDdTM4XJRdrq6cD0dnxspTCwZxBJaSKySOM6sfveZHDPIwH7ff1mHGCG0\nSEGjV+eTtPR+thqfIKkp4dnlJGp55Fs5etZMSqaYTTOYQtbak8fQQtELPOfrkPng\nw3XBqdZP9G3vEyGznCWbsKTqtaipb0Nqlmd4vS/3KVrx4oAPnRCAURW9Y9l0AoS+\n6FudgiaLWpTcJ4Aq458EQYyNe2f4tjgsgK9b7cfdzQKBgQC2UvRrdo5aUQ8A07kN\nakVyrQLW1ge7ToCj6R4ppz66SCdVpzBMobFjCX6GjjZVMW22FxTVYu4LwuAR0GYu\npDjj4YhGDGC7zlIIvrL4osie/kIdpq5tZsJsgOGm+a9TyWPn6LvSmNvIvyK0hJHj\ndXMp6pqpBBHMUokPtTjYAKmb4wKBgQC55VyMTEw//tNiTUS+hh+jRsnNRzPZLH7w\nJZ/QkPAp9uWJIgJ/iWDspqb71O1uDlE3NmucSe6zc2JFiGKsAAsNW+j8pmUve1jV\nu9oZrIf0oreksJFF5jKUP1i9YLLRdl6DUlZ8NWM30nFRcrt2CerdXCjMxvwqakNh\n2WihdBwcfwKBgQCNwzBywirrRK2CuhzftmqrQKS9gItgcyiIygB+6KBYXTPgYG+o\nleyEEeTEIJ1UXmtsssOrKxHmKS7qCvz4dQ4a+cholsU8Ia8dR5GGy6NsJEwqG+jx\n/X1culU57FgLsMIyln47wEjb7OnCLHX2wuK5i8WXdyeTk/UoNoMtSE6YewKBgEd5\nZoIS++ZHJiNPrjTLAPMYTpL843SG5S+UZ8QbVhvscAiv6OH8giW7VczR65A7NQLT\ni8CFtJ+Op6Qwci/LvHQgeI5bs9/zvw4+sfbZHVT0E0PhF5oWji/tw0LdISPkLSa0\ny8fqBwH5idRVFrqlyYXe31kM0PvF6659lvss13olAoGAICaXEHrz8HKXXoA41hZz\nhNUHnI1G9Z9duXYLa3NHZHR/j8rTfqct+9SCDCAqll5mUwDA5l7M5Nht8h5tNbTr\nfBtdaO0qc1BHVMcQetqbTohwfQELAk3TnE6V2HRwD7Rsmn8OhNp89mf44YvVecE3\n3qYUlWAfcczayq0vFo6pMfk=\n-----END PRIVATE KEY-----\n"
+      },
+      "changed": "xml must be a JSON string; a number reached Buffer.from() and threw, a 500. The model refuses it with the sentence the handler answers for a missing xml.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "sign failed: The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received type number (12345)"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "xml and privateKeyPem are required."
+        }
+      }
+    },
+    {
+      "name": "sign: destination of the wrong JSON type",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {
+        "xml": "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer></samlp:AuthnRequest>",
+        "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCEZUzACFkkv7rD\nVpQ22mX9H/mzHQIiehsQbMH0acfFa3NTprgb0K44Eo1C6TwsycQejuR3somJfuPn\ndtuGyYHC6SRXChQEWD1EEjo2O/UGzsp1oSMGTZFiFdTNYvGwbmdqypkldQpwnvYq\nErjqFUI5YVMgSxhvrQwUhGIgrwDzJ0bKHx7c9Ncb+umIxV7UWOWYN/ZffssUtZhw\nF4K7YCrXUbBcpCxA9G2c1d0yCFcbxbav2v/bL3mawGPAMiIgSpZi73rZnzgKgcvv\n+TviJV8uVgWhcRrl8fVJQp2768fgpXof4LocDn6TDRoFRffQcltu0DwZRRbjpy12\nAi3KBSmdAgMBAAECggEAELGpQimLUVaaWRkoqoX9XYko9iHOlsRTd026Dcnsy62R\n0YFwg5QGSRcQbYMf+FHKA0RnSy8y/ShdL7QirYCTy8eUB87t2Te7JJiGczePh405\npX1s/4AhDdTM4XJRdrq6cD0dnxspTCwZxBJaSKySOM6sfveZHDPIwH7ff1mHGCG0\nSEGjV+eTtPR+thqfIKkp4dnlJGp55Fs5etZMSqaYTTOYQtbak8fQQtELPOfrkPng\nw3XBqdZP9G3vEyGznCWbsKTqtaipb0Nqlmd4vS/3KVrx4oAPnRCAURW9Y9l0AoS+\n6FudgiaLWpTcJ4Aq458EQYyNe2f4tjgsgK9b7cfdzQKBgQC2UvRrdo5aUQ8A07kN\nakVyrQLW1ge7ToCj6R4ppz66SCdVpzBMobFjCX6GjjZVMW22FxTVYu4LwuAR0GYu\npDjj4YhGDGC7zlIIvrL4osie/kIdpq5tZsJsgOGm+a9TyWPn6LvSmNvIvyK0hJHj\ndXMp6pqpBBHMUokPtTjYAKmb4wKBgQC55VyMTEw//tNiTUS+hh+jRsnNRzPZLH7w\nJZ/QkPAp9uWJIgJ/iWDspqb71O1uDlE3NmucSe6zc2JFiGKsAAsNW+j8pmUve1jV\nu9oZrIf0oreksJFF5jKUP1i9YLLRdl6DUlZ8NWM30nFRcrt2CerdXCjMxvwqakNh\n2WihdBwcfwKBgQCNwzBywirrRK2CuhzftmqrQKS9gItgcyiIygB+6KBYXTPgYG+o\nleyEEeTEIJ1UXmtsssOrKxHmKS7qCvz4dQ4a+cholsU8Ia8dR5GGy6NsJEwqG+jx\n/X1culU57FgLsMIyln47wEjb7OnCLHX2wuK5i8WXdyeTk/UoNoMtSE6YewKBgEd5\nZoIS++ZHJiNPrjTLAPMYTpL843SG5S+UZ8QbVhvscAiv6OH8giW7VczR65A7NQLT\ni8CFtJ+Op6Qwci/LvHQgeI5bs9/zvw4+sfbZHVT0E0PhF5oWji/tw0LdISPkLSa0\ny8fqBwH5idRVFrqlyYXe31kM0PvF6659lvss13olAoGAICaXEHrz8HKXXoA41hZz\nhNUHnI1G9Z9duXYLa3NHZHR/j8rTfqct+9SCDCAqll5mUwDA5l7M5Nht8h5tNbTr\nfBtdaO0qc1BHVMcQetqbTohwfQELAk3TnE6V2HRwD7Rsmn8OhNp89mf44YvVecE3\n3qYUlWAfcczayq0vFo6pMfk=\n-----END PRIVATE KEY-----\n",
+        "destination": 42
+      },
+      "changed": "destination must be a JSON string or null; a number reached dest.indexOf() and threw, a 500. The model refuses it.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "sign failed: dest.indexOf is not a function"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `destination` must be a JSON string or null. GET /api-docs describes what samlSign takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "sign: a private key that is not a key fails in the signer",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {
+        "xml": "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer></samlp:AuthnRequest>",
+        "privateKeyPem": "not a pem"
+      },
+      "changed": "#463 step 3a moved the SAML signer's key reading onto crypto_provider.js. The message now says what is wrong with the input, naming both forms a signing key may take, instead of forge's bare PEM error.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "sign failed: Invalid PEM formatted message."
+        }
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "sign failed: the signing key is not a PEM private key or a JWK: That text is neither a PEM key (-----BEGIN ...-----) nor a JWK (a JSON object)."
+        }
+      }
+    },
+    {
+      "name": "sign: the redirect binding, with a destination and RelayState",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {
+        "binding": "redirect",
+        "xml": "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer></samlp:AuthnRequest>",
+        "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCEZUzACFkkv7rD\nVpQ22mX9H/mzHQIiehsQbMH0acfFa3NTprgb0K44Eo1C6TwsycQejuR3somJfuPn\ndtuGyYHC6SRXChQEWD1EEjo2O/UGzsp1oSMGTZFiFdTNYvGwbmdqypkldQpwnvYq\nErjqFUI5YVMgSxhvrQwUhGIgrwDzJ0bKHx7c9Ncb+umIxV7UWOWYN/ZffssUtZhw\nF4K7YCrXUbBcpCxA9G2c1d0yCFcbxbav2v/bL3mawGPAMiIgSpZi73rZnzgKgcvv\n+TviJV8uVgWhcRrl8fVJQp2768fgpXof4LocDn6TDRoFRffQcltu0DwZRRbjpy12\nAi3KBSmdAgMBAAECggEAELGpQimLUVaaWRkoqoX9XYko9iHOlsRTd026Dcnsy62R\n0YFwg5QGSRcQbYMf+FHKA0RnSy8y/ShdL7QirYCTy8eUB87t2Te7JJiGczePh405\npX1s/4AhDdTM4XJRdrq6cD0dnxspTCwZxBJaSKySOM6sfveZHDPIwH7ff1mHGCG0\nSEGjV+eTtPR+thqfIKkp4dnlJGp55Fs5etZMSqaYTTOYQtbak8fQQtELPOfrkPng\nw3XBqdZP9G3vEyGznCWbsKTqtaipb0Nqlmd4vS/3KVrx4oAPnRCAURW9Y9l0AoS+\n6FudgiaLWpTcJ4Aq458EQYyNe2f4tjgsgK9b7cfdzQKBgQC2UvRrdo5aUQ8A07kN\nakVyrQLW1ge7ToCj6R4ppz66SCdVpzBMobFjCX6GjjZVMW22FxTVYu4LwuAR0GYu\npDjj4YhGDGC7zlIIvrL4osie/kIdpq5tZsJsgOGm+a9TyWPn6LvSmNvIvyK0hJHj\ndXMp6pqpBBHMUokPtTjYAKmb4wKBgQC55VyMTEw//tNiTUS+hh+jRsnNRzPZLH7w\nJZ/QkPAp9uWJIgJ/iWDspqb71O1uDlE3NmucSe6zc2JFiGKsAAsNW+j8pmUve1jV\nu9oZrIf0oreksJFF5jKUP1i9YLLRdl6DUlZ8NWM30nFRcrt2CerdXCjMxvwqakNh\n2WihdBwcfwKBgQCNwzBywirrRK2CuhzftmqrQKS9gItgcyiIygB+6KBYXTPgYG+o\nleyEEeTEIJ1UXmtsssOrKxHmKS7qCvz4dQ4a+cholsU8Ia8dR5GGy6NsJEwqG+jx\n/X1culU57FgLsMIyln47wEjb7OnCLHX2wuK5i8WXdyeTk/UoNoMtSE6YewKBgEd5\nZoIS++ZHJiNPrjTLAPMYTpL843SG5S+UZ8QbVhvscAiv6OH8giW7VczR65A7NQLT\ni8CFtJ+Op6Qwci/LvHQgeI5bs9/zvw4+sfbZHVT0E0PhF5oWji/tw0LdISPkLSa0\ny8fqBwH5idRVFrqlyYXe31kM0PvF6659lvss13olAoGAICaXEHrz8HKXXoA41hZz\nhNUHnI1G9Z9duXYLa3NHZHR/j8rTfqct+9SCDCAqll5mUwDA5l7M5Nht8h5tNbTr\nfBtdaO0qc1BHVMcQetqbTohwfQELAk3TnE6V2HRwD7Rsmn8OhNp89mf44YvVecE3\n3qYUlWAfcczayq0vFo6pMfk=\n-----END PRIVATE KEY-----\n",
+        "destination": "https://idp.invalid/sso",
+        "sigAlg": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+        "relayState": "wire-relay"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "mode": "redirect",
+          "location": "https://idp.invalid/sso?SAMLRequest=fZAxa8MwEIX%2FitAeSfaQ4bANgSyGdElKhy5FOFcikE6q7tT655e4FNKl8Jbjve94vIF9igUOTW50xo%2BGLGpNkRg2Y9StEmTPgYF8QgZZ4HJ4OkFvHJSaJS856gfkf8IzY5WQSav5OOq3r1DxPazSKnZavWDlkGnUvXFazcwNZ2LxJKPuXb%2Ffdd2u2z87B5tetToiSyAvG3UTKQzWhmsxgT59DFfLnPU03IvB9q9OvykuBlefSkSz5GTvTQb7GPy5%2Fm4zfQM%3D&RelayState=wire-relay&SigAlg=http%3A%2F%2Fwww.w3.org%2F2001%2F04%2Fxmldsig-more%23rsa-sha256&Signature=J%2BSjYhVR5jKa117%2BoDrm5feHzchRKRWxFwP6L%2FVI8nEXMeCQPanI87oms9iEcKJHWnYukjRv59UttMDb8ZZO0sEb1VHsjaYb%2FLhFZ2EK8Fjud4HUOqYao0fap4FEFuUYbswu2oU34l%2B%2BkXPadMk%2B%2B81DrDRb58MoQqdv30GcCGekbwevnL2nIb%2FHWm6Ub3Or619FjQ4ymC9kMqiHy2uVqFJBl9R9Mp1Vyas92x7NrqdngNGLdSdrwk0T43WRxUdaCipnUBHWe%2BRE%2FLN7zSPfFILQnGV6AVqqlNp2%2FHPz2PPa5VTTRffYvRpdZNgGaSjXU4IHv2xE8EstPaEBPO%2BCqg%3D%3D",
+          "queryString": "SAMLRequest=fZAxa8MwEIX%2FitAeSfaQ4bANgSyGdElKhy5FOFcikE6q7tT655e4FNKl8Jbjve94vIF9igUOTW50xo%2BGLGpNkRg2Y9StEmTPgYF8QgZZ4HJ4OkFvHJSaJS856gfkf8IzY5WQSav5OOq3r1DxPazSKnZavWDlkGnUvXFazcwNZ2LxJKPuXb%2Ffdd2u2z87B5tetToiSyAvG3UTKQzWhmsxgT59DFfLnPU03IvB9q9OvykuBlefSkSz5GTvTQb7GPy5%2Fm4zfQM%3D&RelayState=wire-relay&SigAlg=http%3A%2F%2Fwww.w3.org%2F2001%2F04%2Fxmldsig-more%23rsa-sha256&Signature=J%2BSjYhVR5jKa117%2BoDrm5feHzchRKRWxFwP6L%2FVI8nEXMeCQPanI87oms9iEcKJHWnYukjRv59UttMDb8ZZO0sEb1VHsjaYb%2FLhFZ2EK8Fjud4HUOqYao0fap4FEFuUYbswu2oU34l%2B%2BkXPadMk%2B%2B81DrDRb58MoQqdv30GcCGekbwevnL2nIb%2FHWm6Ub3Or619FjQ4ymC9kMqiHy2uVqFJBl9R9Mp1Vyas92x7NrqdngNGLdSdrwk0T43WRxUdaCipnUBHWe%2BRE%2FLN7zSPfFILQnGV6AVqqlNp2%2FHPz2PPa5VTTRffYvRpdZNgGaSjXU4IHv2xE8EstPaEBPO%2BCqg%3D%3D"
+        }
+      }
+    },
+    {
+      "name": "sign: the redirect binding, rsa-sha512, no destination",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {
+        "xml": "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer></samlp:AuthnRequest>",
+        "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCEZUzACFkkv7rD\nVpQ22mX9H/mzHQIiehsQbMH0acfFa3NTprgb0K44Eo1C6TwsycQejuR3somJfuPn\ndtuGyYHC6SRXChQEWD1EEjo2O/UGzsp1oSMGTZFiFdTNYvGwbmdqypkldQpwnvYq\nErjqFUI5YVMgSxhvrQwUhGIgrwDzJ0bKHx7c9Ncb+umIxV7UWOWYN/ZffssUtZhw\nF4K7YCrXUbBcpCxA9G2c1d0yCFcbxbav2v/bL3mawGPAMiIgSpZi73rZnzgKgcvv\n+TviJV8uVgWhcRrl8fVJQp2768fgpXof4LocDn6TDRoFRffQcltu0DwZRRbjpy12\nAi3KBSmdAgMBAAECggEAELGpQimLUVaaWRkoqoX9XYko9iHOlsRTd026Dcnsy62R\n0YFwg5QGSRcQbYMf+FHKA0RnSy8y/ShdL7QirYCTy8eUB87t2Te7JJiGczePh405\npX1s/4AhDdTM4XJRdrq6cD0dnxspTCwZxBJaSKySOM6sfveZHDPIwH7ff1mHGCG0\nSEGjV+eTtPR+thqfIKkp4dnlJGp55Fs5etZMSqaYTTOYQtbak8fQQtELPOfrkPng\nw3XBqdZP9G3vEyGznCWbsKTqtaipb0Nqlmd4vS/3KVrx4oAPnRCAURW9Y9l0AoS+\n6FudgiaLWpTcJ4Aq458EQYyNe2f4tjgsgK9b7cfdzQKBgQC2UvRrdo5aUQ8A07kN\nakVyrQLW1ge7ToCj6R4ppz66SCdVpzBMobFjCX6GjjZVMW22FxTVYu4LwuAR0GYu\npDjj4YhGDGC7zlIIvrL4osie/kIdpq5tZsJsgOGm+a9TyWPn6LvSmNvIvyK0hJHj\ndXMp6pqpBBHMUokPtTjYAKmb4wKBgQC55VyMTEw//tNiTUS+hh+jRsnNRzPZLH7w\nJZ/QkPAp9uWJIgJ/iWDspqb71O1uDlE3NmucSe6zc2JFiGKsAAsNW+j8pmUve1jV\nu9oZrIf0oreksJFF5jKUP1i9YLLRdl6DUlZ8NWM30nFRcrt2CerdXCjMxvwqakNh\n2WihdBwcfwKBgQCNwzBywirrRK2CuhzftmqrQKS9gItgcyiIygB+6KBYXTPgYG+o\nleyEEeTEIJ1UXmtsssOrKxHmKS7qCvz4dQ4a+cholsU8Ia8dR5GGy6NsJEwqG+jx\n/X1culU57FgLsMIyln47wEjb7OnCLHX2wuK5i8WXdyeTk/UoNoMtSE6YewKBgEd5\nZoIS++ZHJiNPrjTLAPMYTpL843SG5S+UZ8QbVhvscAiv6OH8giW7VczR65A7NQLT\ni8CFtJ+Op6Qwci/LvHQgeI5bs9/zvw4+sfbZHVT0E0PhF5oWji/tw0LdISPkLSa0\ny8fqBwH5idRVFrqlyYXe31kM0PvF6659lvss13olAoGAICaXEHrz8HKXXoA41hZz\nhNUHnI1G9Z9duXYLa3NHZHR/j8rTfqct+9SCDCAqll5mUwDA5l7M5Nht8h5tNbTr\nfBtdaO0qc1BHVMcQetqbTohwfQELAk3TnE6V2HRwD7Rsmn8OhNp89mf44YvVecE3\n3qYUlWAfcczayq0vFo6pMfk=\n-----END PRIVATE KEY-----\n",
+        "sigAlg": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha512"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "mode": "redirect",
+          "location": "SAMLRequest=fZAxa8MwEIX%2FitAeSfaQ4bANgSyGdElKhy5FOFcikE6q7tT655e4FNKl8Jbjve94vIF9igUOTW50xo%2BGLGpNkRg2Y9StEmTPgYF8QgZZ4HJ4OkFvHJSaJS856gfkf8IzY5WQSav5OOq3r1DxPazSKnZavWDlkGnUvXFazcwNZ2LxJKPuXb%2Ffdd2u2z87B5tetToiSyAvG3UTKQzWhmsxgT59DFfLnPU03IvB9q9OvykuBlefSkSz5GTvTQb7GPy5%2Fm4zfQM%3D&SigAlg=http%3A%2F%2Fwww.w3.org%2F2001%2F04%2Fxmldsig-more%23rsa-sha512&Signature=FaOaf76%2F29auJWTgH%2F56lgAd%2FIJfQErNNqMc2sQJ4Ld6FURmoicaktylnl7ZDIkNY%2B4%2BhMgFHa3r3gWE4aoaFda53uE34U6nMNnkoJNgjL3yYUYAW8QoarN90SHPwJeOky%2BRzJ9zEhW%2F%2BoAs7DJIoUGa%2BB3T9LRc7kAwVZo8RIXugwtsanZNkijamDzpOHxc0FLnsf5Z7HrogaetIcaspL3MZxQba6IHkdpCfbCNX3f1xXcTKTksWoU8FTEh3FWZ3peQYlwqbNC6ruFNcArKnJHPKgZKurry6HVh%2BLJDKxhU5kLD4hrAhXp9unDaQlGHi7bua46GbTtHW2Mx3Y6yww%3D%3D",
+          "queryString": "SAMLRequest=fZAxa8MwEIX%2FitAeSfaQ4bANgSyGdElKhy5FOFcikE6q7tT655e4FNKl8Jbjve94vIF9igUOTW50xo%2BGLGpNkRg2Y9StEmTPgYF8QgZZ4HJ4OkFvHJSaJS856gfkf8IzY5WQSav5OOq3r1DxPazSKnZavWDlkGnUvXFazcwNZ2LxJKPuXb%2Ffdd2u2z87B5tetToiSyAvG3UTKQzWhmsxgT59DFfLnPU03IvB9q9OvykuBlefSkSz5GTvTQb7GPy5%2Fm4zfQM%3D&SigAlg=http%3A%2F%2Fwww.w3.org%2F2001%2F04%2Fxmldsig-more%23rsa-sha512&Signature=FaOaf76%2F29auJWTgH%2F56lgAd%2FIJfQErNNqMc2sQJ4Ld6FURmoicaktylnl7ZDIkNY%2B4%2BhMgFHa3r3gWE4aoaFda53uE34U6nMNnkoJNgjL3yYUYAW8QoarN90SHPwJeOky%2BRzJ9zEhW%2F%2BoAs7DJIoUGa%2BB3T9LRc7kAwVZo8RIXugwtsanZNkijamDzpOHxc0FLnsf5Z7HrogaetIcaspL3MZxQba6IHkdpCfbCNX3f1xXcTKTksWoU8FTEh3FWZ3peQYlwqbNC6ruFNcArKnJHPKgZKurry6HVh%2BLJDKxhU5kLD4hrAhXp9unDaQlGHi7bua46GbTtHW2Mx3Y6yww%3D%3D"
+        }
+      }
+    },
+    {
+      "name": "sign: the post binding, with a certificate in KeyInfo",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {
+        "binding": "post",
+        "xml": "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer></samlp:AuthnRequest>",
+        "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCEZUzACFkkv7rD\nVpQ22mX9H/mzHQIiehsQbMH0acfFa3NTprgb0K44Eo1C6TwsycQejuR3somJfuPn\ndtuGyYHC6SRXChQEWD1EEjo2O/UGzsp1oSMGTZFiFdTNYvGwbmdqypkldQpwnvYq\nErjqFUI5YVMgSxhvrQwUhGIgrwDzJ0bKHx7c9Ncb+umIxV7UWOWYN/ZffssUtZhw\nF4K7YCrXUbBcpCxA9G2c1d0yCFcbxbav2v/bL3mawGPAMiIgSpZi73rZnzgKgcvv\n+TviJV8uVgWhcRrl8fVJQp2768fgpXof4LocDn6TDRoFRffQcltu0DwZRRbjpy12\nAi3KBSmdAgMBAAECggEAELGpQimLUVaaWRkoqoX9XYko9iHOlsRTd026Dcnsy62R\n0YFwg5QGSRcQbYMf+FHKA0RnSy8y/ShdL7QirYCTy8eUB87t2Te7JJiGczePh405\npX1s/4AhDdTM4XJRdrq6cD0dnxspTCwZxBJaSKySOM6sfveZHDPIwH7ff1mHGCG0\nSEGjV+eTtPR+thqfIKkp4dnlJGp55Fs5etZMSqaYTTOYQtbak8fQQtELPOfrkPng\nw3XBqdZP9G3vEyGznCWbsKTqtaipb0Nqlmd4vS/3KVrx4oAPnRCAURW9Y9l0AoS+\n6FudgiaLWpTcJ4Aq458EQYyNe2f4tjgsgK9b7cfdzQKBgQC2UvRrdo5aUQ8A07kN\nakVyrQLW1ge7ToCj6R4ppz66SCdVpzBMobFjCX6GjjZVMW22FxTVYu4LwuAR0GYu\npDjj4YhGDGC7zlIIvrL4osie/kIdpq5tZsJsgOGm+a9TyWPn6LvSmNvIvyK0hJHj\ndXMp6pqpBBHMUokPtTjYAKmb4wKBgQC55VyMTEw//tNiTUS+hh+jRsnNRzPZLH7w\nJZ/QkPAp9uWJIgJ/iWDspqb71O1uDlE3NmucSe6zc2JFiGKsAAsNW+j8pmUve1jV\nu9oZrIf0oreksJFF5jKUP1i9YLLRdl6DUlZ8NWM30nFRcrt2CerdXCjMxvwqakNh\n2WihdBwcfwKBgQCNwzBywirrRK2CuhzftmqrQKS9gItgcyiIygB+6KBYXTPgYG+o\nleyEEeTEIJ1UXmtsssOrKxHmKS7qCvz4dQ4a+cholsU8Ia8dR5GGy6NsJEwqG+jx\n/X1culU57FgLsMIyln47wEjb7OnCLHX2wuK5i8WXdyeTk/UoNoMtSE6YewKBgEd5\nZoIS++ZHJiNPrjTLAPMYTpL843SG5S+UZ8QbVhvscAiv6OH8giW7VczR65A7NQLT\ni8CFtJ+Op6Qwci/LvHQgeI5bs9/zvw4+sfbZHVT0E0PhF5oWji/tw0LdISPkLSa0\ny8fqBwH5idRVFrqlyYXe31kM0PvF6659lvss13olAoGAICaXEHrz8HKXXoA41hZz\nhNUHnI1G9Z9duXYLa3NHZHR/j8rTfqct+9SCDCAqll5mUwDA5l7M5Nht8h5tNbTr\nfBtdaO0qc1BHVMcQetqbTohwfQELAk3TnE6V2HRwD7Rsmn8OhNp89mf44YvVecE3\n3qYUlWAfcczayq0vFo6pMfk=\n-----END PRIVATE KEY-----\n",
+        "certPem": "-----BEGIN CERTIFICATE-----\nMIIDFTCCAf2gAwIBAgIUDca2nO5TfvtBhBLvlABYCSF8MhEwDQYJKoZIhvcNAQEL\nBQAwGjEYMBYGA1UEAwwPd2lyZS1maXh0dXJlLXNwMB4XDTI2MTExNzA0MDE0MVoX\nDTM2MTExNDA0MDE0MVowGjEYMBYGA1UEAwwPd2lyZS1maXh0dXJlLXNwMIIBIjAN\nBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAhGVMwAhZJL+6w1aUNtpl/R/5sx0C\nInobEGzB9GnHxWtzU6a4G9CuOBKNQuk8LMnEHo7kd7KJiX7j53bbhsmBwukkVwoU\nBFg9RBI6Njv1Bs7KdaEjBk2RYhXUzWLxsG5nasqZJXUKcJ72KhK46hVCOWFTIEsY\nb60MFIRiIK8A8ydGyh8e3PTXG/rpiMVe1FjlmDf2X37LFLWYcBeCu2Aq11GwXKQs\nQPRtnNXdMghXG8W2r9r/2y95msBjwDIiIEqWYu962Z84CoHL7/k74iVfLlYFoXEa\n5fH1SUKdu+vH4KV6H+C6HA5+kw0aBUX30HJbbtA8GUUW46ctdgItygUpnQIDAQAB\no1MwUTAdBgNVHQ4EFgQUuMgAjtL3Weuj3SmzVf4aYZSEUjgwHwYDVR0jBBgwFoAU\nuMgAjtL3Weuj3SmzVf4aYZSEUjgwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0B\nAQsFAAOCAQEAamYeqthKNKWy4BegPSu+y9V+RoMV1/xXYUfaAgLIUvAOk6ND7ZXD\n/BDZtbB/rFdKZD4/XYzPWngktfSke+IKrlRaPAfbVr60MGUiLZZ/pg/6gUL3Dqyv\ntZXlsKYbMgqFEhtUSU74DgYcZIPu+fnqZGeuNXREd6ioD8H3DkZbHGPfGbH6DoQQ\nwABVW00o9cb8gbGAJu35O3yiT4mQ0KfAQhZcQWRyxWB894MzQSMYo0IQrgjKqWSL\nSPdNQlhYiI6gH2kdBJSKg4eYef+E+3S2XJpjo0C0YVwTzFjNE8kbGTnjsVfqsaHO\n3HowOuivTSO+UbE/UvYF8nnyorDNnaSzvw==\n-----END CERTIFICATE-----\n",
+        "destination": "https://idp.invalid/sso",
+        "relayState": "wire-relay"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "mode": "post",
+          "location": "https://idp.invalid/sso",
+          "params": {
+            "SAMLRequest": "PHNhbWxwOkF1dGhuUmVxdWVzdCB4bWxuczpzYW1scD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnByb3RvY29sIiB4bWxuczpzYW1sPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6YXNzZXJ0aW9uIiBJRD0iX3dpcmVmaXh0dXJlMSIgVmVyc2lvbj0iMi4wIiBJc3N1ZUluc3RhbnQ9IjIwMjYtMTEtMTZUMDA6MDA6MDBaIiBEZXN0aW5hdGlvbj0iaHR0cHM6Ly9pZHAuaW52YWxpZC9zc28iPjxzYW1sOklzc3Vlcj5odHRwczovL3NwLmV4YW1wbGUuY29tL3dpcmU8L3NhbWw6SXNzdWVyPjxkczpTaWduYXR1cmUgeG1sbnM6ZHM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvMDkveG1sZHNpZyMiPjxkczpTaWduZWRJbmZvIHhtbG5zOmRzPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwLzA5L3htbGRzaWcjIj48ZHM6Q2Fub25pY2FsaXphdGlvbk1ldGhvZCBBbGdvcml0aG09Imh0dHA6Ly93d3cudzMub3JnLzIwMDEvMTAveG1sLWV4Yy1jMTRuIyIvPjxkczpTaWduYXR1cmVNZXRob2QgQWxnb3JpdGhtPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxLzA0L3htbGRzaWctbW9yZSNyc2Etc2hhMjU2Ii8+PGRzOlJlZmVyZW5jZSBVUkk9IiNfd2lyZWZpeHR1cmUxIj48ZHM6VHJhbnNmb3Jtcz48ZHM6VHJhbnNmb3JtIEFsZ29yaXRobT0iaHR0cDovL3d3dy53My5vcmcvMjAwMC8wOS94bWxkc2lnI2VudmVsb3BlZC1zaWduYXR1cmUiLz48ZHM6VHJhbnNmb3JtIEFsZ29yaXRobT0iaHR0cDovL3d3dy53My5vcmcvMjAwMS8xMC94bWwtZXhjLWMxNG4jIi8+PC9kczpUcmFuc2Zvcm1zPjxkczpEaWdlc3RNZXRob2QgQWxnb3JpdGhtPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxLzA0L3htbGVuYyNzaGEyNTYiLz48ZHM6RGlnZXN0VmFsdWU+Y1Z0S2JMUWdwaW50eTRLcHV6eFRsaE14aEtXNjlBOUFoUG9UckM1aHJ6dz08L2RzOkRpZ2VzdFZhbHVlPjwvZHM6UmVmZXJlbmNlPjwvZHM6U2lnbmVkSW5mbz48ZHM6U2lnbmF0dXJlVmFsdWU+Y2ptZktVcUpYTk9lcGF4M0pxR1pYQkpSWllxelFlYVJ6ajV2c2tiZGlrakkxUERMZlorb2pCV2hlSjdoRE1oeXdwNUNyQzZUaisrMXJsaVpPT0ZEd1dZTWtWQTJBRTVjOVIxUEY3dmd0OTNRRHVQdjA2SU80V2ZQME1Na2FrdnM2bldlSG1wekN3aHpjU1M5TUsxSUFMelIyb09qSmlHMU1BUkVSOGhadURKVGx3MFI5VXc4NmFwU3lmT2E4RnVTN1EzL0VzOGtUQ2h3dCtzdDlxZFNXeVBHT3NRTkhVdFMya0Q1MU1Ncm9TVFFmeG5RZVZDUy9PZjljazltdllpSk9PdEhtRFZzOVpwWW1CdnA1NVI4bnBCVGlEU3F0TjF0Zm42VjJLd1ZCaXZVdkNXRjRqZjFGbU5OYjBaZ0N5RWhQenF5UEt5QTlEa1RYL1h0Nm40U0F3PT08L2RzOlNpZ25hdHVyZVZhbHVlPjxkczpLZXlJbmZvPjxkczpYNTA5RGF0YT48ZHM6WDUwOUNlcnRpZmljYXRlPk1JSURGVENDQWYyZ0F3SUJBZ0lVRGNhMm5PNVRmdnRCaEJMdmxBQllDU0Y4TWhFd0RRWUpLb1pJaHZjTkFRRUxCUUF3R2pFWU1CWUdBMVVFQXd3UGQybHlaUzFtYVhoMGRYSmxMWE53TUI0WERUSTJNVEV4TnpBME1ERTBNVm9YRFRNMk1URXhOREEwTURFME1Wb3dHakVZTUJZR0ExVUVBd3dQZDJseVpTMW1hWGgwZFhKbExYTndNSUlCSWpBTkJna3Foa2lHOXcwQkFRRUZBQU9DQVE4QU1JSUJDZ0tDQVFFQWhHVk13QWhaSkwrNncxYVVOdHBsL1IvNXN4MENJbm9iRUd6QjlHbkh4V3R6VTZhNEc5Q3VPQktOUXVrOExNbkVIbzdrZDdLSmlYN2o1M2JiaHNtQnd1a2tWd29VQkZnOVJCSTZOanYxQnM3S2RhRWpCazJSWWhYVXpXTHhzRzVuYXNxWkpYVUtjSjcyS2hLNDZoVkNPV0ZUSUVzWWI2ME1GSVJpSUs4QTh5ZEd5aDhlM1BUWEcvcnBpTVZlMUZqbG1EZjJYMzdMRkxXWWNCZUN1MkFxMTFHd1hLUXNRUFJ0bk5YZE1naFhHOFcycjlyLzJ5OTVtc0Jqd0RJaUlFcVdZdTk2Mlo4NENvSEw3L2s3NGlWZkxsWUZvWEVhNWZIMVNVS2R1K3ZINEtWNkgrQzZIQTUra3cwYUJVWDMwSEpiYnRBOEdVVVc0NmN0ZGdJdHlnVXBuUUlEQVFBQm8xTXdVVEFkQmdOVkhRNEVGZ1FVdU1nQWp0TDNXZXVqM1NtelZmNGFZWlNFVWpnd0h3WURWUjBqQkJnd0ZvQVV1TWdBanRMM1dldWozU216VmY0YVlaU0VVamd3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFOQmdrcWhraUc5dzBCQVFzRkFBT0NBUUVBYW1ZZXF0aEtOS1d5NEJlZ1BTdSt5OVYrUm9NVjEveFhZVWZhQWdMSVV2QU9rNk5EN1pYRC9CRFp0YkIvckZkS1pENC9YWXpQV25na3RmU2tlK0lLcmxSYVBBZmJWcjYwTUdVaUxaWi9wZy82Z1VMM0RxeXZ0Wlhsc0tZYk1ncUZFaHRVU1U3NERnWWNaSVB1K2ZucVpHZXVOWFJFZDZpb0Q4SDNEa1piSEdQZkdiSDZEb1FRd0FCVlcwMG85Y2I4Z2JHQUp1MzVPM3lpVDRtUTBLZkFRaFpjUVdSeXhXQjg5NE16UVNNWW8wSVFyZ2pLcVdTTFNQZE5RbGhZaUk2Z0gya2RCSlNLZzRlWWVmK0UrM1MyWEpwam8wQzBZVndUekZqTkU4a2JHVG5qc1ZmcXNhSE8zSG93T3VpdlRTTytVYkUvVXZZRjhubnlvckRObmFTenZ3PT08L2RzOlg1MDlDZXJ0aWZpY2F0ZT48L2RzOlg1MDlEYXRhPjwvZHM6S2V5SW5mbz48L2RzOlNpZ25hdHVyZT48L3NhbWxwOkF1dGhuUmVxdWVzdD4=",
+            "RelayState": "wire-relay"
+          },
+          "signedXml": "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer><ds:Signature xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><ds:SignedInfo xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\"><ds:CanonicalizationMethod Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/><ds:SignatureMethod Algorithm=\"http://www.w3.org/2001/04/xmldsig-more#rsa-sha256\"/><ds:Reference URI=\"#_wirefixture1\"><ds:Transforms><ds:Transform Algorithm=\"http://www.w3.org/2000/09/xmldsig#enveloped-signature\"/><ds:Transform Algorithm=\"http://www.w3.org/2001/10/xml-exc-c14n#\"/></ds:Transforms><ds:DigestMethod Algorithm=\"http://www.w3.org/2001/04/xmlenc#sha256\"/><ds:DigestValue>cVtKbLQgpinty4KpuzxTlhMxhKW69A9AhPoTrC5hrzw=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>cjmfKUqJXNOepax3JqGZXBJRZYqzQeaRzj5vskbdikjI1PDLfZ+ojBWheJ7hDMhywp5CrC6Tj++1rliZOOFDwWYMkVA2AE5c9R1PF7vgt93QDuPv06IO4WfP0MMkakvs6nWeHmpzCwhzcSS9MK1IALzR2oOjJiG1MARER8hZuDJTlw0R9Uw86apSyfOa8FuS7Q3/Es8kTChwt+st9qdSWyPGOsQNHUtS2kD51MMroSTQfxnQeVCS/Of9ck9mvYiJOOtHmDVs9ZpYmBvp55R8npBTiDSqtN1tfn6V2KwVBivUvCWF4jf1FmNNb0ZgCyEhPzqyPKyA9DkTX/Xt6n4SAw==</ds:SignatureValue><ds:KeyInfo><ds:X509Data><ds:X509Certificate>MIIDFTCCAf2gAwIBAgIUDca2nO5TfvtBhBLvlABYCSF8MhEwDQYJKoZIhvcNAQELBQAwGjEYMBYGA1UEAwwPd2lyZS1maXh0dXJlLXNwMB4XDTI2MTExNzA0MDE0MVoXDTM2MTExNDA0MDE0MVowGjEYMBYGA1UEAwwPd2lyZS1maXh0dXJlLXNwMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAhGVMwAhZJL+6w1aUNtpl/R/5sx0CInobEGzB9GnHxWtzU6a4G9CuOBKNQuk8LMnEHo7kd7KJiX7j53bbhsmBwukkVwoUBFg9RBI6Njv1Bs7KdaEjBk2RYhXUzWLxsG5nasqZJXUKcJ72KhK46hVCOWFTIEsYb60MFIRiIK8A8ydGyh8e3PTXG/rpiMVe1FjlmDf2X37LFLWYcBeCu2Aq11GwXKQsQPRtnNXdMghXG8W2r9r/2y95msBjwDIiIEqWYu962Z84CoHL7/k74iVfLlYFoXEa5fH1SUKdu+vH4KV6H+C6HA5+kw0aBUX30HJbbtA8GUUW46ctdgItygUpnQIDAQABo1MwUTAdBgNVHQ4EFgQUuMgAjtL3Weuj3SmzVf4aYZSEUjgwHwYDVR0jBBgwFoAUuMgAjtL3Weuj3SmzVf4aYZSEUjgwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAamYeqthKNKWy4BegPSu+y9V+RoMV1/xXYUfaAgLIUvAOk6ND7ZXD/BDZtbB/rFdKZD4/XYzPWngktfSke+IKrlRaPAfbVr60MGUiLZZ/pg/6gUL3DqyvtZXlsKYbMgqFEhtUSU74DgYcZIPu+fnqZGeuNXREd6ioD8H3DkZbHGPfGbH6DoQQwABVW00o9cb8gbGAJu35O3yiT4mQ0KfAQhZcQWRyxWB894MzQSMYo0IQrgjKqWSLSPdNQlhYiI6gH2kdBJSKg4eYef+E+3S2XJpjo0C0YVwTzFjNE8kbGTnjsVfqsaHO3HowOuivTSO+UbE/UvYF8nnyorDNnaSzvw==</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature></samlp:AuthnRequest>"
+        }
+      }
+    },
+    {
+      "name": "sign: an unknown binding is the redirect binding",
+      "method": "POST",
+      "path": "/samlsign",
+      "body": {
+        "binding": "soap",
+        "xml": "<samlp:AuthnRequest xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:saml=\"urn:oasis:names:tc:SAML:2.0:assertion\" ID=\"_wirefixture1\" Version=\"2.0\" IssueInstant=\"2026-11-16T00:00:00Z\" Destination=\"https://idp.invalid/sso\"><saml:Issuer>https://sp.example.com/wire</saml:Issuer></samlp:AuthnRequest>",
+        "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCEZUzACFkkv7rD\nVpQ22mX9H/mzHQIiehsQbMH0acfFa3NTprgb0K44Eo1C6TwsycQejuR3somJfuPn\ndtuGyYHC6SRXChQEWD1EEjo2O/UGzsp1oSMGTZFiFdTNYvGwbmdqypkldQpwnvYq\nErjqFUI5YVMgSxhvrQwUhGIgrwDzJ0bKHx7c9Ncb+umIxV7UWOWYN/ZffssUtZhw\nF4K7YCrXUbBcpCxA9G2c1d0yCFcbxbav2v/bL3mawGPAMiIgSpZi73rZnzgKgcvv\n+TviJV8uVgWhcRrl8fVJQp2768fgpXof4LocDn6TDRoFRffQcltu0DwZRRbjpy12\nAi3KBSmdAgMBAAECggEAELGpQimLUVaaWRkoqoX9XYko9iHOlsRTd026Dcnsy62R\n0YFwg5QGSRcQbYMf+FHKA0RnSy8y/ShdL7QirYCTy8eUB87t2Te7JJiGczePh405\npX1s/4AhDdTM4XJRdrq6cD0dnxspTCwZxBJaSKySOM6sfveZHDPIwH7ff1mHGCG0\nSEGjV+eTtPR+thqfIKkp4dnlJGp55Fs5etZMSqaYTTOYQtbak8fQQtELPOfrkPng\nw3XBqdZP9G3vEyGznCWbsKTqtaipb0Nqlmd4vS/3KVrx4oAPnRCAURW9Y9l0AoS+\n6FudgiaLWpTcJ4Aq458EQYyNe2f4tjgsgK9b7cfdzQKBgQC2UvRrdo5aUQ8A07kN\nakVyrQLW1ge7ToCj6R4ppz66SCdVpzBMobFjCX6GjjZVMW22FxTVYu4LwuAR0GYu\npDjj4YhGDGC7zlIIvrL4osie/kIdpq5tZsJsgOGm+a9TyWPn6LvSmNvIvyK0hJHj\ndXMp6pqpBBHMUokPtTjYAKmb4wKBgQC55VyMTEw//tNiTUS+hh+jRsnNRzPZLH7w\nJZ/QkPAp9uWJIgJ/iWDspqb71O1uDlE3NmucSe6zc2JFiGKsAAsNW+j8pmUve1jV\nu9oZrIf0oreksJFF5jKUP1i9YLLRdl6DUlZ8NWM30nFRcrt2CerdXCjMxvwqakNh\n2WihdBwcfwKBgQCNwzBywirrRK2CuhzftmqrQKS9gItgcyiIygB+6KBYXTPgYG+o\nleyEEeTEIJ1UXmtsssOrKxHmKS7qCvz4dQ4a+cholsU8Ia8dR5GGy6NsJEwqG+jx\n/X1culU57FgLsMIyln47wEjb7OnCLHX2wuK5i8WXdyeTk/UoNoMtSE6YewKBgEd5\nZoIS++ZHJiNPrjTLAPMYTpL843SG5S+UZ8QbVhvscAiv6OH8giW7VczR65A7NQLT\ni8CFtJ+Op6Qwci/LvHQgeI5bs9/zvw4+sfbZHVT0E0PhF5oWji/tw0LdISPkLSa0\ny8fqBwH5idRVFrqlyYXe31kM0PvF6659lvss13olAoGAICaXEHrz8HKXXoA41hZz\nhNUHnI1G9Z9duXYLa3NHZHR/j8rTfqct+9SCDCAqll5mUwDA5l7M5Nht8h5tNbTr\nfBtdaO0qc1BHVMcQetqbTohwfQELAk3TnE6V2HRwD7Rsmn8OhNp89mf44YvVecE3\n3qYUlWAfcczayq0vFo6pMfk=\n-----END PRIVATE KEY-----\n",
+        "rootElement": "AuthnRequest",
+        "unexpected": true
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "mode": "redirect",
+          "location": "SAMLRequest=fZAxa8MwEIX%2FitAeSfaQ4bANgSyGdElKhy5FOFcikE6q7tT655e4FNKl8Jbjve94vIF9igUOTW50xo%2BGLGpNkRg2Y9StEmTPgYF8QgZZ4HJ4OkFvHJSaJS856gfkf8IzY5WQSav5OOq3r1DxPazSKnZavWDlkGnUvXFazcwNZ2LxJKPuXb%2Ffdd2u2z87B5tetToiSyAvG3UTKQzWhmsxgT59DFfLnPU03IvB9q9OvykuBlefSkSz5GTvTQb7GPy5%2Fm4zfQM%3D&SigAlg=http%3A%2F%2Fwww.w3.org%2F2001%2F04%2Fxmldsig-more%23rsa-sha256&Signature=cULFAzyyum8rmsRsdLP4U4nfZkD2lRAV1jSQDEiiBEX%2F%2FoSN%2BRybAoOTROZWMzcfNWL3CKj%2FLD81%2ByItb2VjLuiz%2Bk64nEo6JWfJwW%2BuwVPDZfdl40C7oCtJwCVqBIXivV9BELRGyfEaToV%2FsLt0N%2F8AOudfIq30NA%2F9hX2x%2FR0gbtKbiFFzFNfaZ4bR%2FuteitPGbT8ulp5jyXj%2B5Ta3BFcnDbms3AxwViFh%2BqMcrfV0cJNWkZk1m2ocjUvCgdS09FnGZjHY8HMORX90an558P4%2Bf5VEUljZtr8Xpc0bhHZug7fFArvix1NfciLNKw7aIm85kKwbWXc%2BxeaROp%2B%2FKA%3D%3D",
+          "queryString": "SAMLRequest=fZAxa8MwEIX%2FitAeSfaQ4bANgSyGdElKhy5FOFcikE6q7tT655e4FNKl8Jbjve94vIF9igUOTW50xo%2BGLGpNkRg2Y9StEmTPgYF8QgZZ4HJ4OkFvHJSaJS856gfkf8IzY5WQSav5OOq3r1DxPazSKnZavWDlkGnUvXFazcwNZ2LxJKPuXb%2Ffdd2u2z87B5tetToiSyAvG3UTKQzWhmsxgT59DFfLnPU03IvB9q9OvykuBlefSkSz5GTvTQb7GPy5%2Fm4zfQM%3D&SigAlg=http%3A%2F%2Fwww.w3.org%2F2001%2F04%2Fxmldsig-more%23rsa-sha256&Signature=cULFAzyyum8rmsRsdLP4U4nfZkD2lRAV1jSQDEiiBEX%2F%2FoSN%2BRybAoOTROZWMzcfNWL3CKj%2FLD81%2ByItb2VjLuiz%2Bk64nEo6JWfJwW%2BuwVPDZfdl40C7oCtJwCVqBIXivV9BELRGyfEaToV%2FsLt0N%2F8AOudfIq30NA%2F9hX2x%2FR0gbtKbiFFzFNfaZ4bR%2FuteitPGbT8ulp5jyXj%2B5Ta3BFcnDbms3AxwViFh%2BqMcrfV0cJNWkZk1m2ocjUvCgdS09FnGZjHY8HMORX90an558P4%2Bf5VEUljZtr8Xpc0bhHZug7fFArvix1NfciLNKw7aIm85kKwbWXc%2BxeaROp%2B%2FKA%3D%3D"
+        }
+      }
+    },
+    {
+      "name": "artifact context: an empty body is refused",
+      "method": "POST",
+      "path": "/samlartifactctx",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "arsUrl is required."
+        }
+      }
+    },
+    {
+      "name": "artifact context: an empty arsUrl is refused",
+      "method": "POST",
+      "path": "/samlartifactctx",
+      "body": {
+        "arsUrl": ""
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "arsUrl is required."
+        }
+      }
+    },
+    {
+      "name": "artifact context: arsUrl of the wrong JSON type",
+      "method": "POST",
+      "path": "/samlartifactctx",
+      "body": {
+        "arsUrl": 8080
+      },
+      "volatile": [
+        "relayState"
+      ],
+      "changed": "arsUrl must be a JSON string; a number was stashed and failed only later, at the landing, as an artifact that did not resolve. The model refuses it with the sentence the handler answers for a missing arsUrl.",
+      "before": {
+        "status": 200,
+        "body": {
+          "relayState": "art:f5adc13bbab5fd1ec3d223021589a9b7"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "arsUrl is required."
+        }
+      }
+    },
+    {
+      "name": "artifact context: wsa of the wrong JSON type",
+      "method": "POST",
+      "path": "/samlartifactctx",
+      "body": {
+        "arsUrl": "https://idp.invalid/ars",
+        "wsa": "on"
+      },
+      "volatile": [
+        "relayState"
+      ],
+      "changed": "wsa must be a JSON object or null; a string was stashed and silently meant no WS-Addressing headers. The model refuses it.",
+      "before": {
+        "status": 200,
+        "body": {
+          "relayState": "art:81bd0b2e1d6b0e4740d23ed5e5746903"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `wsa` must be a JSON object or null. GET /api-docs describes what samlArtifactContext takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "artifact context: SAML 2.0, unsigned, with WS-Addressing (its handle is new every run)",
+      "method": "POST",
+      "path": "/samlartifactctx",
+      "body": {
+        "arsUrl": "https://idp.invalid/ars",
+        "spEntityId": "https://sp.example.com/wire",
+        "wsa": {
+          "enabled": true,
+          "to": "",
+          "action": "",
+          "replyTo": "",
+          "from": "",
+          "messageId": ""
+        }
+      },
+      "volatile": [
+        "relayState"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "relayState": "art:34f8db9133098b37cfbd438eee95f6fa"
+        }
+      }
+    },
+    {
+      "name": "artifact context: SAML 1.1 with a key (its handle is new every run)",
+      "method": "POST",
+      "path": "/samlartifactctx",
+      "body": {
+        "arsUrl": "https://idp.invalid/responder",
+        "samlVersion": "1.1",
+        "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCEZUzACFkkv7rD\nVpQ22mX9H/mzHQIiehsQbMH0acfFa3NTprgb0K44Eo1C6TwsycQejuR3somJfuPn\ndtuGyYHC6SRXChQEWD1EEjo2O/UGzsp1oSMGTZFiFdTNYvGwbmdqypkldQpwnvYq\nErjqFUI5YVMgSxhvrQwUhGIgrwDzJ0bKHx7c9Ncb+umIxV7UWOWYN/ZffssUtZhw\nF4K7YCrXUbBcpCxA9G2c1d0yCFcbxbav2v/bL3mawGPAMiIgSpZi73rZnzgKgcvv\n+TviJV8uVgWhcRrl8fVJQp2768fgpXof4LocDn6TDRoFRffQcltu0DwZRRbjpy12\nAi3KBSmdAgMBAAECggEAELGpQimLUVaaWRkoqoX9XYko9iHOlsRTd026Dcnsy62R\n0YFwg5QGSRcQbYMf+FHKA0RnSy8y/ShdL7QirYCTy8eUB87t2Te7JJiGczePh405\npX1s/4AhDdTM4XJRdrq6cD0dnxspTCwZxBJaSKySOM6sfveZHDPIwH7ff1mHGCG0\nSEGjV+eTtPR+thqfIKkp4dnlJGp55Fs5etZMSqaYTTOYQtbak8fQQtELPOfrkPng\nw3XBqdZP9G3vEyGznCWbsKTqtaipb0Nqlmd4vS/3KVrx4oAPnRCAURW9Y9l0AoS+\n6FudgiaLWpTcJ4Aq458EQYyNe2f4tjgsgK9b7cfdzQKBgQC2UvRrdo5aUQ8A07kN\nakVyrQLW1ge7ToCj6R4ppz66SCdVpzBMobFjCX6GjjZVMW22FxTVYu4LwuAR0GYu\npDjj4YhGDGC7zlIIvrL4osie/kIdpq5tZsJsgOGm+a9TyWPn6LvSmNvIvyK0hJHj\ndXMp6pqpBBHMUokPtTjYAKmb4wKBgQC55VyMTEw//tNiTUS+hh+jRsnNRzPZLH7w\nJZ/QkPAp9uWJIgJ/iWDspqb71O1uDlE3NmucSe6zc2JFiGKsAAsNW+j8pmUve1jV\nu9oZrIf0oreksJFF5jKUP1i9YLLRdl6DUlZ8NWM30nFRcrt2CerdXCjMxvwqakNh\n2WihdBwcfwKBgQCNwzBywirrRK2CuhzftmqrQKS9gItgcyiIygB+6KBYXTPgYG+o\nleyEEeTEIJ1UXmtsssOrKxHmKS7qCvz4dQ4a+cholsU8Ia8dR5GGy6NsJEwqG+jx\n/X1culU57FgLsMIyln47wEjb7OnCLHX2wuK5i8WXdyeTk/UoNoMtSE6YewKBgEd5\nZoIS++ZHJiNPrjTLAPMYTpL843SG5S+UZ8QbVhvscAiv6OH8giW7VczR65A7NQLT\ni8CFtJ+Op6Qwci/LvHQgeI5bs9/zvw4+sfbZHVT0E0PhF5oWji/tw0LdISPkLSa0\ny8fqBwH5idRVFrqlyYXe31kM0PvF6659lvss13olAoGAICaXEHrz8HKXXoA41hZz\nhNUHnI1G9Z9duXYLa3NHZHR/j8rTfqct+9SCDCAqll5mUwDA5l7M5Nht8h5tNbTr\nfBtdaO0qc1BHVMcQetqbTohwfQELAk3TnE6V2HRwD7Rsmn8OhNp89mf44YvVecE3\n3qYUlWAfcczayq0vFo6pMfk=\n-----END PRIVATE KEY-----\n",
+        "certPem": "-----BEGIN CERTIFICATE-----\nMIIDFTCCAf2gAwIBAgIUDca2nO5TfvtBhBLvlABYCSF8MhEwDQYJKoZIhvcNAQEL\nBQAwGjEYMBYGA1UEAwwPd2lyZS1maXh0dXJlLXNwMB4XDTI2MTExNzA0MDE0MVoX\nDTM2MTExNDA0MDE0MVowGjEYMBYGA1UEAwwPd2lyZS1maXh0dXJlLXNwMIIBIjAN\nBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAhGVMwAhZJL+6w1aUNtpl/R/5sx0C\nInobEGzB9GnHxWtzU6a4G9CuOBKNQuk8LMnEHo7kd7KJiX7j53bbhsmBwukkVwoU\nBFg9RBI6Njv1Bs7KdaEjBk2RYhXUzWLxsG5nasqZJXUKcJ72KhK46hVCOWFTIEsY\nb60MFIRiIK8A8ydGyh8e3PTXG/rpiMVe1FjlmDf2X37LFLWYcBeCu2Aq11GwXKQs\nQPRtnNXdMghXG8W2r9r/2y95msBjwDIiIEqWYu962Z84CoHL7/k74iVfLlYFoXEa\n5fH1SUKdu+vH4KV6H+C6HA5+kw0aBUX30HJbbtA8GUUW46ctdgItygUpnQIDAQAB\no1MwUTAdBgNVHQ4EFgQUuMgAjtL3Weuj3SmzVf4aYZSEUjgwHwYDVR0jBBgwFoAU\nuMgAjtL3Weuj3SmzVf4aYZSEUjgwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0B\nAQsFAAOCAQEAamYeqthKNKWy4BegPSu+y9V+RoMV1/xXYUfaAgLIUvAOk6ND7ZXD\n/BDZtbB/rFdKZD4/XYzPWngktfSke+IKrlRaPAfbVr60MGUiLZZ/pg/6gUL3Dqyv\ntZXlsKYbMgqFEhtUSU74DgYcZIPu+fnqZGeuNXREd6ioD8H3DkZbHGPfGbH6DoQQ\nwABVW00o9cb8gbGAJu35O3yiT4mQ0KfAQhZcQWRyxWB894MzQSMYo0IQrgjKqWSL\nSPdNQlhYiI6gH2kdBJSKg4eYef+E+3S2XJpjo0C0YVwTzFjNE8kbGTnjsVfqsaHO\n3HowOuivTSO+UbE/UvYF8nnyorDNnaSzvw==\n-----END CERTIFICATE-----\n",
+        "sigAlg": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
+      },
+      "volatile": [
+        "relayState"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "relayState": "art:b6365d92380f584219c419feffc1ccfe"
+        }
+      }
+    },
+    {
+      "name": "acs (POST): an empty form is refused",
+      "method": "POST",
+      "path": "/samlacs",
+      "form": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "(not JSON)": "ACS: no SAMLResponse or SAMLart present."
+        }
+      }
+    },
+    {
+      "name": "acs (POST): a SAMLResponse is stashed and the browser sent on",
+      "method": "POST",
+      "path": "/samlacs",
+      "form": {
+        "SAMLResponse": "PHNhbWxwOlJlc3BvbnNlIHhtbG5zOnNhbWxwPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6cHJvdG9jb2wiIElEPSJfcjEiIFZlcnNpb249IjIuMCIgSXNzdWVJbnN0YW50PSIyMDI2LTExLTE2VDAwOjAwOjAwWiI+PHNhbWxwOlN0YXR1cz48c2FtbHA6U3RhdHVzQ29kZSBWYWx1ZT0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnN0YXR1czpTdWNjZXNzIi8+PC9zYW1scDpTdGF0dXM+PC9zYW1scDpSZXNwb25zZT4=",
+        "RelayState": "wire-relay"
+      },
+      "volatile": [
+        "location"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/saml_response.html?id=6e4c67b4fc7e1912fc4a2e2fbc9a6de5"
+      }
+    },
+    {
+      "name": "acs (POST): a field nobody expects does not stop it",
+      "method": "POST",
+      "path": "/samlacs",
+      "form": {
+        "SAMLResponse": "PHNhbWxwOlJlc3BvbnNlIHhtbG5zOnNhbWxwPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6cHJvdG9jb2wiIElEPSJfcjEiIFZlcnNpb249IjIuMCIgSXNzdWVJbnN0YW50PSIyMDI2LTExLTE2VDAwOjAwOjAwWiI+PHNhbWxwOlN0YXR1cz48c2FtbHA6U3RhdHVzQ29kZSBWYWx1ZT0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnN0YXR1czpTdWNjZXNzIi8+PC9zYW1scDpTdGF0dXM+PC9zYW1scDpSZXNwb25zZT4=",
+        "Unexpected": "x",
+        "SigAlg": "y"
+      },
+      "volatile": [
+        "location"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/saml_response.html?id=86bf076e69b5ab8686d353047629c533"
+      }
+    },
+    {
+      "name": "acs (POST): an empty SAMLResponse is no SAMLResponse",
+      "method": "POST",
+      "path": "/samlacs",
+      "form": {
+        "SAMLResponse": ""
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "(not JSON)": "ACS: no SAMLResponse or SAMLart present."
+        }
+      }
+    },
+    {
+      "name": "acs (POST): a RelayState that is not text is refused",
+      "method": "POST",
+      "path": "/samlacs",
+      "form": {
+        "SAMLResponse": "PHNhbWxwOlJlc3BvbnNlIHhtbG5zOnNhbWxwPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6cHJvdG9jb2wiIElEPSJfcjEiIFZlcnNpb249IjIuMCIgSXNzdWVJbnN0YW50PSIyMDI2LTExLTE2VDAwOjAwOjAwWiI+PHNhbWxwOlN0YXR1cz48c2FtbHA6U3RhdHVzQ29kZSBWYWx1ZT0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnN0YXR1czpTdWNjZXNzIi8+PC9zYW1scDpTdGF0dXM+PC9zYW1scDpSZXNwb25zZT4=",
+        "RelayState[a]": "b"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "(not JSON)": "ACS: invalid RelayState."
+        }
+      }
+    },
+    {
+      "name": "acs (POST): SAML 1.1's TARGET is the relay state",
+      "method": "POST",
+      "path": "/samlacs",
+      "form": {
+        "SAMLResponse": "PHNhbWxwOlJlc3BvbnNlIHhtbG5zOnNhbWxwPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6cHJvdG9jb2wiIElEPSJfcjEiIFZlcnNpb249IjIuMCIgSXNzdWVJbnN0YW50PSIyMDI2LTExLTE2VDAwOjAwOjAwWiI+PHNhbWxwOlN0YXR1cz48c2FtbHA6U3RhdHVzQ29kZSBWYWx1ZT0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnN0YXR1czpTdWNjZXNzIi8+PC9zYW1scDpTdGF0dXM+PC9zYW1scDpSZXNwb25zZT4=",
+        "TARGET": "https://sp/target"
+      },
+      "volatile": [
+        "location"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/saml_response.html?id=e4a053b02252537fa27101450b56ebc1"
+      }
+    },
+    {
+      "name": "acs (POST): an artifact with no stashed context fails resolution",
+      "method": "POST",
+      "path": "/samlacs",
+      "form": {
+        "SAMLart": "AAQAAwirefixture",
+        "RelayState": "art:none"
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "(not JSON)": "Artifact resolution failed: no artifact context / ARS URL (RelayState missing or expired)"
+        }
+      }
+    },
+    {
+      "name": "acs (POST): the same landing accepts a JSON body",
+      "method": "POST",
+      "path": "/samlacs",
+      "body": {
+        "SAMLResponse": "PHNhbWxwOlJlc3BvbnNlIHhtbG5zOnNhbWxwPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6cHJvdG9jb2wiIElEPSJfcjEiIFZlcnNpb249IjIuMCIgSXNzdWVJbnN0YW50PSIyMDI2LTExLTE2VDAwOjAwOjAwWiI+PHNhbWxwOlN0YXR1cz48c2FtbHA6U3RhdHVzQ29kZSBWYWx1ZT0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnN0YXR1czpTdWNjZXNzIi8+PC9zYW1scDpTdGF0dXM+PC9zYW1scDpSZXNwb25zZT4="
+      },
+      "volatile": [
+        "location"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/saml_response.html?id=6445f031382174793d26f96b170cb533"
+      }
+    },
+    {
+      "name": "acs (POST): a JSON body that is an array carries no member",
+      "method": "POST",
+      "path": "/samlacs",
+      "body": [
+        "SAMLResponse"
+      ],
+      "expect": {
+        "status": 400,
+        "body": {
+          "(not JSON)": "ACS: no SAMLResponse or SAMLart present."
+        }
+      }
+    },
+    {
+      "name": "acs (GET): no parameters is refused",
+      "method": "GET",
+      "path": "/samlacs",
+      "expect": {
+        "status": 400,
+        "body": {
+          "(not JSON)": "ACS: no SAMLResponse or SAMLart present."
+        }
+      }
+    },
+    {
+      "name": "acs (GET): a deflated SAMLResponse in the query",
+      "method": "GET",
+      "path": "/samlacs?SAMLResponse=fU89C8IwFPwr4e1tkwwdHk1BdCnoYqWDi4T4hkI%2BSl4C%2FnyhTl2EW%2B447mNgG%2FyGd%2BItRSbxCT4y7qKBmiMmyytjtIEYi8P5dLuibiVuOZXkkgcxXQy8sgKxUOY1RQO6lSAm5kpT5GJjMaCl7hulGtU%2FpMQdTxiHX%2FtcbKl8ZOf0JrFYX%2Bn%2FDt7dOFfniBm6ceiOod3x4fgF&RelayState=wire-relay",
+      "volatile": [
+        "location"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/saml_response.html?id=9df9d60c07ed629949591401cab50f66"
+      }
+    },
+    {
+      "name": "acs (GET): a repeated RelayState is refused",
+      "method": "GET",
+      "path": "/samlacs?SAMLResponse=fU89C8IwFPwr4e1tkwwdHk1BdCnoYqWDi4T4hkI%2BSl4C%2FnyhTl2EW%2B447mNgG%2FyGd%2BItRSbxCT4y7qKBmiMmyytjtIEYi8P5dLuibiVuOZXkkgcxXQy8sgKxUOY1RQO6lSAm5kpT5GJjMaCl7hulGtU%2FpMQdTxiHX%2FtcbKl8ZOf0JrFYX%2Bn%2FDt7dOFfniBm6ceiOod3x4fgF&RelayState=a&RelayState=b",
+      "expect": {
+        "status": 400,
+        "body": {
+          "(not JSON)": "ACS: invalid RelayState."
+        }
+      }
+    },
+    {
+      "name": "acs (GET): an artifact with no stashed context fails resolution",
+      "method": "GET",
+      "path": "/samlacs?SAMLart=AAQAAwirefixture",
+      "expect": {
+        "status": 500,
+        "body": {
+          "(not JSON)": "Artifact resolution failed: no artifact context / ARS URL (RelayState missing or expired)"
+        }
+      }
+    },
+    {
+      "name": "acs artifact (GET): no parameters is refused",
+      "method": "GET",
+      "path": "/samlacs/artifact",
+      "expect": {
+        "status": 400,
+        "body": {
+          "(not JSON)": "ACS: no SAMLResponse or SAMLart present."
+        }
+      }
+    },
+    {
+      "name": "acs artifact (GET): a SAML 1.1 artifact whose TARGET names no context",
+      "method": "GET",
+      "path": "/samlacs/artifact?SAMLart=AAEwirefixture&TARGET=art%3Anone",
+      "expect": {
+        "status": 500,
+        "body": {
+          "(not JSON)": "Artifact resolution failed: no artifact context / ARS URL (RelayState missing or expired)"
+        }
+      }
+    },
+    {
+      "name": "slo (POST): an empty form is refused",
+      "method": "POST",
+      "path": "/samlslo",
+      "form": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "(not JSON)": "ACS: no SAMLResponse or SAMLart present."
+        }
+      }
+    },
+    {
+      "name": "slo (POST): a LogoutResponse is stashed and the browser sent on",
+      "method": "POST",
+      "path": "/samlslo",
+      "form": {
+        "SAMLResponse": "PHNhbWxwOkxvZ291dFJlc3BvbnNlIHhtbG5zOnNhbWxwPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6cHJvdG9jb2wiIElEPSJfbDEiIFZlcnNpb249IjIuMCIgSXNzdWVJbnN0YW50PSIyMDI2LTExLTE2VDAwOjAwOjAwWiI+PHNhbWxwOlN0YXR1cz48c2FtbHA6U3RhdHVzQ29kZSBWYWx1ZT0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTUw6Mi4wOnN0YXR1czpTdWNjZXNzIi8+PC9zYW1scDpTdGF0dXM+PC9zYW1scDpMb2dvdXRSZXNwb25zZT4=",
+        "RelayState": "wire-relay"
+      },
+      "volatile": [
+        "location"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/saml_response.html?id=d91ecb338046851e3ccb943788c8c8ed"
+      }
+    },
+    {
+      "name": "slo (GET): no parameters is refused",
+      "method": "GET",
+      "path": "/samlslo",
+      "expect": {
+        "status": 400,
+        "body": {
+          "(not JSON)": "ACS: no SAMLResponse or SAMLart present."
+        }
+      }
+    },
+    {
+      "name": "slo (GET): a deflated LogoutResponse in the query",
+      "method": "GET",
+      "path": "/samlslo?SAMLResponse=fY8xC4MwFIT%2FSni7GjM4PIxQ2kWwSy0OXUpIH0WIeeJLoD%2B%2FYKdCKdxy3HF814pbwooDPzmnC8nKUUi9lhAF98hC3iKyk1kwuoUEk8fxcB7QlBrXjRN7DqD6k4V7qEFNtMnM0YIpNaheJFMfJbmYLBhtmqKui7q5ao27btC1H4YxuZTl2x35QWpyIdN%2FDtnbOGbvSQSqrq2%2BR6tfP7s3",
+      "volatile": [
+        "location"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/saml_response.html?id=3ca4b50fe48723de3a55e68655313fc9"
+      }
+    },
+    {
+      "name": "response: no id is not found",
+      "method": "GET",
+      "path": "/samlresponse",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "not found or expired"
+        }
+      }
+    },
+    {
+      "name": "response: an id nothing was stashed under is not found",
+      "method": "GET",
+      "path": "/samlresponse?id=0123456789abcdef",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "not found or expired"
+        }
+      }
+    },
+    {
+      "name": "response: a repeated id is the wrong type",
+      "method": "GET",
+      "path": "/samlresponse?id=a&id=b",
+      "changed": "A repeated ?id= is a list, not the one string the endpoint takes; it used to be joined with a comma and looked up as an id that cannot exist. The model refuses it.",
+      "before": {
+        "status": 404,
+        "body": {
+          "error": "not found or expired"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: query parameter `id` must be a string. GET /api-docs describes what samlResponse takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    }
+  ]
+}

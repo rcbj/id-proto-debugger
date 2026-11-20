@@ -83,7 +83,7 @@ var xmldsig = require("./xmldsig");
 // performs it. `xmldsig.js` holds the sixteen identifiers and no
 // cryptography — see its own header on why — and this page already has
 // pqc.js and hbs.js loaded, which is why the XML pane can offer them at no
-// cost at all. See docs/xmldsig-pqc.md.
+// cost at all. See docs/v0.9.5/xmldsig-pqc.md.
 var xmldsigPqc = require("./xmldsig_pqc");
 var log = bunyan.createLogger({ name: 'digital_signature',
                                 level: appconfig.logLevel });
@@ -2376,15 +2376,16 @@ function copyField(elementId) {
 // The pages that may send you here. A whitelist rather than a redirect — see
 // the note on setReturnLink() in tool_panes.js.
 var RETURN_TARGETS = {
-  'oauth2_oidc_1.html': { href: '/oauth2_oidc_1.html' },
-  'oauth2_oidc_2.html': { href: '/oauth2_oidc_2.html' },
+  'oauth2_oidc_1.html': { href: '/oauth2_oidc_1.html', label: 'debugger' },
+  'oauth2_oidc_2.html': { href: '/oauth2_oidc_2.html', label: 'debugger' },
   'encryption_tools.html': { href: '/encryption_tools.html',
                              label: 'Encryption / Decryption' }
 };
 
 function setReturnLink() {
   log.debug("Entering setReturnLink().");
-  panes.setReturnLink(RETURN_TARGETS, '/oauth2_oidc_1.html');
+  // No ?from= is the landing card (or a typed URL): back to the landing page.
+  panes.setReturnLink(RETURN_TARGETS, '/', null, 'Home');
   log.debug("Leaving setReturnLink().");
 }
 
@@ -2397,7 +2398,7 @@ window.onload = function () {
   // the classical ones. Five pages carry this menu and sixteen hand-written
   // options in five files is five copies that will disagree the first time the
   // draft renames anything. See client/src/xmldsig_pqc.js and
-  // docs/xmldsig-pqc.md.
+  // docs/v0.9.5/xmldsig-pqc.md.
   xmldsigPqc.appendSignatureOptions(document.getElementById('ds_xml_sigalg'),
       xmldsig.SIG_METHODS, xmldsig.PQ_SIG_URIS);
   setVal('ds_value', 'Sign me with SLH-DSA!');

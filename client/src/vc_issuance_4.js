@@ -42,6 +42,10 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var vciWallet = require("./vci_wallet");
+// Client authentication at the token endpoint.
+var clientAuthPane = require("./vc_client_auth_pane");
+// What each format and key allows: the holder key's algorithm (#475).
+var vcFormats = require("./vc_formats");
 var dpopLib = require("./dpop");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_4',
@@ -699,14 +703,10 @@ function refreshParams() {
     return null;
   }
   var params = { grant_type: REFRESH_GRANT, refresh_token: refreshToken };
-  var clientId = sdJwtVc.get("token_client_id") || sdJwtVc.get("client_id") ||
-      "";
-  if (clientId) params.client_id = clientId;
-  // A confidential client has to authenticate to the token endpoint. The secret
-  // is whatever the OAuth2 pages were configured with; a public client (which
-  // is what the workflow uses by default) has none and sends none.
-  var secret = sdJwtVc.get("client_secret") || "";
-  if (secret) params.client_secret = secret;
+  // The client's identity and authentication — RFC 6749 section 6 requires a
+  // confidential client to authenticate a refresh — are added by
+  // vc_client_auth_pane.js with step 1's method. No secret is read from
+  // storage: one is never written there; it is typed on this page.
   // OPTIONAL, and narrowing only: RFC 6749 section 6 allows a scope no broader
   // than the one originally granted. Empty means "the same as before".
   var scope = (val("vc_refresh_scope") || "").trim();
@@ -748,16 +748,15 @@ function renderRefreshRequest() {
     log.debug("Leaving renderRefreshRequest(). No endpoint.");
     return "";
   }
-  var text = vciWallet.describeCall({
-    method: "POST",
-    url: endpoint,
-    contentType: "application/x-www-form-urlencoded",
-    body: vciWallet.encodeForm(params)
+  clientAuthPane.applyTo(params, endpoint).then(function (applied) {
+    setValue("vc_refresh_request", applied.text + (applied.notes.length ?
+      "\n\n# " + applied.notes.join("\n# ") : ""));
+  }).catch(function (e) {
+    setValue("vc_refresh_request", "Client authentication: " + e.message);
   });
-  setValue("vc_refresh_request", text);
   disable("vc_refresh_button", false);
   log.debug("Leaving renderRefreshRequest().");
-  return text;
+  return "";
 }
 
 function onRefreshScopeChange() {
@@ -823,14 +822,12 @@ function sendRefreshRequest() {
   status("vc_refresh_status",
          "Exchanging the refresh token for a fresh access token …",
          "vc-pending");
-  vciWallet.fetchProtected({
-    url: endpoint,
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: vciWallet.encodeForm(params),
-    context: dpopContext()
-    // No accessToken: a refresh request presents the REFRESH token in the body,
-    // not an access token in a header, so the proof carries no ath.
+  // Client authentication is applied by the pane (step 1's method). No
+  // accessToken: a refresh presents the REFRESH token in the body, so the
+  // DPoP proof carries no ath.
+  clientAuthPane.sendToken(vciWallet, params, endpoint, dpopContext(),
+                           function (text) {
+    status("vc_refresh_status", "Refreshing: " + text, "vc-pending");
   })
     .then(function (result) {
       if (result.body && result.body.token_type) {
@@ -1001,8 +998,7 @@ function holderKeyForRequest() {
     // The public half comes from storage when it is there; otherwise it is the
     // public part of the pasted private JWK, which for an EC key carries x/y.
     var pub = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_JWK) ||
-              (priv ? { kty: priv.kty, crv: priv.crv, x: priv.x,
-               y: priv.y } : null);
+              (priv ? vcFormats.publicJwkOf(priv) : null);
     if (pub && priv) {
       log.debug("Leaving holderKeyForRequest(). Reusing the stored " +
                 "holder key.");
@@ -1015,7 +1011,12 @@ function holderKeyForRequest() {
   // the private half of it is the only thing that can present the credential
   // the wallet actually has. keepRefreshed() parks the new pair;
   // replaceCredential() promotes it.
-  return vciWallet.generateHolderKeyPair();
+  // The same kind of key as the one the credential is bound to, or what the
+  // issuer accepts when there is none (vc_formats.holderKeyAlgFor()).
+  var held = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK) || {};
+  var cfg = state.config || sdJwtVc.storedRequestConfig();
+  return vciWallet.generateHolderKeyPair(held.alg ||
+    vcFormats.holderKeyAlgFor(cfg.proofAlgs, cfg.format) || undefined);
 }
 
 // Which Credential Dataset identifiers the token response granted, if the
@@ -1065,7 +1066,11 @@ function prepareReissue() {
       return vciWallet.signProofs(state.request.holderKeys, {
         clientId: sdJwtVc.get("client_id") || "",
         credentialIssuer: state.config.credentialIssuer,
-        nonce: state.request.nonce
+        nonce: state.request.nonce,
+        proofAlgs: String(state.config.proofAlgs || "").split(",")
+          .map(function (a) {
+            return a.trim();
+          }).filter(Boolean)
       });
     })
     .then(function (proofs) {
@@ -2021,6 +2026,11 @@ function togglePane(id) {
 
 function onload() {
   log.debug("Entering onload().");
+  // Client authentication: the method chosen on step 1, and the secret or
+  // key typed on this page when it is not (or cannot be) kept.
+  clientAuthPane.render("vc_client_auth_pane", "call", function () {
+    renderRefreshRequest();
+  });
   sdJwtVc.renderUseCaseBadge();
   var step = document.getElementById("vc_step_4");
   if (step) step.className = "vc-step-current";

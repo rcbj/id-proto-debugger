@@ -20,6 +20,7 @@ version: '2.4'
 x-mirror-contexts: &mirror-contexts
   ubuntu: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/ubuntu:latest
   "node:24.22.1-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-bookworm-slim
+  "rust:1.97-bookworm": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/rust:1.97-bookworm
   "eclipse-temurin:11-jdk": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/eclipse-temurin:11-jdk
 services:
   keycloak:
@@ -52,7 +53,7 @@ services:
     # docker-compose-run-tests.yml runs, where the release is named
     # (IYA_STS_IMAGE; tests/image_mirror_coverage.js holds this default to
     # that one). This repository has no iya-sts checkout to build from.
-    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
+    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.1.0-candidate}
     # ROOT, and the only container here that is. The image runs as uid 10001
     # and this service binds 88 (TCP and UDP), 389 and 636 — all privileged —
     # on the HOST's network namespace, where the per-namespace sysctl the
@@ -117,8 +118,8 @@ services:
       # certificates it issues, so it is moved rather than set to 0.
       - PKI_HTTP_PORT=8083
       # ---------------------------------------------------------------------
-      # THE MAIN PORT IS HTTPS HERE TOO, for the reason local-tests.yml and
-      # docker-compose-run-tests.yml give at length: the RFC 9700 pass is a
+      # THE MAIN PORT IS HTTPS HERE TOO, for the reason
+      # docker-compose-run-tests.yml gives at length: the RFC 9700 pass is a
       # TRUST REALM on this one instance now (`/realm/rfc9700/...`) rather than
       # a second container, a realm binds no socket of its own, and that pass is
       # only honest over TLS — requirement 8.1 is that every configured
@@ -149,7 +150,7 @@ services:
     container_name: idptools-kctest-companion
     # iya-sts's release tag, built into the mirror; see
     # docker-compose-run-tests.yml.
-    image: ${IYA_STS_COMPANION_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts-companion:v1.0.0}
+    image: ${IYA_STS_COMPANION_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts-companion:v1.1.0-candidate}
     network_mode: "host"
     environment:
       - COMPANION_PORT=9700
@@ -189,20 +190,20 @@ services:
   # them for that reason — and a browser-based wallet cannot read a response
   # without them. This IS the address the wallet uses, and the address the
   # issuer's baseUrl names, because every URL walt.id publishes is built from it.
-  # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
+  # A stock node image runs it: tests/cors-proxy/cors-proxy.js has no dependencies.
   waltid-issuer:
     image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
     user: "node"
-    command: ["node", "/waltid/cors-proxy.js"]
+    command: ["node", "/cors-proxy/cors-proxy.js"]
     network_mode: "host"
     environment:
-      - WALTID_UPSTREAM=localhost:7006
-      - WALTID_PROXY_PORT=7005
+      - CORS_PROXY_UPSTREAM=localhost:7006
+      - CORS_PROXY_PORT=7005
     volumes:
-      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+      - ./tests/cors-proxy/cors-proxy.js:/cors-proxy/cors-proxy.js:ro
     healthcheck:
       # The whole chain: this proxy answering, and the issuer behind it serving
       # the metadata a wallet asks for first. The probe lives here rather than on
@@ -249,13 +250,13 @@ services:
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
     user: "node"
-    command: ["node", "/waltid/cors-proxy.js"]
+    command: ["node", "/cors-proxy/cors-proxy.js"]
     network_mode: "host"
     environment:
-      - WALTID_UPSTREAM=localhost:7004
-      - WALTID_PROXY_PORT=7003
+      - CORS_PROXY_UPSTREAM=localhost:7004
+      - CORS_PROXY_PORT=7003
     volumes:
-      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+      - ./tests/cors-proxy/cors-proxy.js:/cors-proxy/cors-proxy.js:ro
     healthcheck:
       # /livez is what walt.id's service-commons registers for every service. The
       # probe is on the proxy because the verifier image has no shell for CMD-SHELL

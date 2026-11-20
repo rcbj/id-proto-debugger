@@ -34,7 +34,19 @@ var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 var bbs2023 = require("./bbs2023");
+// RDFC-1.0 for the holder's VP proof when the Verifier accepts only an RDFC
+// suite or a legacy proof type (#475); loading it registers the
+// canonicalizer with data_integrity.js, which vp_protocols.js signs through.
+require("./data_integrity_rdfc");
+var vcFormats = require("./vc_formats");
+// BbsBlsSignature2020: the holder derives a BbsBlsSignatureProof2020 (#475).
+var bbsBls2020 = require("./bbs_bls_2020");
+// ecdsa-sd-2023: derived over the same JSON pointers as bbs-2023 (#476).
+var ecdsaSd = require("./ecdsa_sd_2023");
 var didLib = require("./did");
+var vpProtocols = require("./vp_protocols");
+var vpQuery = require("./vp_query");
+var cbor = require("./cbor");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_2',
                                 level: appconfig.logLevel });
@@ -49,7 +61,10 @@ var state = {
   parsed: null,
   // The Disclosures, in credential order: { encoded, name, value, requested, checked }
   rows: [],
-  built: null
+  built: null,
+  // The answer around the presentation: { fields, idToken, encryption,
+  // delivery }, rebuilt with it.
+  response: null
 };
 
 function el(id) {
@@ -123,6 +138,20 @@ function loadState() {
       log.error("the stored credential could not be parsed: " + e.message);
     }
   }
+  // The query in either language, and what this credential makes of it
+  // (vp_query.js): the claims section 6.4.1 (or PE's Input Evaluation)
+  // selects, and the predicates — proven, not disclosed.
+  state.planned = sdJwtVp.planForRequest(state.request, state.parsed);
+  state.language = state.planned.model.language;
+  if (state.planned.plan && (!state.planned.plain ||
+      state.planned.plan.claims.satisfied)) {
+    state.requested = state.planned.plan.disclose.slice();
+  }
+  if (state.language === "pe" && state.planned.item) {
+    state.credentialQuery = null;
+  }
+  state.predicateNames = state.planned.plan ?
+    state.planned.plan.notRevealed.slice() : [];
   // Every Disclosure the credential carries, with whether this verifier asked
   // for it. The default choice is exactly what was asked for and nothing else —
   // a wallet should not have to be told to minimise.
@@ -141,6 +170,12 @@ function loadState() {
   // loud; collapsing the two loses the ability to explain it.
   state.heldFormat = (state.parsed && state.parsed.format) || "";
   state.requestedFormat = sdJwtVp.firstCredentialQueryFormat(state.dcql);
+  if (state.language === "pe" && state.planned.item) {
+    var fmts = state.planned.item.formats;
+    state.requestedFormat = fmts.indexOf(state.heldFormat) !== -1 ||
+      (state.heldFormat === sdJwtVc.FORMAT_ANONCREDS &&
+       fmts.indexOf("di_vc") !== -1) ? state.heldFormat : (fmts[0] || "");
+  }
   // With no format in the query there is nothing to disagree with, so the held
   // credential is the only sensible reading — and defaulting to dc+sd-jwt when
   // nothing is held preserves what this line did before.
@@ -152,24 +187,132 @@ function loadState() {
   // something the verifier cannot read.
   state.formatMismatch = !!(state.requestedFormat && state.heldFormat &&
                             state.requestedFormat !== state.heldFormat);
-  state.selectable = state.format !== sdJwtVc.FORMAT_JWT_VC_JSON;
-  state.rows = ((state.parsed && state.parsed.disclosures) ||
-      []).map(function (d) {
+  // vc+jwt and vc+cose, like jwt_vc_json, have nothing to select: they go
+  // whole, enveloped (#477).
+  state.selectable = state.format !== sdJwtVc.FORMAT_JWT_VC_JSON &&
+      state.format !== sdJwtVc.FORMAT_VC_JWT &&
+      state.format !== sdJwtVc.FORMAT_VC_COSE && !ldpWhole();
+  // SIOPv2: whether an ID Token is asked for, and whether it is ALL that is.
+  state.wantsIdToken = vpProtocols.asksForIdToken(params);
+  state.idTokenOnly = state.wantsIdToken && !vpProtocols.asksForVpToken(params);
+  state.rows = ldpBbs2020() ? bbs2020Rows(previously) :
+      ((state.parsed && state.parsed.disclosures) || []).map(function (d) {
     var requested = state.requested.indexOf(d.name) !== -1;
+    // Proven by a predicate, so never disclosed: the row stays unchecked
+    // and cannot be checked (AnonCreds refuses revealing it as well).
+    var predicated = state.predicateNames.indexOf(d.name) !== -1;
     return {
+      predicated: predicated,
       encoded: d.encoded,
       name: d.error ? "(unreadable)" : (d.arrayElement ?
           "(array element)" : d.name),
       value: d.value,
       error: d.error,
       requested: requested,
-      checked: Object.prototype.toString.call(previously) === "[object Array]"
+      checked: predicated ? false :
+        Object.prototype.toString.call(previously) === "[object Array]"
         ? previously.indexOf(d.encoded) !== -1
         : requested
     };
   });
   log.debug("Leaving loadState(). " + state.rows.length + " Disclosure(s), " +
             state.requested.length + " requested.");
+}
+
+// An ldp_vc whose proof is NOT selective (eddsa-rdfc-2022, ecdsa-jcs-2019,
+// Ed25519Signature2020, ...): presented whole inside the holder's VP, the way
+// a jwt_vc_json is, rather than derived from as a bbs-2023 one is (#475).
+function ldpWhole() {
+  log.debug("Entering ldpWhole().");
+  var whole = state.format === sdJwtVc.FORMAT_LDP_VC && !!state.parsed &&
+    state.parsed.format === sdJwtVc.FORMAT_LDP_VC && !state.parsed.ldpSelective;
+  log.debug("Leaving ldpWhole(). " + whole);
+  return whole;
+}
+
+// A BbsBlsSignature2020 credential: selective, but over CLAIMS chosen by a
+// JSON-LD frame (MATTR's derivation), not over canonical statements as
+// bbs-2023 is — so it gets claim rows like an SD-JWT's (#475).
+function ldpBbs2020() {
+  log.debug("Entering ldpBbs2020().");
+  var yes = state.format === sdJwtVc.FORMAT_LDP_VC && !!state.parsed &&
+    state.parsed.ldpSuite === bbsBls2020.SIGNATURE_TYPE;
+  log.debug("Leaving ldpBbs2020(). " + yes);
+  return yes;
+}
+
+// One row per credentialSubject claim (its id names the holder and always
+// goes). `encoded` identifies the row for the stored selection.
+function bbs2020Rows(previously) {
+  log.debug("Entering bbs2020Rows().");
+  var doc = state.parsed.document || {};
+  var subject = [].concat(doc.credentialSubject || [])[0] || {};
+  var rows = Object.keys(subject).filter(function (name) {
+    return name !== "id";
+  }).map(function (name) {
+    var requested = state.requested.indexOf(name) !== -1;
+    var encoded = "credentialSubject." + name;
+    return { encoded: encoded, name: name, value: subject[name],
+      requested: requested,
+      checked: Object.prototype.toString.call(previously) ===
+        "[object Array]" ? previously.indexOf(encoded) !== -1 : requested };
+  });
+  log.debug("Leaving bbs2020Rows(). " + rows.length);
+  return rows;
+}
+
+// The JSON-LD frame that discloses the checked claims and nothing else.
+function bbs2020Frame() {
+  log.debug("Entering bbs2020Frame().");
+  var doc = state.parsed.document || {};
+  var subject = { "@explicit": true };
+  state.rows.filter(function (r) {
+    return r.checked;
+  }).forEach(function (r) {
+    subject[r.name] = {};
+  });
+  log.debug("Leaving bbs2020Frame().");
+  return { "@context": doc["@context"], type: doc.type,
+           credentialSubject: subject };
+}
+
+// ecdsa-sd-2023's derivation. It has no presentation header: the issuer's
+// signatures go to the Verifier as they are, so nothing in the derived proof
+// names this request, and two presentations of one credential carry the
+// same signatures (linkable). Freshness is the holder's VP around it.
+function deriveEcdsaSd() {
+  log.debug("Entering deriveEcdsaSd().");
+  log.debug("Leaving deriveEcdsaSd().");
+  return ecdsaSd.deriveProof(state.parsed.document, {
+    selectivePointers: selectedPointers()
+  }).then(function (derived) {
+    var revealed = derived.document;
+    state.built = { presentation: JSON.stringify(revealed),
+        vpElement: revealed, derived: derived,
+        format: sdJwtVc.FORMAT_LDP_VC };
+    setValue("vp_presentation", state.built.presentation);
+    setText("vp_sd_hash", "");
+    setValue("vp_kb_jwt", "");
+    setJson("vp_kb_header", { cryptosuite: ecdsaSd.CRYPTOSUITE,
+      mandatoryStatements: derived.mandatoryCount,
+      disclosed: derived.selectiveCount, of: derived.statementCount });
+    setJson("vp_kb_payload", revealed.proof);
+    setJson("vp_presented_claims", revealed.credentialSubject || null);
+    status("vp_present_status", "Derived an ecdsa-sd-2023 proof: " +
+      derived.mandatoryCount + " mandatory statement(s) and " +
+      derived.selectiveCount + " of " + derived.statementCount +
+      " selectively disclosable ones, each with the issuer's own " +
+      "signature — so this presentation can be linked to any other of " +
+      "the same credential, and only the holder's VP binds it to this " +
+      "request.", "vc-ok");
+    log.debug("Leaving deriveEcdsaSd(). Derived.");
+    return finishResponse();
+  }).catch(function (e) {
+    log.error("could not derive the ecdsa-sd-2023 proof: " + e.message);
+    status("vp_present_status", "Could not derive the proof: " +
+           e.message, "vc-bad");
+    return false;
+  });
 }
 
 function selectedEncoded() {
@@ -179,59 +322,99 @@ function selectedEncoded() {
                            .map(function (r) { return r.encoded; });
 }
 
-// ldp_vc selects over canonical STATEMENTS, so what a row identifies is an
-// index into the statement list rather than an encoded Disclosure.
-function selectedStatementIndexes() {
-  log.debug("Entering selectedStatementIndexes().");
-  log.debug("Leaving selectedStatementIndexes().");
-  return state.rows.filter(function (r) { return r.checked; })
-    .map(function (r) { return r.statementIndex; });
+// ldp_vc (bbs-2023) selects by JSON POINTER (W3C Data Integrity BBS
+// Cryptosuites v1.0, Add Derived Proof): a row is one leaf of the credential,
+// and what is derived from is the chosen pointers. The issuer's mandatory
+// pointers are always disclosed and are not the holder's to choose, so they
+// are not among the selective pointers handed to deriveProof().
+function selectedPointers() {
+  log.debug("Entering selectedPointers().");
+  log.debug("Leaving selectedPointers().");
+  return state.rows.filter(function (r) {
+    return r.checked && !r.mandatory;
+  }).map(function (r) {
+    return r.pointer;
+  });
 }
 
-// Canonicalizing is async and loadState() is not, so the statements are fetched
-// once here and the panes re-rendered when they arrive. Until then the table
-// says it is working rather than showing an empty selection the holder might
-// take for "this credential reveals nothing".
-function prepareLdpStatements() {
-  log.debug("Entering prepareLdpStatements().");
+// What a DCQL query names, as pointers into this credential: each claims
+// path, plus the subject's id when the presentation must say who the holder
+// is (DCQL's default holder binding, or a SIOPv2 ID Token beside it) —
+// without it the VP's proof is a signature by a key the reveal document
+// never mentions.
+function requestedPointers(doc) {
+  log.debug("Entering requestedPointers().");
+  var out = [];
+  var claims = (state.credentialQuery && state.credentialQuery.claims) || [];
+  claims.forEach(function (claim) {
+    out = out.concat(bbs2023.claimPointers(doc, claim.path || []));
+  });
+  if ((sdJwtVp.requiresKeyBinding(state.credentialQuery) ||
+       state.wantsIdToken) && doc.credentialSubject &&
+      !Array.isArray(doc.credentialSubject) && doc.credentialSubject.id) {
+    out.push("/credentialSubject/id");
+  }
+  log.debug("Leaving requestedPointers(). " + out.length + ".");
+  return out;
+}
+
+// The rows, from the credential's base proof and its leaves. Async only for
+// the canonicalization check: a context nobody supplied is found HERE, with
+// the JSON-LD Contexts pane to fix it, rather than at Present. Answers false
+// when the credential cannot be presented, having said why.
+// An ecdsa-sd-2023 credential: selected by JSON pointer exactly as a
+// bbs-2023 one is, derived by ecdsa_sd_2023.js (#476).
+function ldpEcdsaSd() {
+  log.debug("Entering ldpEcdsaSd().");
+  var yes = state.format === sdJwtVc.FORMAT_LDP_VC && !!state.parsed &&
+    state.parsed.ldpSuite === ecdsaSd.CRYPTOSUITE;
+  log.debug("Leaving ldpEcdsaSd(). " + yes);
+  return yes;
+}
+
+function prepareLdpPointers() {
+  log.debug("Entering prepareLdpPointers().");
   var doc = (state.parsed && state.parsed.document) || null;
   if (!doc) {
-    log.debug("Leaving prepareLdpStatements().");
+    log.debug("Leaving prepareLdpPointers(). No document.");
+    return Promise.resolve(false);
+  }
+  var base;
+  try {
+    // Both parsers answer the base proof's mandatoryPointers, which is all
+    // the rows below need.
+    base = (ldpEcdsaSd() ? ecdsaSd : bbs2023).parseBaseProofValue(
+      (doc.proof || {}).proofValue);
+  } catch (e) {
+    var suiteName = ldpEcdsaSd() ? "ecdsa-sd-2023" : "bbs-2023";
+    log.warn("the credential's base proof is unreadable: " + e.message);
+    status("vp_present_status", "This credential's " + suiteName +
+           " proof cannot be derived from: " + e.message + " Issue it " +
+           "again from an issuer that speaks W3C " + suiteName + ".",
+           "vc-bad");
+    log.debug("Leaving prepareLdpPointers(). Unreadable base proof.");
     return Promise.resolve(false);
   }
   var body = Object.assign({}, doc);
   delete body.proof;
-  log.debug("Leaving prepareLdpStatements().");
-  return bbs2023.canonicalizedStatements(body).then(function (statements) {
-    state.statements = statements;
-    // Default to the statements that mention a requested claim. The claim names
-    // come from DCQL; a statement is an N-Quad, so the match is on the
-    // predicate IRI's local name, which is what the context maps those claims
-    // to.
-    state.rows = statements.map(function (line, i) {
-      var wanted = state.requested.some(function (name) {
-        var leaf = String(name).split(".").pop();
-        return line.indexOf("/" + leaf) !== -1 || line.indexOf("#" +
-                            leaf) !== -1 ||
-               new RegExp(leaf.replace(/_(\w)/g, function (m,
-                          c) { return c.toUpperCase(); }))
-                 .test(line);
+  log.debug("Leaving prepareLdpPointers().");
+  return bbs2023.canonize(body).then(function () {
+    var wanted = requestedPointers(doc);
+    state.ldpMandatoryPointers = base.mandatoryPointers;
+    state.rows = bbs2023.leafPointers(doc).map(function (leaf) {
+      var mandatory = base.mandatoryPointers.some(function (m) {
+        return bbs2023.pointerWithin(leaf.pointer, m);
       });
-      return { statementIndex: i, name: "statement " + (i + 1),
-              value: line.trim(),
-               requested: wanted, checked: wanted, encoded: "", error: "" };
+      var requested = wanted.some(function (w) {
+        return bbs2023.pointerWithin(leaf.pointer, w);
+      });
+      return { pointer: leaf.pointer, name: leaf.pointer, value: leaf.value,
+               mandatory: mandatory, requested: requested,
+               checked: mandatory || requested, encoded: "", error: "" };
     });
-    // A requested claim whose value is an OBJECT (credentialStatus) matched
-    // only the statement linking to it; what the object says is in the
-    // statements about the node at the far end, so those come too.
-    var named = state.rows.filter(function (r) { return r.requested; })
-      .map(function (r) { return r.statementIndex; });
-    bbs2023.withDescribedNodes(statements, named).forEach(function (i) {
-      state.rows[i].requested = true;
-      state.rows[i].checked = true;
-    });
-    log.debug("Leaving prepareLdpStatements(). " + statements.length +
-              " statement(s).");
+    state.ldpReady = true;
+    log.debug("Leaving prepareLdpPointers(). " + state.rows.length +
+              " leaf/leaves.");
     return true;
   }).catch(function (e) {
     // jsonld wraps a document loader's refusal in an error of its own whose
@@ -246,9 +429,9 @@ function prepareLdpStatements() {
     // to the person on the status line with what to do. An error-level line
     // would be a console error on a page that is behaving correctly.
     log.warn("could not canonicalize the credential: " + why);
-    status("vp_present_status", "This credential could not be canonicalized, " +
-           "so no bbs-2023 proof can " +
-      "be derived from it: " + why, "vc-bad");
+    status("vp_present_status", "This credential could not be " +
+           "canonicalized, so no bbs-2023 proof can be derived from it: " +
+           why, "vc-bad");
     return false;
   });
 }
@@ -273,12 +456,16 @@ function renderDisclosureTable() {
   var rows = state.rows.map(function (r, i) {
     var valueText = (r.value === undefined) ? "" :
       (typeof r.value === "object" ? JSON.stringify(r.value) : String(r.value));
-    var flag = r.requested
+    var flag = r.predicated
+      ? '<span class="vc-ok">proven by a predicate &mdash; not ' +
+        'revealed</span>'
+      : r.requested
       ? '<span class="vc-ok">asked for</span>'
       : '<span class="vc-bad">not asked for</span>';
     return "<tr>" +
       '<td><input type="checkbox" id="vp_disclose_' + i + '"' + (r.checked ?
-          ' checked="checked"' : '') +
+          ' checked="checked"' : '') + (r.predicated ?
+          ' disabled="disabled"' : '') +
       ' onchange="return vcpresentation2.onSelectionChange(' + i +
           ', this.checked);" /></td>' +
       "<td>" + esc(r.name) + "</td>" +
@@ -291,45 +478,57 @@ function renderDisclosureTable() {
   // With no Disclosures the table would render as an empty box, which reads as
   // a credential that carries nothing. Show what will actually be sent instead,
   // and say why none of it can be withheld.
-  if (state.format === sdJwtVc.FORMAT_LDP_VC) {
-    var stmts = state.rows || [];
+  if (state.format === sdJwtVc.FORMAT_LDP_VC && !ldpWhole() &&
+      !ldpBbs2020()) {
+    var leaves = state.rows || [];
     setHtml("vp_disclosures_table",
       "<thead><tr><th style='width:6%'>Send</th><th " +
-          "style='width:8%'>#</th><th>Canonical statement " +
-      "(N-Quad)</th><th style='width:16%'>This " +
-          "verifier</th></tr></thead><tbody>" +
-      (stmts.length
-        ? stmts.map(function (r, i) {
+          "style='width:34%'>JSON pointer</th><th>Value</th><th " +
+          "style='width:18%'>This verifier</th></tr></thead><tbody>" +
+      (state.ldpReady
+        ? leaves.map(function (r, i) {
+            var shown = typeof r.value === "object" ?
+                JSON.stringify(r.value) : String(r.value);
             return "<tr>" +
               '<td><input type="checkbox" id="vp_disclose_' + i + '"' +
               (r.checked ? ' checked="checked"' : "") +
+              (r.mandatory ? ' disabled="disabled"' : "") +
               ' onchange="return vcpresentation2.onSelectionChange(' + i +
                   ', this.checked);" /></td>' +
-              "<td>" + (r.statementIndex + 1) + "</td>" +
-              '<td class="vc-mono">' + esc(r.value) + "</td>" +
-              "<td>" + (r.requested ? '<span class="vc-ok">asked for</span>'
-                                    : '<span class="vc-bad">not asked ' +
-                                        'for</span>') + "</td></tr>";
+              '<td class="vc-mono">' + esc(r.pointer) + "</td>" +
+              "<td>" + esc(shown) + "</td>" +
+              "<td>" + (r.mandatory ? '<span class="vc-ok">mandatory ' +
+                  '(the issuer\'s)</span>' : r.requested ?
+                  '<span class="vc-ok">asked for</span>' :
+                  '<span class="vc-bad">not asked for</span>') +
+              "</td></tr>";
           }).join("")
-        : "<tr><td colspan='4'>Canonicalizing the credential…</td></tr>") +
+        : "<tr><td colspan='4'>Reading the credential…</td></tr>") +
       "</tbody>");
-    var chosen = stmts.filter(function (r) { return r.checked; }).length;
+    var chosen = leaves.filter(function (r) {
+      return r.checked;
+    }).length;
+    var short = leaves.filter(function (r) {
+      return r.requested && !r.checked;
+    });
     setHtml("vp_selection_summary",
       '<span class="vc-status vc-pending">This credential is ' +
-          '<code>ldp_vc</code> with a ' +
-      '<code>bbs-2023</code> proof, so the unit of disclosure is the ' +
-          'canonical STATEMENT, not a claim: ' +
-      "these " + stmts.length +
-          " statements are what the issuer actually signed, and " + chosen +
-      " will be sent. The count will not match the number of claims — one " +
-          "claim can be several " +
-      "statements. Each presentation derives a FRESH proof, so two " +
-          "presentations of this credential " +
-      "cannot be linked to each other.</span>");
-    log.debug("Leaving renderDisclosures(). ldp_vc — " + stmts.length +
-              " statement(s).");
-    log.debug("Leaving renderDisclosureTable().");
-    return;
+          '<code>ldp_vc</code> with a <code>bbs-2023</code> proof, so ' +
+          "what is chosen is a JSON pointer, and what is sent is a reveal " +
+          "document — the credential cut down to the " + chosen + " of " +
+          leaves.length + " values chosen here — with a derived proof the " +
+          "verifier checks against the issuer's key. The issuer's " +
+          "mandatory pointers (" + esc((state.ldpMandatoryPointers ||
+          []).join(", ") || "none") + ") are always revealed. Each " +
+          "presentation derives a FRESH proof, so two presentations of " +
+          "this credential cannot be linked to each other.</span>" +
+      (short.length ? ' <span class="vc-bad">Not selected, though the ' +
+          "verifier asked for it: " + esc(short.map(function (r) {
+            return r.pointer;
+          }).join(", ")) + ".</span>" : ""));
+    log.debug("Leaving renderDisclosureTable(). ldp_vc — " + leaves.length +
+              " leaf/leaves.");
+    return short.length === 0;
   }
   if (!state.selectable) {
     var claims = (state.parsed && state.parsed.claims) || {};
@@ -350,14 +549,17 @@ function renderDisclosureTable() {
           }).join("")
         : "<tr><td colspan='3'>This credential carries no claims.</td></tr>") +
       "</tbody>");
+    var what = ldpWhole() ? "ldp_vc secured with " +
+        esc(state.parsed.ldpSuite) :
+      sdJwtVc.isJoseCose(state.format) ? esc(state.format) : "jwt_vc_json";
     setHtml("vp_selection_summary",
-      '<span class="vc-status vc-pending">This credential is jwt_vc_json, ' +
-          'which has no selective ' +
+      '<span class="vc-status vc-pending">This credential is ' + what +
+          ', which has no selective ' +
       'disclosure: all ' + names.length +
           ' claim(s) above are sent, including any this verifier did not ' +
       'ask for. Withholding one would mean asking the issuer for a different ' +
           'credential.</span>');
-    log.debug("Leaving renderDisclosures(). jwt_vc_json — " + names.length +
+    log.debug("Leaving renderDisclosures(). " + what + " — " + names.length +
               " claim(s), none selectable.");
     log.debug("Leaving renderDisclosureTable().");
     return;
@@ -379,7 +581,8 @@ function renderDisclosureTable() {
                         .map(function (r) { return r.name; });
   setHtml("vp_selection_summary",
     "Selected " + selectedEncoded().length + " of " + state.rows.length +
-        " Disclosure(s). " +
+        (state.format === sdJwtVc.FORMAT_MSO_MDOC ?
+         " mdoc element(s) (namespace/element). " : " Disclosure(s). ") +
     (missing.length
       ? '<span class="vc-bad">Not selected, though the verifier ' +
           'asked for it: ' + esc(missing.join(", ")) +
@@ -413,6 +616,18 @@ function buildPresentation() {
       "vp_holder_private_jwk");
   var priv = holderKey.jwk;
   renderHolderKeyRow(holderKey);
+  // A self-issued ID Token alone presents no credential: there is nothing to
+  // select or derive, only the token to sign.
+  if (state.idTokenOnly) {
+    state.built = null;
+    setValue("vp_presentation", "");
+    setValue("vp_kb_jwt", "");
+    setJson("vp_kb_header", null);
+    setJson("vp_kb_payload", null);
+    setJson("vp_presented_claims", null);
+    log.debug("Leaving buildPresentation(). ID Token only.");
+    return finishResponse();
+  }
   if (!state.parsed || !params.client_id || !params.nonce) {
     setValue("vp_presentation", "");
     setValue("vp_kb_jwt", "");
@@ -454,73 +669,130 @@ function buildPresentation() {
               ", holding " + state.heldFormat + ".");
     return Promise.resolve(false);
   }
+  // The query makes this credential unanswerable (a values mismatch, no
+  // claim_sets option, a predicate it cannot prove without disclosing):
+  // nothing is built, so nothing can be sent but a refusal.
+  if (state.planned && state.planned.blocking.length) {
+    state.built = null;
+    setValue("vp_presentation", "");
+    setValue("vp_kb_jwt", "");
+    setValue("vp_assembled_call", "");
+    status("vp_present_status", "This credential is not returned: " +
+      state.planned.blocking.join(" ") + " Refuse to tell the Verifier.",
+      "vc-bad");
+    log.debug("Leaving buildPresentation(). The query refuses it.");
+    return Promise.resolve(false);
+  }
+  if (ldpBbs2020()) {
+    // MATTR's derivation: frame the credential to the checked claims and
+    // prove the issuer signed what is left. The derived proof's nonce is the
+    // request's, so it cannot be replayed to another request even without
+    // the holder's VP around it.
+    log.debug("Leaving buildPresentation(). BbsBlsSignature2020.");
+    return bbsBls2020.deriveProof(state.parsed.document, bbs2020Frame(), {
+      nonce: String(params.nonce || "") || undefined
+    }).then(function (derived) {
+      state.built = { presentation: JSON.stringify(derived.document),
+        vpElement: derived.document, format: sdJwtVc.FORMAT_LDP_VC };
+      setValue("vp_presentation", state.built.presentation);
+      setText("vp_sd_hash", "");
+      setValue("vp_kb_jwt", "");
+      setJson("vp_kb_header", { type: bbsBls2020.PROOF_TYPE,
+        disclosed: derived.disclosedStatements.length,
+        of: derived.statementCount });
+      setJson("vp_kb_payload", derived.disclosedStatements);
+      setJson("vp_presented_claims", [].concat(
+        derived.document.credentialSubject || [])[0] || {});
+      status("vp_present_status", "Derived a " + bbsBls2020.PROOF_TYPE +
+        " disclosing " + derived.disclosedStatements.length + " of " +
+        derived.statementCount + " statements.", "vc-ok");
+      return finishResponse();
+    }).catch(function (e) {
+      log.error("could not derive the BbsBlsSignatureProof2020: " +
+                e.message);
+      status("vp_present_status", "Could not derive the proof: " +
+             e.message, "vc-bad");
+      return false;
+    });
+  }
+  if (ldpWhole()) {
+    // The whole credential, exactly as the issuer signed it: its proof covers
+    // every statement, so nothing can be left out without breaking it. The
+    // holder's VP around it is added by finishResponse().
+    var doc = state.parsed.document;
+    state.built = { presentation: JSON.stringify(doc), vpElement: doc,
+                    format: sdJwtVc.FORMAT_LDP_VC };
+    setValue("vp_presentation", state.built.presentation);
+    setText("vp_sd_hash", "");
+    setValue("vp_kb_jwt", "");
+    setJson("vp_kb_header", null);
+    setJson("vp_kb_payload", null);
+    setJson("vp_presented_claims", state.parsed.claims);
+    status("vp_present_status", "The whole " + state.parsed.ldpSuite +
+           " credential goes, inside the holder's Verifiable Presentation.",
+           "vc-ok");
+    log.debug("Leaving buildPresentation(). ldp_vc, whole.");
+    return finishResponse();
+  }
   if (state.format === sdJwtVc.FORMAT_LDP_VC) {
-    // No holder private key is needed: the BBS derived proof IS the holder's
-    // act.
+    // No holder private key is needed for the derived proof itself; a VP
+    // around it, when the request needs one, is wrapLdpForHolder()'s.
     //
-    // Canonicalization is async, and onload calls this once before it finishes.
-    // That first call has no statements and no issuer key, so it returns
-    // quietly rather than deriving from nothing — attempting it logged an error
-    // on every load, which is both noise and a console error the suite fails
-    // on.
-    if (!state.statements || !state.issuerBbsKey) {
-      status("vp_present_status",
-        "Canonicalizing the credential so its statements can be chosen…",
-            "vc-pending");
-      log.debug("Leaving buildPresentation(). ldp_vc not canonicalized yet.");
+    // The rows are prepared asynchronously, and onload calls this once
+    // before that finishes. That first call has nothing to derive from, so
+    // it returns quietly rather than deriving from nothing — attempting it
+    // logged an error on every load, which is both noise and a console error
+    // the suite fails on.
+    if (!state.ldpReady) {
+      status("vp_present_status", "Reading the credential so its claims " +
+             "can be chosen…", "vc-pending");
+      log.debug("Leaving buildPresentation(). ldp_vc not read yet.");
       return Promise.resolve(false);
     }
-    var chosenIdx = selectedStatementIndexes();
+    if (ldpEcdsaSd()) {
+      log.debug("Leaving buildPresentation(). ecdsa-sd-2023.");
+      return deriveEcdsaSd();
+    }
     log.debug("Leaving buildPresentation().");
-    return bbs2023.deriveProof(state.parsed.document, state.issuerBbsKey,
-                               chosenIdx,
-                               new TextEncoder().encode(params.nonce))
-      .then(function (derived) {
-        // What travels. A bbs-2023 presentation must carry more than the proof:
-        // the verifier needs the statements being disclosed and their indexes
-        // to check the proof at all, and the issuer's proof options to rebuild
-        // the header the base proof was bound to. Sent as one JSON object; see
-        // the shape note in the STS's verifyLdpVc().
-        var proofOptions =
-            Object.assign({ "@context": state.parsed.document["@context"] },
-                                         state.parsed.document.proof || {});
-        delete proofOptions.proofValue;
-        var envelope = {
-          cryptosuite: "bbs-2023",
-          proof: bbs2023.bytesToB64u(derived.proof),
-          disclosedIndexes: derived.disclosedIndexes,
-          disclosedStatements: derived.disclosedStatements,
-          proofOptions: proofOptions
-        };
-        state.built = { presentation: JSON.stringify(envelope),
-            derived: derived };
-        setValue("vp_presentation", state.built.presentation);
-        setText("vp_sd_hash", "");
-        setValue("vp_kb_jwt", "");
-        setJson("vp_kb_header", { cryptosuite: "bbs-2023",
-                disclosed: derived.disclosedIndexes.length,
-                                  of: derived.statements.length });
-        setJson("vp_kb_payload", derived.disclosedStatements);
-        setJson("vp_vp_token",
-                sdJwtVp.vpToken(sdJwtVp.firstCredentialQueryId(state.dcql),
-                                               state.built.presentation));
-        renderAssembledCall();
-        setJson("vp_presented_claims", derived.disclosedStatements);
-        status("vp_present_status", "Derived a bbs-2023 proof disclosing " +
-          derived.disclosedIndexes.length + " of " + derived.statements.length +
-              " statements.", "vc-ok");
-        log.debug("Leaving buildPresentation(). bbs-2023 proof derived.");
-        return true;
-      })
-      .catch(function (e) {
-        log.error("could not derive the bbs-2023 proof: " + e.message);
-        status("vp_present_status", "Could not derive the proof: " + e.message,
-               "vc-bad");
-        return false;
-      });
+    // The nonce is the BBS presentation header, so a bare reveal document
+    // is bound to this request, and one inside a VP is bound twice.
+    return bbs2023.deriveProof(state.parsed.document, {
+      selectivePointers: selectedPointers(),
+      presentationHeader: params.nonce
+    }).then(function (derived) {
+      var revealed = derived.document;
+      state.built = { presentation: JSON.stringify(revealed),
+          vpElement: revealed, derived: derived,
+          format: sdJwtVc.FORMAT_LDP_VC };
+      setValue("vp_presentation", state.built.presentation);
+      setText("vp_sd_hash", "");
+      setValue("vp_kb_jwt", "");
+      setJson("vp_kb_header", { cryptosuite: "bbs-2023",
+        mandatoryStatements: derived.mandatoryCount,
+        disclosed: derived.selectiveIndexes.length,
+        of: derived.statementCount,
+        presentationHeader: params.nonce });
+      setJson("vp_kb_payload", revealed.proof);
+      setJson("vp_presented_claims", revealed.credentialSubject || null);
+      status("vp_present_status", "Derived a bbs-2023 proof: the reveal " +
+        "document carries " + derived.mandatoryCount + " mandatory " +
+        "statement(s) and " + derived.selectiveIndexes.length + " of " +
+        derived.statementCount + " selectively disclosable ones.", "vc-ok");
+      log.debug("Leaving buildPresentation(). bbs-2023 proof derived.");
+      return finishResponse();
+    }).catch(function (e) {
+      log.error("could not derive the bbs-2023 proof: " + e.message);
+      status("vp_present_status", "Could not derive the proof: " +
+             e.message, "vc-bad");
+      return false;
+    });
   }
   var keyBinding = sdJwtVp.requiresKeyBinding(state.credentialQuery);
-  if (keyBinding && !priv) {
+  // A BBS JPT has no holder key: its presentation proof is the binding to
+  // this request (JPA section 7.3.2), so none is needed (#478).
+  var bbsJpt = state.format === sdJwtVc.FORMAT_JPT && state.parsed &&
+    state.parsed.header && state.parsed.header.alg === "BBS";
+  if (keyBinding && !priv && !bbsJpt) {
     status("vp_present_status",
       "This verifier requires a holder proof, but the private half of the " +
           "holder key is not available, " +
@@ -540,9 +812,30 @@ function buildPresentation() {
     parsed: state.parsed,
     selected: selectedEncoded(),
     holderPrivateJwk: priv,
-    aud: params.client_id,
+    // The holder binding's audience: the Client Identifier, or, for an
+    // unsigned Digital Credentials API request, origin:<origin> (Appendix
+    // A.4).
+    aud: vpProtocols.responseAudience(params, state.request),
     nonce: params.nonce,
-    keyBinding: keyBinding
+    keyBinding: keyBinding,
+    // transaction_data (section 8.4): the request's own, and which DCQL
+    // credential query is being answered, so buildPresentation can bind the
+    // ones that name it into the KB-JWT.
+    params: params,
+    credentialQueryId: (state.credentialQuery && state.credentialQuery.id) ||
+      sdJwtVp.firstCredentialQueryId(state.dcql),
+    // The holder a VC-JOSE-COSE presentation names: the DID the credential's
+    // subject is, when it is one (#477).
+    holderId: /^did:/.test(String((state.parsed || {}).subject || "")) ?
+      state.parsed.subject : undefined,
+    // An mdoc's device signature covers the session transcript, which names
+    // where the answer goes and, under direct_post.jwt, the key it is
+    // encrypted to (OpenID4VP 1.0 Appendix B.2.6.1).
+    responseUri: vpProtocols.responseTarget(params),
+    encryptionJwk: responseEncryptionKey(),
+    // AnonCreds: the predicates the query asks to be proven (vp_query.js).
+    predicates: state.planned && state.planned.plan ?
+      state.planned.plan.anoncredsPredicates : []
   }).then(function (built) {
     state.built = built;
     setValue("vp_presentation", built.presentation);
@@ -554,6 +847,18 @@ function buildPresentation() {
       setValue("vp_kb_jwt", built.vp.jwt);
       setJson("vp_kb_header", built.vp.header);
       setJson("vp_kb_payload", built.vp.payload);
+    } else if (built.mdoc) {
+      // An mdoc's holder proof is its device signature, over the session
+      // transcript: shown where a KB-JWT would be.
+      setValue("vp_kb_jwt", "");
+      setJson("vp_kb_header", { deviceAuth: "deviceSignature",
+        cose: "COSE_Sign1, ES256 (-7), detached",
+        signedOver: "DeviceAuthenticationBytes",
+        disclosed: built.mdoc.disclosed.map(function (it) {
+          return it.namespace + "/" + it.elementIdentifier;
+        }) });
+      setJson("vp_kb_payload", { SessionTranscript:
+        cbor.toPlain(built.mdoc.transcript) });
     } else if (built.kb) {
       setValue("vp_kb_jwt", built.kb.jwt);
       setJson("vp_kb_header", built.kb.header);
@@ -563,16 +868,12 @@ function buildPresentation() {
       setJson("vp_kb_header", null);
       setJson("vp_kb_payload", null);
     }
-    setJson("vp_vp_token",
-            sdJwtVp.vpToken(sdJwtVp.firstCredentialQueryId(state.dcql),
-            built.presentation));
-    renderAssembledCall();
     // What a verifier will end up knowing, computed from the bytes being sent.
     var presented = sdJwtVp.presentedClaims(built.presentation);
     setJson("vp_presented_claims", presented.claims);
     log.debug("Leaving buildPresentation(). Built " +
               built.presentation.length + " characters.");
-    return true;
+    return finishResponse();
   }).catch(function (e) {
     log.error("could not build the presentation: " + e.message);
     status("vp_present_status", "Could not build the presentation: " +
@@ -581,44 +882,323 @@ function buildPresentation() {
   });
 }
 
-// The call Present will make. With direct_post the wallet POSTs a form to the
-// verifier's Response URI (OID4VP section 8.2); with any other response mode
-// the answer would go back through the browser instead, and this page says so
-// rather than pretending to implement it.
+// ---------------------------------------------------------------------------
+// The ANSWER around the presentation, as the chosen protocol and the request's
+// response_mode make it (vp_protocols.js):
+//
+//   * an ldp_vc credential bound to its holder travels inside a W3C
+//     VerifiablePresentation with the holder's own Data Integrity proof —
+//     whenever the query requires holder binding, which is DCQL's default, and
+//     always beside a SIOPv2 ID Token, which has to name the same key;
+//   * a SIOPv2 request gets a self-issued ID Token, signed by the key the
+//     credential is bound to (or, alone, by a pairwise key if chosen);
+//   * direct_post.jwt encrypts the lot to the Verifier's key, and the
+//     delivery is worked out once so Present does exactly what is shown.
+// ---------------------------------------------------------------------------
+
+// The private key a presentation's holder proof — and a SIOPv2 ID Token
+// beside it — is signed with, for whichever format is held.
+function holderSigningKey() {
+  log.debug("Entering holderSigningKey().");
+  var cnf = credentialCnfJwk();
+  if (!cnf && state.parsed && state.parsed.format === sdJwtVc.FORMAT_LDP_VC) {
+    var subject = ldpHolderDid();
+    if (/^did:jwk:/.test(subject)) {
+      cnf = didLib.didJwkToJwk(subject);
+    } else if (/^did:key:/.test(subject)) {
+      cnf = didLib.didKeyToJwk(subject);
+    }
+  }
+  log.debug("Leaving holderSigningKey().");
+  return sdJwtVc.boundPrivateJwk(cnf, "vp_holder_private_jwk");
+}
+
+// The DID an ldp_vc names its subject by: who the holder is, for the VP.
+function ldpHolderDid() {
+  log.debug("Entering ldpHolderDid().");
+  var doc = (state.parsed && state.parsed.document) || {};
+  var subject = [].concat(doc.credentialSubject || [])[0] || {};
+  log.debug("Leaving ldpHolderDid().");
+  return String(subject.id || "");
+}
+
+// Whether an ldp_vc goes inside a holder-signed VP.
+function ldpNeedsHolderProof() {
+  log.debug("Entering ldpNeedsHolderProof().");
+  var needs = !!state.built && state.built.format === sdJwtVc.FORMAT_LDP_VC &&
+    (sdJwtVp.requiresKeyBinding(state.credentialQuery) || state.wantsIdToken);
+  log.debug("Leaving ldpNeedsHolderProof(). " + needs);
+  return needs;
+}
+
+function wrapLdpForHolder() {
+  log.debug("Entering wrapLdpForHolder().");
+  var params = (state.request && state.request.params) || {};
+  if (!ldpNeedsHolderProof()) {
+    log.debug("Leaving wrapLdpForHolder(). Not needed.");
+    return Promise.resolve(true);
+  }
+  var holder = ldpHolderDid();
+  var key = holderSigningKey();
+  if (!holder || !key.jwk) {
+    status("vp_present_status", "This request needs a holder proof around " +
+      "the ldp_vc presentation, and " + (holder ? "the private key of " +
+      holder + " is not available" + (key.problem ? ": " + key.problem : "") :
+      "the credential names no credentialSubject.id to be the holder") + ".",
+      "vc-bad");
+    log.debug("Leaving wrapLdpForHolder(). No holder key.");
+    return Promise.resolve(false);
+  }
+  log.debug("Leaving wrapLdpForHolder().");
+  return vpProtocols.ldpVerifiablePresentation({
+    credential: state.built.vpElement,
+    holder: holder,
+    privateJwk: key.jwk,
+    nonce: params.nonce,
+    aud: params.client_id,
+    // The suite is the one this key signs that the Verifier said it accepts
+    // (vc_formats.holderSuiteFor()), so nobody has to pick a valid pair.
+    accepts: verifierLdpAccepts()
+  }).then(function (vp) {
+    state.built.envelope = state.built.vpElement;
+    state.built.vpElement = vp;
+    state.built.presentation = JSON.stringify(vp);
+    setValue("vp_presentation", state.built.presentation);
+    setJson("vp_kb_header", vp.proof);
+    log.debug("Leaving wrapLdpForHolder(). Wrapped.");
+    return true;
+  }).catch(function (e) {
+    status("vp_present_status", "Could not sign the holder's Verifiable " +
+           "Presentation: " + e.message, "vc-bad");
+    log.debug("Leaving wrapLdpForHolder(). " + e.message);
+    return false;
+  });
+}
+
+// What the Verifier said it accepts for ldp_vc: client_metadata's
+// vp_formats_supported (OpenID4VP 1.0 section 11.1), which may name
+// cryptosuite_values and proof_type_values. Empty when it said nothing.
+function verifierLdpAccepts() {
+  log.debug("Entering verifierLdpAccepts().");
+  var meta = (state.request && state.request.clientMetadata) || {};
+  var formats = meta.vp_formats_supported || meta.vp_formats || {};
+  log.debug("Leaving verifierLdpAccepts().");
+  return formats[sdJwtVc.FORMAT_LDP_VC] || {};
+}
+
+// The pairwise key for this Verifier: made the first time, then reused so the
+// person is the same subject to it next time and a different one to every
+// other Verifier. Kept unless the holder said not to.
+function pairwiseKey(clientId) {
+  log.debug("Entering pairwiseKey().");
+  var keep = sdJwtVc.get(sdJwtVp.KEYS.SIOP_SAVE_PAIRWISE) !== "0";
+  var all = (keep && sdJwtVc.getJson(sdJwtVp.KEYS.SIOP_PAIRWISE_KEYS)) || {};
+  if (all[clientId]) {
+    log.debug("Leaving pairwiseKey(). Reused.");
+    return Promise.resolve(all[clientId]);
+  }
+  if (state.pairwiseThisLoad && state.pairwiseThisLoad[clientId]) {
+    log.debug("Leaving pairwiseKey(). This page load's.");
+    return Promise.resolve(state.pairwiseThisLoad[clientId]);
+  }
+  log.debug("Leaving pairwiseKey(). New.");
+  return vpProtocols.generateSubjectKey().then(function (jwk) {
+    state.pairwiseThisLoad = state.pairwiseThisLoad || {};
+    state.pairwiseThisLoad[clientId] = jwk;
+    if (keep) {
+      all[clientId] = jwk;
+      sdJwtVc.setJson(sdJwtVp.KEYS.SIOP_PAIRWISE_KEYS, all);
+    }
+    return jwk;
+  });
+}
+
+// The ID Token's key: the credential's holder key beside a presentation (the
+// two must name the same key, or the identity and the credential are about
+// two different people), and for an ID Token alone the holder key or a
+// pairwise one, as chosen.
+function idTokenKey() {
+  log.debug("Entering idTokenKey().");
+  var params = (state.request && state.request.params) || {};
+  var pairwise = el("vp_siop_pairwise");
+  if (state.idTokenOnly && pairwise && pairwise.checked) {
+    log.debug("Leaving idTokenKey(). Pairwise.");
+    return pairwiseKey(params.client_id).then(function (jwk) {
+      return { jwk: jwk, boundTo: "a pairwise key for " + params.client_id };
+    });
+  }
+  var key = holderSigningKey();
+  if (!key.jwk && state.idTokenOnly) {
+    // No credential and no holder key: a pairwise key is the only subject
+    // this wallet has.
+    log.debug("Leaving idTokenKey(). Pairwise, for want of a holder key.");
+    return pairwiseKey(params.client_id).then(function (jwk) {
+      return { jwk: jwk, boundTo: "a pairwise key for " + params.client_id +
+               " (this wallet holds no holder key)" };
+    });
+  }
+  log.debug("Leaving idTokenKey().");
+  return Promise.resolve(key);
+}
+
+function chosenSubjectSyntax() {
+  log.debug("Entering chosenSubjectSyntax().");
+  var select = el("vp_subject_syntax");
+  var preferred = (select && select.value) ||
+      sdJwtVc.get(sdJwtVp.KEYS.SIOP_SUBJECT_SYNTAX) || "";
+  log.debug("Leaving chosenSubjectSyntax().");
+  return vpProtocols.chooseSubjectSyntax(
+      state.request && state.request.clientMetadata, preferred);
+}
+
+function buildIdToken() {
+  log.debug("Entering buildIdToken().");
+  var params = (state.request && state.request.params) || {};
+  if (!state.wantsIdToken) {
+    setValue("vp_id_token", "");
+    setJson("vp_id_token_header", null);
+    setJson("vp_id_token_payload", null);
+    log.debug("Leaving buildIdToken(). Not asked for.");
+    return Promise.resolve(null);
+  }
+  var syntax = chosenSubjectSyntax();
+  if (!syntax) {
+    log.debug("Leaving buildIdToken(). No common subject syntax.");
+    return Promise.reject(new Error("the Verifier accepts no subject " +
+        "syntax this wallet can make, so the only answer is " +
+        "subject_syntax_types_not_supported (Refuse sends it)."));
+  }
+  log.debug("Leaving buildIdToken().");
+  return idTokenKey().then(function (key) {
+    if (!key.jwk) {
+      throw new Error("there is no key to sign the self-issued ID Token " +
+        "with" + (key.problem ? ": " + key.problem : "."));
+    }
+    return vpProtocols.selfIssuedIdToken({
+      privateJwk: key.jwk, syntax: syntax, aud: params.client_id,
+      nonce: params.nonce
+    }).then(function (t) {
+      t.boundTo = key.boundTo;
+      setValue("vp_id_token", t.jwt);
+      setJson("vp_id_token_header", t.header);
+      setJson("vp_id_token_payload", t.payload);
+      setText("vp_id_token_note", "Signed with " + (key.boundTo ||
+        "the holder key") + ", as a " + syntax + " subject. It proves " +
+        "control of that key and nothing else: every claim in it is the " +
+        "person's own say-so.");
+      log.debug("Leaving buildIdToken(). " + t.payload.sub);
+      return t;
+    });
+  });
+}
+
+function finishResponse() {
+  log.debug("Entering finishResponse().");
+  var params = (state.request && state.request.params) || {};
+  var built = null;
+  log.debug("Leaving finishResponse().");
+  return wrapLdpForHolder().then(function (ok) {
+    if (!ok) {
+      return false;
+    }
+    built = state.built;
+    return buildIdToken().then(function (idToken) {
+      var vpToken = built ? sdJwtVp.vpToken(
+          sdJwtVp.firstCredentialQueryId(state.dcql),
+          built.vpElement || built.presentation) : null;
+      // A presentation_definition (OpenID4VP drafts) is answered as the
+      // drafts did: the vp_token IS the presentation, and a
+      // presentation_submission maps the Input Descriptor to it.
+      var submission = null;
+      if (built && state.language === "pe" && state.planned.item) {
+        var pe = sdJwtVp.peAnswer(state.planned.model, state.planned.item,
+                                  built);
+        vpToken = pe.vpToken;
+        submission = pe.submission;
+      }
+      state.submission = submission;
+      setJson("vp_presentation_submission", submission);
+      var fields = vpProtocols.responseFields({
+        vpToken: vpToken, idToken: idToken ? idToken.jwt : "",
+        presentationSubmission: submission,
+        state: params.state });
+      setJson("vp_vp_token", vpToken);
+      var mode = vpProtocols.responseMode(params);
+      var encrypting = (mode === "direct_post.jwt" ||
+          mode === "dc_api.jwt") ?
+        vpProtocols.encryptResponse({ fields: fields,
+          clientMetadata: state.request.clientMetadata,
+          key: responseEncryptionKey(),
+          enc: (el("vp_response_enc") || {}).value }) :
+        Promise.resolve(null);
+      return encrypting.then(function (encryption) {
+        var delivery = vpProtocols.deliveryFor(params, fields, encryption);
+        state.response = { fields: fields, idToken: idToken,
+                           encryption: encryption, delivery: delivery };
+        renderEncryption(encryption);
+        setValue("vp_assembled_call", vpProtocols.describeDelivery(delivery));
+        return true;
+      });
+    });
+  }).catch(function (e) {
+    state.response = null;
+    log.warn("could not finish the response: " + e.message);
+    status("vp_present_status", "Could not build the answer: " + e.message,
+           "vc-bad");
+    setValue("vp_assembled_call", "");
+    return false;
+  });
+}
+
+function renderEncryption(encryption) {
+  log.debug("Entering renderEncryption().");
+  var row = el("vp_encryption_pane");
+  if (row) row.style.display = encryption ? "" : "none";
+  if (encryption) {
+    setJson("vp_jwe_header", encryption.header);
+    setValue("vp_jwe", encryption.jwe);
+    setText("vp_jwe_note", "Encrypted " + encryption.header.alg + " / " +
+      (encryption.enc || "no enc (HPKE Integrated Encryption)") +
+      " to the Verifier's key " + (encryption.key.kid ||
+      "(no kid)") + " from client_metadata.jwks. Only that Verifier can " +
+      "read what is above; anybody on the way sees this.");
+  }
+  log.debug("Leaving renderEncryption().");
+}
+
+// The Verifier key a direct_post.jwt answer is encrypted to, or null. One
+// choice, made here, because an mdoc's device signature names it and the
+// encryption must then use the same key.
+function responseEncryptionKey() {
+  log.debug("Entering responseEncryptionKey().");
+  var params = (state.request && state.request.params) || {};
+  var mode = vpProtocols.responseMode(params);
+  if (mode !== "direct_post.jwt" && mode !== "dc_api.jwt") {
+    log.debug("Leaving responseEncryptionKey(). Not encrypted.");
+    return null;
+  }
+  var keys = vpProtocols.encryptionKeys(state.request.clientMetadata,
+                                        keySelection());
+  log.debug("Leaving responseEncryptionKey(). " + keys.length + " key(s).");
+  return keys[0] || null;
+}
+
+// How a Verifier key is chosen (#312): the first one this wallet can use, in
+// the Verifier's order — under HAIP only ECDH-ES P-256, and for an mdoc only
+// a key with an RFC 7638 thumbprint, since the session transcript names it.
+function keySelection() {
+  log.debug("Entering keySelection().");
+  log.debug("Leaving keySelection().");
+  return { protocol: sdJwtVp.currentProtocol().id,
+           needsThumbprint: state.format === "mso_mdoc" };
+}
+
+// Kept for the name: every caller that used to draw the call now finishes the
+// whole answer.
 function renderAssembledCall() {
   log.debug("Entering renderAssembledCall().");
-  var params = (state.request && state.request.params) || {};
-  var mode = String(params.response_mode || "fragment");
-  if (!state.built) {
-    setValue("vp_assembled_call", "");
-    log.debug("Leaving renderAssembledCall().");
-    return "";
-  }
-  var form = [];
-  form.push("vp_token=" + encodeURIComponent(JSON.stringify(
-    sdJwtVp.vpToken(sdJwtVp.firstCredentialQueryId(state.dcql),
-                    state.built.presentation))));
-  if (params.state) form.push("state=" + encodeURIComponent(params.state));
-  var body = form.join("&");
-  var text;
-  if (mode === "direct_post") {
-    text = ["POST " + (params.response_uri || "(no response_uri)"),
-            "Content-Type: application/x-www-form-urlencoded",
-            "Content-Length: " + body.length,
-            "",
-            body].join("\n");
-  } else {
-    text = "This request asks for response_mode=" + mode +
-        ", which returns the vp_token through the " +
-           "browser (a redirect to " + (params.redirect_uri ||
-               "(no redirect_uri)") + ") rather than as a " +
-           "POST from the wallet. This workflow implements direct_post; the " +
-               "presentation above is what " +
-           "would travel either way:\n\n" + body;
-  }
-  setValue("vp_assembled_call", text);
-  log.debug("Leaving renderAssembledCall(). mode=" + mode);
-  return text;
+  log.debug("Leaving renderAssembledCall().");
+  return finishResponse();
 }
 
 function onSelectionChange(index, checked) {
@@ -642,7 +1222,9 @@ function onSelectionChange(index, checked) {
 
 function selectRequestedOnly() {
   log.debug("Entering selectRequestedOnly().");
-  state.rows.forEach(function (r) { r.checked = r.requested; });
+  state.rows.forEach(function (r) {
+    r.checked = r.requested || !!r.mandatory;
+  });
   sdJwtVc.setJson(sdJwtVp.KEYS.SELECTED, selectedEncoded());
   renderDisclosureTable();
   buildPresentation().then(function () {
@@ -657,7 +1239,7 @@ function selectRequestedOnly() {
 
 function selectAll() {
   log.debug("Entering selectAll().");
-  state.rows.forEach(function (r) { r.checked = true; });
+  state.rows.forEach(function (r) { r.checked = !r.predicated; });
   sdJwtVc.setJson(sdJwtVp.KEYS.SELECTED, selectedEncoded());
   renderDisclosureTable();
   buildPresentation().then(function () {
@@ -672,53 +1254,152 @@ function selectAll() {
 }
 
 // --- sending it -------------------------------------------------------------
+// Send `delivery` the way it says: the wallet POSTs it, the browser posts it
+// as a form, or the browser is redirected with it. Answers a promise of
+// { ok, statusCode, body, raw } for a POST, and never settles for the other
+// two, because the page is navigating away.
+function deliver(delivery) {
+  log.debug("Entering deliver(). " + delivery.kind + " " + delivery.mode);
+  if (delivery.kind === "redirect") {
+    log.debug("Leaving deliver(). Redirecting.");
+    window.location.href = delivery.url;
+    return new Promise(function () {});
+  }
+  if (delivery.kind === "form") {
+    var form = document.createElement("form");
+    form.method = "POST";
+    form.action = delivery.target;
+    Object.keys(delivery.fields).forEach(function (k) {
+      var input = document.createElement("input");
+      var v = delivery.fields[k];
+      input.type = "hidden";
+      input.name = k;
+      input.value = typeof v === "string" ? v : JSON.stringify(v);
+      form.appendChild(input);
+    });
+    document.body.appendChild(form);
+    log.debug("Leaving deliver(). Submitting the form.");
+    form.submit();
+    return new Promise(function () {});
+  }
+  log.debug("Leaving deliver(). POST.");
+  // Straight from the browser, or through the debugger's api when step 0
+  // says so (sd_jwt_vp.js verifierFetch()).
+  return sdJwtVp.verifierFetch(delivery.target, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: delivery.body
+  }).then(function (r) {
+    return r.text().then(function (text) {
+      var parsed = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        // Not JSON: the raw text is what gets shown.
+      }
+      return { ok: r.ok, statusCode: r.status, body: parsed, raw: text };
+    });
+  });
+}
+
+// What step 3 shows, written BEFORE anything is sent: a redirect or a form
+// post leaves this page and does not come back to write it afterwards.
+function recordSent(response) {
+  log.debug("Entering recordSent().");
+  var params = (state.request && state.request.params) || {};
+  var built = state.built || {};
+  var r = state.response || {};
+  var record = {
+    protocol: sdJwtVp.currentProtocol().id,
+    responseType: params.response_type || "",
+    responseMode: vpProtocols.responseMode(params),
+    delivery: r.delivery ? r.delivery.kind : "",
+    // How the wallet reached the Verifier: from this page, or through the
+    // debugger's api (POST /oid4vp/call). A browser-carried answer (fragment,
+    // query, form_post) is always the browser's.
+    route: r.delivery && r.delivery.kind === "post" && sdJwtVp.viaApi() ?
+        "api" : "browser",
+    presentation: built.presentation || "",
+    format: built.format || state.format || "",
+    kbJwt: built.kb ? built.kb.jwt : "",
+    kbPayload: built.kb ? built.kb.payload : null,
+    sdHash: built.sdHash || "",
+    selected: selectedEncoded(),
+    requested: state.idTokenOnly ? [] : state.requested,
+    // The query language, the AnonCreds request the presentation answers,
+    // and the predicates proven without disclosure (#474).
+    queryLanguage: state.language || "",
+    anoncredsRequest: built.anoncredsRequest || null,
+    presentationSubmission: state.submission || null,
+    predicates: state.planned && state.planned.plan ?
+      state.planned.plan.predicates : [],
+    idToken: r.idToken ? r.idToken.jwt : "",
+    idTokenPayload: r.idToken ? r.idToken.payload : null,
+    idTokenHeader: r.idToken ? r.idToken.header : null,
+    idTokenSyntax: r.idToken ? r.idToken.syntax : "",
+    encryption: r.encryption ? { header: r.encryption.header,
+      enc: r.encryption.enc, kid: r.encryption.key.kid || "",
+      plaintext: r.encryption.plaintext, jwe: r.encryption.jwe } : null,
+    holderBinding: built.envelope ? "VerifiablePresentation, " +
+      vcFormats.ldpSuiteOf((built.vpElement || {}).proof) : "",
+    sentAt: new Date().toISOString(),
+    responseUri: r.delivery ? r.delivery.target : "",
+    // The public key the answer was encrypted to: an mdoc's device signature
+    // names it, so step 3 needs it to re-check that signature.
+    encryptionJwk: r.encryption ? r.encryption.key : null,
+    clientId: params.client_id,
+    nonce: params.nonce,
+    state: params.state || "",
+    accepted: response ? !!response.ok : null,
+    statusCode: response ? response.statusCode : 0,
+    response: response ? (response.body || response.raw) :
+      "(handed to the browser: " + (r.delivery ? r.delivery.mode : "") +
+      " — the Verifier's answer is whatever page it shows next)"
+  };
+  sdJwtVc.setJson(sdJwtVp.KEYS.PRESENTATION, record);
+  log.debug("Leaving recordSent().");
+  return record;
+}
+
 function present() {
   log.debug("Entering present().");
-  var params = (state.request && state.request.params) || {};
-  if (!state.built) {
-    status("vp_present_status", "There is no presentation built yet.",
-           "vc-bad");
+  if (!state.response || !state.response.delivery) {
+    status("vp_present_status", "There is no answer built yet.", "vc-bad");
     log.debug("Leaving present().");
     return false;
   }
-  if (String(params.response_mode || "") !== "direct_post") {
-    status("vp_present_status",
-      "This workflow sends the presentation with response_mode=direct_post; " +
-          "this request asked for " +
-      (params.response_mode || "the OAuth 2.0 default") + ".", "vc-bad");
-    log.debug("Leaving present().");
+  var delivery = state.response.delivery;
+  if (delivery.kind === "dcapi") {
+    // The Digital Credentials API returns the answer to the caller of
+    // navigator.credentials.get(). This wallet is a page, not a platform
+    // wallet the browser can invoke, so it SHOWS the data object it would
+    // hand back rather than posting it anywhere (Appendix A).
+    recordSent(null);
+    var dcBox = el("vp_response_body");
+    if (dcBox) {
+      dcBox.style.display = "block";
+      dcBox.textContent = JSON.stringify(delivery.dataObject, null, 2);
+    }
+    recordSent({ ok: true, statusCode: 0, body: delivery.dataObject,
+                 raw: delivery.body });
+    status("vp_present_status", "This is the Digital Credentials API " +
+      "response object the wallet returns to the caller of " +
+      "navigator.credentials.get(). Opening step 3 …", "vc-ok");
+    window.location.href = sdJwtVp.STEP3_URL;
+    log.debug("Leaving present(). DC API data object.");
     return false;
   }
-  if (!params.response_uri) {
-    status("vp_present_status",
-           "The request has no response_uri to post the presentation to.",
-           "vc-bad");
+  if (!delivery.target) {
+    status("vp_present_status", "The request names nowhere to send the " +
+           "answer (" + delivery.mode + ").", "vc-bad");
     log.debug("Leaving present().");
     return false;
   }
   disable("vp_present_button", true);
-  status("vp_present_status", "Presenting to " + params.response_uri + " …",
-         "vc-pending");
-  var body = "vp_token=" + encodeURIComponent(JSON.stringify(
-    sdJwtVp.vpToken(sdJwtVp.firstCredentialQueryId(state.dcql),
-                    state.built.presentation))) +
-    (params.state ? "&state=" + encodeURIComponent(params.state) : "");
-  fetch(params.response_uri, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body
-  })
-    .then(function (r) {
-      return r.text().then(function (text) {
-        var parsed = null;
-        try {
-          parsed = JSON.parse(text);
-        } catch (e) {
-          // Not JSON: the raw text is what gets shown.
-        }
-        return { ok: r.ok, statusCode: r.status, body: parsed, raw: text };
-      });
-    })
+  status("vp_present_status", "Answering " + delivery.target + " by " +
+         delivery.mode + " …", "vc-pending");
+  recordSent(null);
+  deliver(delivery)
     .then(function (response) {
       var box = el("vp_response_body");
       if (box) {
@@ -728,28 +1409,13 @@ function present() {
       }
       // Whatever the verifier said, the wallet keeps a record of what it sent:
       // step 3 shows both sides.
-      sdJwtVc.setJson(sdJwtVp.KEYS.PRESENTATION, {
-        presentation: state.built.presentation,
-        kbJwt: state.built.kb ? state.built.kb.jwt : "",
-        kbPayload: state.built.kb ? state.built.kb.payload : null,
-        sdHash: state.built.sdHash,
-        selected: selectedEncoded(),
-        requested: state.requested,
-        sentAt: new Date().toISOString(),
-        responseUri: params.response_uri,
-        clientId: params.client_id,
-        nonce: params.nonce,
-        state: params.state || "",
-        accepted: !!response.ok,
-        statusCode: response.statusCode,
-        response: response.body || response.raw
-      });
+      recordSent(response);
       if (!response.ok) {
         var err = (response.body && (response.body.error_description ||
             response.body.error)) ||
                   ("HTTP " + response.statusCode);
         status("vp_present_status",
-          "The verifier refused the presentation: " + err +
+          "The verifier refused the response: " + err +
               " Step 3 shows what it answered.",
           "vc-bad");
         disable("vp_present_button", false);
@@ -758,13 +1424,13 @@ function present() {
         return;
       }
       status("vp_present_status",
-             "The verifier accepted the presentation. Opening step 3 …",
+             "The verifier accepted the response. Opening step 3 …",
              "vc-ok");
       window.location.href = sdJwtVp.STEP3_URL;
     })
     .catch(function (e) {
-      log.error("the presentation could not be sent: " + e.message);
-      status("vp_present_status", "The presentation could not be sent: " +
+      log.error("the response could not be sent: " + e.message);
+      status("vp_present_status", "The response could not be sent: " +
              e.message, "vc-bad");
       disable("vp_present_button", false);
     });
@@ -772,32 +1438,47 @@ function present() {
   return false;
 }
 
-// Refusing is an answer, and OID4VP has one for it: access_denied to the same
-// Response URI (section 8.4). The verifier learns the request was seen and
-// declined — which is not the same as never having arrived.
+// Refusing is an answer, and both protocols have one: OpenID4VP's
+// access_denied (section 8.5) and SIOPv2's user_cancelled — or
+// subject_syntax_types_not_supported, when the wallet cannot make a subject
+// the Verifier accepts. It goes back the way an answer would, encrypted
+// under direct_post.jwt.
 function refuse() {
   log.debug("Entering refuse().");
   var params = (state.request && state.request.params) || {};
-  if (!params.response_uri) {
+  if (!vpProtocols.responseTarget(params)) {
     status("vp_present_status",
-      "Nothing was sent. There is no response_uri to tell the verifier you " +
+      "Nothing was sent. There is nowhere to tell the verifier you " +
           "declined, either.", "vc-pending");
     log.debug("Leaving refuse().");
     return false;
   }
   disable("vp_refuse_button", true);
-  var body = "error=access_denied&error_description=" +
-    encodeURIComponent("The holder declined to present this credential.") +
-    (params.state ? "&state=" + encodeURIComponent(params.state) : "");
-  fetch(params.response_uri, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body
-  })
+  var reason = state.wantsIdToken && !chosenSubjectSyntax() ?
+      "subject_syntax" : "declined";
+  var fields = vpProtocols.refusalFields(params, reason);
+  var mode = vpProtocols.responseMode(params);
+  var encrypting = mode === "direct_post.jwt" &&
+      vpProtocols.encryptionKeys(state.request.clientMetadata,
+                                 keySelection()).length ?
+    vpProtocols.encryptResponse({ fields: fields,
+      clientMetadata: state.request.clientMetadata,
+      key: responseEncryptionKey() }) :
+    Promise.resolve(null);
+  encrypting
+    .then(function (encryption) {
+      var delivery = vpProtocols.deliveryFor(params, fields, encryption);
+      if (mode === "direct_post.jwt" && !encryption) {
+        delivery = vpProtocols.deliveryFor(
+          Object.assign({}, params, { response_mode: "direct_post" }),
+          fields, null);
+      }
+      return deliver(delivery);
+    })
     .then(function () {
       status("vp_present_status",
-        "Refused. access_denied was sent to the verifier and no part of the " +
-            "credential left this browser.",
+        "Refused. " + fields.error + " was sent to the verifier and no " +
+            "part of the credential left this browser.",
         "vc-pending");
     })
     .catch(function (e) {
@@ -808,6 +1489,73 @@ function refuse() {
     });
   log.debug("Leaving refuse().");
   return false;
+}
+
+// The SIOPv2 and encryption controls change the answer, not the
+// presentation, so they rebuild the answer only.
+function onAnswerOptionChange() {
+  log.debug("Entering onAnswerOptionChange().");
+  var select = el("vp_subject_syntax");
+  if (select && select.value) {
+    sdJwtVc.set(sdJwtVp.KEYS.SIOP_SUBJECT_SYNTAX, select.value);
+  }
+  var save = el("vp_siop_save_pairwise");
+  if (save) {
+    sdJwtVc.set(sdJwtVp.KEYS.SIOP_SAVE_PAIRWISE, save.checked ? "1" : "0");
+    // An opt-out that leaves yesterday's private keys in storage is not an
+    // opt-out.
+    if (!save.checked) sdJwtVc.remove(sdJwtVp.KEYS.SIOP_PAIRWISE_KEYS);
+  }
+  finishResponse().then(function (ok) {
+    if (ok) {
+      status("vp_present_status", "Ready: what is shown below is exactly " +
+             "what will be sent.", "vc-ok");
+    }
+  });
+  log.debug("Leaving onAnswerOptionChange().");
+  return true;
+}
+
+// The SIOPv2 and response-encryption panes, drawn for the request in hand.
+function renderAnswerOptions() {
+  log.debug("Entering renderAnswerOptions().");
+  var params = (state.request && state.request.params) || {};
+  var siopPane = el("vp_siop_pane");
+  if (siopPane) siopPane.style.display = state.wantsIdToken ? "" : "none";
+  var select = el("vp_subject_syntax");
+  if (select) {
+    var offered = vpProtocols.subjectSyntaxesOffered(
+        state.request && state.request.clientMetadata);
+    var both = vpProtocols.SUBJECT_SYNTAXES.filter(function (x) {
+      return offered.indexOf(x) !== -1;
+    });
+    var chosen = chosenSubjectSyntax();
+    select.innerHTML = both.map(function (x) {
+      return '<option value="' + esc(x) + '"' + (x === chosen ?
+             ' selected="selected"' : "") + ">" + esc(x) + "</option>";
+    }).join("") || '<option value="">(none in common)</option>';
+    setText("vp_subject_offered", offered.join(", "));
+  }
+  var pairRow = el("vp_siop_pairwise_row");
+  if (pairRow) pairRow.style.display = state.idTokenOnly ? "" : "none";
+  var save = el("vp_siop_save_pairwise");
+  if (save) {
+    save.checked = sdJwtVc.get(sdJwtVp.KEYS.SIOP_SAVE_PAIRWISE) !== "0";
+  }
+  var enc = el("vp_response_enc");
+  if (enc) {
+    var encs = vpProtocols.encValues(state.request &&
+                                     state.request.clientMetadata);
+    enc.innerHTML = encs.map(function (x) {
+      return '<option value="' + esc(x) + '">' + esc(x) + "</option>";
+    }).join("");
+  }
+  var encPane = el("vp_encryption_pane");
+  if (encPane) {
+    encPane.style.display = vpProtocols.responseMode(params) ===
+        "direct_post.jwt" ? "" : "none";
+  }
+  log.debug("Leaving renderAnswerOptions().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,6 +1755,39 @@ function onHolderKeyPasted() {
   return false;
 }
 
+// The predicates being proven, and what is NOT revealed, above the
+// selection: the holder sees what a predicate claims about them before
+// anything is sent.
+function renderPredicateSummary() {
+  log.debug("Entering renderPredicateSummary().");
+  var plan = state.planned && state.planned.plan;
+  var box = el("vp_predicates_summary");
+  if (!box) {
+    log.debug("Leaving renderPredicateSummary(). No element.");
+    return;
+  }
+  if (!plan || !plan.predicates.length) {
+    box.style.display = "none";
+    log.debug("Leaving renderPredicateSummary(). None.");
+    return;
+  }
+  box.style.display = "";
+  var where = state.language === "pe" ? "DIF Presentation Exchange " +
+    vpQuery.PE_VERSION + " (" + vpQuery.LABEL_PE + ")" : vpQuery.LABEL_EXT;
+  setHtml("vp_predicates_summary", '<span class="vc-status ' +
+    (plan.ok ? "vc-ok" : "vc-bad") + '">Predicates (' + esc(where) +
+    "): " + plan.predicates.map(function (p) {
+      return esc(p.description) + " &mdash; " + (p.method === "zk" ?
+        "proven in zero knowledge" : p.method === "issuer-boolean" ?
+        "answered by the issuer's " + esc(p.disclose.join(", ")) :
+        p.method === "disclose" ? "<strong>the value is disclosed</strong>" :
+        "<strong>refused</strong>: " + esc(p.reason));
+    }).join("; ") + ". " + (plan.notRevealed.length ? "<strong>Not " +
+    "revealed:</strong> " + esc(plan.notRevealed.join(", ")) + "." : "") +
+    "</span>");
+  log.debug("Leaving renderPredicateSummary().");
+}
+
 function onload() {
   log.debug("Entering onload().");
   sdJwtVp.renderUseCaseBadge();
@@ -1018,43 +1799,25 @@ function onload() {
   });
 
   loadState();
+  renderPredicateSummary();
   // The DPoP note describes the credential in hand, so it is rendered here
   // rather than only from renderHolderKeyRow(): buildPresentation() returns
   // early when there is no verifier request, and a wallet holding a credential
   // should still be able to see which key binds it.
   renderDpopNote();
   renderSuppliedContexts();
-  // ldp_vc needs its canonical statements before anything can be selected or
-  // derived, and that is async. The issuer's BBS key is fetched from the
-  // credential's own verificationMethod — the credential says where its key is.
-  if (state.format === sdJwtVc.FORMAT_LDP_VC) {
-    var vm = ((state.parsed.document || {}).proof || {}).verificationMethod ||
-        "";
-    // Resolved rather than fetched, because a verificationMethod is not always
-    // a URL that can be fetched: an issuer named by DID names its key by DID
-    // URL (did:web:…#bbs-1), and fetch() on that reports the issuer's key as
-    // unreachable — which reads as a broken issuer rather than as a wallet that
-    // cannot follow a DID. did.js handles both forms.
-    didLib.resolveVerificationMethod(vm,
-        // allowHttp PERMITS plain http rather than choosing it: resolve()
-        // tries https first and falls back. See did.js.
-        { allowHttp: true }).then(function (resolved) {
-      var multibase = resolved.method.publicKeyMultibase;
-      if (!multibase) {
-        throw new Error("the verification method " + vm +
-                        " publishes no publicKeyMultibase, so there " +
-                        "is no BBS key in it. A BBS key has no JOSE " +
-                            "representation and cannot arrive " +
-                        "as a publicKeyJwk.");
-      }
-      state.issuerBbsKey = bbs2023.multibaseToBytes(multibase);
-      return prepareLdpStatements();
-    }).then(function (prepared) {
-      // NOT on a failure. prepareLdpStatements() has already said why on the
-      // status line; building now would find no statements and replace that
-      // reason with "Canonicalizing the credential…", which is what a
-      // credential the wallet cannot canonicalize used to look like — a step
-      // that never finished, rather than one that refused.
+  // ldp_vc needs its rows before anything can be selected or derived, and
+  // that is async. Nothing is fetched: a W3C bbs-2023 base proof carries the
+  // issuer's public key, which is what a holder derives with; the VERIFIER
+  // is the one who resolves the verificationMethod and ties it to the issuer.
+  if (state.format === sdJwtVc.FORMAT_LDP_VC && !ldpWhole() &&
+      !ldpBbs2020()) {
+    prepareLdpPointers().then(function (prepared) {
+      // NOT on a failure. prepareLdpPointers() has already said why on the
+      // status line; building now would replace that reason with "Reading
+      // the credential…", which is what a credential the wallet cannot
+      // present used to look like — a step that never finished, rather than
+      // one that refused.
       if (prepared === false) {
         return;
       }
@@ -1062,15 +1825,8 @@ function onload() {
       buildPresentation();
     }).catch(function (e) {
       log.error("could not prepare the ldp_vc presentation: " + e.message);
-      // Two different failures arrive here, and the message has to say which:
-      // the issuer's key could not be resolved, or the credential could not
-      // be canonicalized — which, for a context nobody supplied, is fixed in
-      // the JSON-LD Contexts pane rather than at the issuer.
-      status("vp_present_status", state.issuerBbsKey
-        ? "Could not canonicalize the credential: " + e.message
-        : "Could not resolve the issuer's BBS key from " + vm + ": " +
-          e.message,
-             "vc-bad");
+      status("vp_present_status", "Could not read the credential: " +
+             e.message, "vc-bad");
     });
   }
   // Show the paste-in row from the start when there is no stored private half:
@@ -1084,12 +1840,53 @@ function onload() {
   setText("vp_nonce", params.nonce || "—");
   setText("vp_requested", state.requested.length ?
           state.requested.join(", ") : "—");
-  if (state.format === sdJwtVc.FORMAT_JWT_VC_JSON) {
+  if (state.format === sdJwtVc.FORMAT_ANONCREDS) {
+    setText("vp_key_binding",
+      "This credential is AnonCreds (CL signatures). The chosen attributes " +
+      "are revealed in a zero-knowledge proof under the holder's link " +
+      "secret — the holder key here — and every other attribute stays " +
+      "hidden. Neither OpenID4VCI nor OpenID4VP defines AnonCreds, so the " +
+      "presentation request is this debugger's mapping of the OpenID4VP " +
+      "one: an attribute per requested claim and the nonce as AnonCreds " +
+      "needs it (decimal digits; hashed when it is not).");
+  } else if (state.format === sdJwtVc.FORMAT_JPT) {
+    var jalg = ((state.parsed || {}).header || {}).alg || "";
+    setText("vp_key_binding",
+      "This credential is a JSON Proof Token (" + jalg + ", " +
+      "draft-ietf-jose-json-web-proof-15, a DRAFT). Each claim is its own " +
+      "payload slot; the Presentation Header carries this Verifier's " +
+      "Client Identifier as aud and the request's nonce, and " +
+      (jalg === "BBS" ? "the BBS presentation proof binds the chosen " +
+       "slots to it, unlinkably and with no holder key." :
+       "the holder signs it with the presentation key the Issuer Header " +
+       "names (hpk). Presenting the same JPT twice is linkable."));
+  } else if (state.format === sdJwtVc.FORMAT_SD_CWT) {
+    setText("vp_key_binding",
+      "This credential is an SD-CWT (draft-ietf-spice-sd-cwt-09, a " +
+      "DRAFT), so holder binding is a Key Binding Token: a COSE_Sign1 by " +
+      "the cnf key carrying the SD-CWT with only the chosen disclosures, " +
+      "this Verifier's Client Identifier as aud, the request's nonce as " +
+      "cnonce, and iat.");
+  } else if (state.format === sdJwtVc.FORMAT_VC_JWT ||
+      state.format === sdJwtVc.FORMAT_VC_COSE) {
+    setText("vp_key_binding",
+      "This credential is " + state.format + " (W3C VC-JOSE-COSE), so it " +
+      "goes whole as an EnvelopedVerifiableCredential inside a vp+jwt " +
+      "the holder signs, with this request's nonce and the Verifier's " +
+      "Client Identifier as its nonce and aud claims.");
+  } else if (state.format === sdJwtVc.FORMAT_JWT_VC_JSON) {
     setText("vp_key_binding",
       "This credential is jwt_vc_json, so holder binding is a Verifiable " +
           "Presentation JWT signed with the " +
       "bound key — there is no Key Binding JWT, and no Disclosures to " +
           "choose between.");
+  } else if (state.format === sdJwtVc.FORMAT_MSO_MDOC) {
+    setText("vp_key_binding",
+      "This credential is an ISO mdoc, so holder binding is the device " +
+      "signature: a COSE_Sign1 by the device key the Mobile Security " +
+      "Object names, over a session transcript binding this Verifier's " +
+      "client_id, the nonce, where the answer goes and, encrypted, the key " +
+      "it is encrypted to. There is no Key Binding JWT.");
   } else
   setText("vp_key_binding", sdJwtVp.requiresKeyBinding(state.credentialQuery)
     ? "required — the presentation carries a Key Binding JWT signed by the holder key"
@@ -1102,6 +1899,17 @@ function onload() {
       "There is no request to answer. Step 1 reads one from the verifier.",
           "vc-bad");
     log.debug("Leaving onload().");
+    return;
+  }
+  renderAnswerOptions();
+  if (state.idTokenOnly) {
+    buildPresentation().then(function (ok) {
+      if (ok) {
+        status("vp_present_status", "Ready: a self-issued ID Token and " +
+               "nothing else, exactly as shown below.", "vc-ok");
+      }
+    });
+    log.debug("Leaving onload(). ID Token only.");
     return;
   }
   if (!state.parsed) {
@@ -1135,6 +1943,7 @@ module.exports = {
   selectAll: selectAll,
   present: present,
   refuse: refuse,
+  onAnswerOptionChange: onAnswerOptionChange,
   togglePane: togglePane,
   addSuppliedContext: addSuppliedContext,
   removeSuppliedContext: removeSuppliedContext,

@@ -19,11 +19,12 @@
 // coming back; a capture containing it decodes (the codec names the etype) but
 // nothing here will produce or accept one.
 //
-// EVERYTHING IN THIS FILE IS ASYNC, and that is not a style choice. Web Crypto
-// is promise-based, and this module runs in the browser as well as in node —
-// `globalThis.crypto.subtle` in both, so there is one code path rather than two.
-// It must not `require("crypto")`: browserify would substitute crypto-browserify
-// and ship `elliptic` (GHSA-848j-6mx2-7j84, no patched version) into the bundle.
+// EVERYTHING IN THIS FILE IS ASYNC, which was Web Crypto's doing. Since #463
+// the AES, HMAC and PBKDF2 are common/crypto/crypto_provider.js's, pure JS, so
+// a plain-HTTP page derives keys and opens tickets too; the promises stay, so
+// no caller changes. It must not `require("crypto")`: browserify would
+// substitute crypto-browserify and ship `elliptic` (GHSA-848j-6mx2-7j84, no
+// patched version) into the bundle.
 // See client/CLAUDE.md.
 //
 // Three things here are the ones that go wrong, and each fails as an opaque
@@ -49,7 +50,15 @@
 // ---------------------------------------------------------------------------
 
 var prim = require("./krb5_primitives.js");
+// AES, HMAC, PBKDF2 and randomness are crypto_provider.js's (#463): pure JS,
+// so Kerberos keys are derived and tickets opened on a plain-HTTP page too.
+// Staged flat beside this file in the bundles; in node, crypto_resolve.js
+// sends the request to common/crypto/.
+var provider = require("./crypto_provider");
 var bunyan = require("bunyan");
+// Why CONFIG_FILE gave no log level, kept until the logger below exists to
+// report it (#322).
+var logLevelProblem = null;
 var log = bunyan.createLogger({
   name: "krb5_crypto",
   level: (function () {
@@ -57,58 +66,37 @@ var log = bunyan.createLogger({
       return require(process.env.CONFIG_FILE).logLevel || "info";
     } catch (e) {
       // No CONFIG_FILE resolvable here — a node caller rather than a bundle.
+      // The logger does not exist yet, so the error is kept for it.
+      logLevelProblem = e;
       return "info";
     }
   })()
 });
+if (logLevelProblem) {
+  log.debug("No log level from CONFIG_FILE, using info: " +
+      ((logLevelProblem && logLevelProblem.message) || logLevelProblem));
+}
 
 var toBytes = prim.toBytes;
 var concat = prim.concat;
 
-// ---------------------------------------------------------------------------
-// Web Crypto, reached the same way in both runtimes.
-// ---------------------------------------------------------------------------
-function subtle() {
-  log.debug("Entering subtle().");
-  if (typeof globalThis !== "undefined" && globalThis.crypto &&
-      globalThis.crypto.subtle) {
-    log.debug("Leaving subtle().");
-    return globalThis.crypto.subtle;
-  }
-  log.debug("Leaving subtle().");
-  throw new Error("krb5: no Web Crypto here. In the browser this means the " +
-      "page " +
-    "is not a secure context (https or localhost); Kerberos cannot be done " +
-        "over " +
-    "plain http on a non-local origin.");
-}
-
 function randomBytes(n) {
-  var out = new Uint8Array(n);
-  globalThis.crypto.getRandomValues(out);
-  return out;
+  log.debug("Entering randomBytes(). " + n);
+  log.debug("Leaving randomBytes().");
+  return provider.randomBytes(n);
 }
 
 // ---------------------------------------------------------------------------
-// Unpadded CBC on top of Web Crypto, which only offers the padded kind.
-//
-// Web Crypto's AES-CBC always applies PKCS#7 on encrypt and always validates it
-// on decrypt. Kerberos needs neither: its plaintexts are already block-aligned
-// by the confounder-and-CTS construction, and a stray padding block would be
-// sixteen bytes of ciphertext no KDC expects.
-//
-//  * Encrypt: encrypt, then drop the trailing all-padding block.
-//  * Decrypt: append a block chosen so that the final plaintext block IS exact
-//    PKCS#7 padding, so the validation passes and can be discarded. That block
-//    is E(0x10 x16 XOR C_last), and E of a single block is itself an encrypt
-//    with a zero IV.
-//
-// Two extra AES operations per decryption. The alternative was shipping an AES
-// implementation, which is a much worse trade.
+// Unpadded CBC, which Kerberos needs: its plaintexts are already block-aligned
+// by the confounder-and-CTS construction. crypto_provider.js does CBC with no
+// padding directly ({ padding: "none" }), which retires the synthetic final
+// block this file used to append to get past Web Crypto's PKCS#7 check.
+// "aesKey" below is the raw key bytes.
 // ---------------------------------------------------------------------------
 async function importAesKey(keyBytes) {
-  return subtle().importKey("raw", toBytes(keyBytes), { name: "AES-CBC" },
-      false, ["encrypt", "decrypt"]);
+  log.debug("Entering importAesKey().");
+  log.debug("Leaving importAesKey().");
+  return toBytes(keyBytes);
 }
 
 async function cbcEncryptRaw(aesKey, iv, data) {
@@ -118,12 +106,10 @@ async function cbcEncryptRaw(aesKey, iv, data) {
     log.debug("Leaving cbcEncryptRaw().");
     throw new Error("krb5: raw CBC needs a whole number of blocks");
   }
-  var full = new Uint8Array(await subtle().encrypt({
-    name: "AES-CBC",
-    iv: toBytes(iv)
-  }, aesKey, input));
+  var out = provider.aesCbcEncrypt(aesKey, toBytes(iv), input,
+                                   { padding: "none" });
   log.debug("Leaving cbcEncryptRaw().");
-  return full.slice(0, input.length);
+  return out;
 }
 
 async function cbcDecryptRaw(aesKey, iv, data) {
@@ -137,17 +123,10 @@ async function cbcDecryptRaw(aesKey, iv, data) {
     log.debug("Leaving cbcDecryptRaw().");
     throw new Error("krb5: raw CBC needs a whole number of blocks");
   }
-  var last = input.slice(input.length - 16);
-  var padBlock = new Uint8Array(16).fill(16);
-  var synthetic = await cbcEncryptRaw(aesKey, new Uint8Array(16),
-      prim.xor(padBlock, last));
-  var glued = concat([input, synthetic]);
-  var out = new Uint8Array(await subtle().decrypt({
-    name: "AES-CBC",
-    iv: toBytes(iv)
-  }, aesKey, glued));
+  var out = provider.aesCbcDecrypt(aesKey, toBytes(iv), input,
+                                   { padding: "none" });
   log.debug("Leaving cbcDecryptRaw().");
-  return out.slice(0, input.length);
+  return out;
 }
 
 // A single-block ECB decryption, which CTS needs to recover the truncated
@@ -220,33 +199,23 @@ async function ctsDecrypt(keyBytes, iv, ciphertext) {
 }
 
 // ---------------------------------------------------------------------------
-// HMAC and PBKDF2 through Web Crypto, with MD5 falling back to the pure
-// implementation because `crypto.subtle` does not know that hash.
+// HMAC and PBKDF2 by crypto_provider.js, with MD5 (RC4-HMAC's) on the pure
+// implementation in krb5_primitives.js.
 // ---------------------------------------------------------------------------
 async function hmac(hashName, keyBytes, message) {
   if (hashName === "MD5") {
     return prim.hmacMd5(keyBytes, message);
   }
-  var key = await subtle().importKey("raw", toBytes(keyBytes), {
-    name: "HMAC",
-    hash: hashName
-  }, false, ["sign"]);
-  return new Uint8Array(await subtle().sign("HMAC", key, toBytes(message)));
+  return provider.hmac(String(hashName).replace("-", "").toLowerCase(),
+                       toBytes(keyBytes), toBytes(message));
 }
 
 async function pbkdf2(hashName, password, salt, iterations, outBits) {
   log.debug("Entering pbkdf2().");
-  var key = await subtle().importKey("raw", toBytes(password), "PBKDF2", false,
-      ["deriveBits"]);
-  var bits = await subtle().deriveBits(
-    {
-      name: "PBKDF2",
-      salt: toBytes(salt),
-      iterations: iterations,
-      hash: hashName
-    }, key, outBits);
+  var out = provider.pbkdf2(String(hashName).replace("-", "").toLowerCase(),
+      toBytes(password), toBytes(salt), iterations, outBits / 8);
   log.debug("Leaving pbkdf2().");
-  return new Uint8Array(bits);
+  return out;
 }
 
 // ---------------------------------------------------------------------------

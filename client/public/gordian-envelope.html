@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — Gordian Envelope</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+    <style>
+      .ge-claim { display: block; font-family: monospace; }
+      .ge-wide { width: 95%; font-family: monospace; }
+      .ge-pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; max-height: 420px; overflow: auto; }
+    </style>
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/gordian_envelope_page.js">
+</script>
+
+<p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="vc-title">Gordian Envelope &mdash; a credential you elide rather than re-sign</h3>
+
+<p class="vc-intro"><a href="https://datatracker.ietf.org/doc/draft-mcnally-envelope/" target="_blank" rel="noopener noreferrer">Gordian
+Envelope</a> (IETF <strong>draft</strong>-mcnally-envelope-12, over
+<a href="https://datatracker.ietf.org/doc/draft-mcnally-deterministic-cbor/" target="_blank" rel="noopener noreferrer">dCBOR</a>, draft-18)
+is a Merkle tree of digests: any claim can be <em>elided</em> &mdash; replaced by its digest &mdash; and every digest above it,
+so the issuer's signature over the root, stays the same. A holder presents by eliding; nothing is re-signed. Credentials
+are signed <em>wrapped</em>, so every claim is under the signature. Text form: <code>ur:envelope/&hellip;</code>.
+Elements can also be encrypted (to a key, to recipients, or under a password), compressed, or their key split into SSKR shares; large envelopes travel as multi-part URs.
+Held byte for byte to Blockchain Commons' Rust crates' own test vectors. <strong>Nothing on this page is stored</strong>: seeds, keys and passwords live only in this page load.</p>
+
+<div class="step0 dbg-pane" id="pane_ge_read">
+  <legend class="dbg-legend" onclick="return gordianenvelopepage.togglePane('ge_read_fieldset');">Read, Verify and Present</legend>
+  <fieldset name="ge_read_fieldset" id="ge_read_fieldset" style="display: block;">
+    <table border="0"><tbody>
+      <tr><td><div class="tooltip"><label for="ge_input">Envelope: </label><span class="tooltiptext">ur:envelope/&hellip; text, every part of a multi-part UR (ur:envelope/3-9/&hellip;, in any order, one per line; fountain parts too), or the hex of its CBOR (d8c8&hellip;).</span></div></td>
+        <td><textarea id="ge_input" name="ge_input" rows="4" class="ge-wide"></textarea></td></tr>
+      <tr><td><input class="btn2" id="ge_read_button" type="button" value="Read" onclick="return gordianenvelopepage.readEnvelope();" /></td>
+        <td><div class="vc-status" id="ge_read_status">&nbsp;</div></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_public_key">Issuer key: </label><span class="tooltiptext">ur:signing-public-key/&hellip;, ur:crypto-pubkeys/&hellip; (Schnorr, ECDSA, Ed25519, ML-DSA-44/65/87 or an SSH key), an OpenSSH public key line (ssh-ed25519 AAAA&hellip;, ecdsa-sha2-nistp256 AAAA&hellip;), or hex: 32 bytes for a Schnorr x-only key, 33 for a compressed ECDSA key.</span></div></td>
+        <td><input type="text" id="ge_public_key" name="ge_public_key" class="ge-wide" />
+          <input class="btn2" id="ge_verify_button" type="button" value="Verify" onclick="return gordianenvelopepage.verifyEnvelope();" /></td></tr>
+      <tr><td></td><td><div class="vc-status" id="ge_verify_status">&nbsp;</div></td></tr>
+      <tr><td><div class="tooltip"><label>Notation: </label><span class="tooltiptext">The envelope in bc-envelope's notation: obscured elements appear as ELIDED, ENCRYPTED or COMPRESSED.</span></div></td><td><pre class="ge-pre" id="ge_notation"></pre></td></tr>
+      <tr><td><div class="tooltip"><label>Digest tree: </label><span class="tooltiptext">Every element with the first four bytes of its digest, as bc-envelope's tree format prints it.</span></div></td><td><pre class="ge-pre" id="ge_tree"></pre></td></tr>
+      <tr><td><div class="tooltip"><label>Disclose: </label><span class="tooltiptext">The claims to keep in a presentation. Everything unticked is elided; the root digest, and so the issuer's signature, does not change.</span></div></td>
+        <td><div id="ge_claims"></div>
+          <input class="btn2" id="ge_present_button" type="button" value="Present" onclick="return gordianenvelopepage.presentEnvelope();" /></td></tr>
+      <tr><td></td><td><div class="vc-status" id="ge_present_status">&nbsp;</div></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_presentation">Presentation: </label><span class="tooltiptext">The credential with every unticked claim elided, as ur:envelope/&hellip;. Its root digest is the credential's.</span></div></td>
+        <td><textarea id="ge_presentation" name="ge_presentation" rows="4" class="ge-wide" readonly></textarea>
+          <input class="btn2" id="ge_read_presentation_button" type="button" value="Verify It" onclick="return gordianenvelopepage.readPresentation();" /></td></tr>
+      <tr><td></td><td><pre class="ge-pre" id="ge_presentation_notation"></pre></td></tr>
+    </tbody></table>
+  </fieldset>
+</div>
+
+<div class="step0 dbg-pane" id="pane_ge_issue">
+  <legend class="dbg-legend" onclick="return gordianenvelopepage.togglePane('ge_issue_fieldset');">Issue a Credential</legend>
+  <fieldset name="ge_issue_fieldset" id="ge_issue_fieldset" style="display: block;">
+    <p class="vc-note"><a href="#" id="ge_example_link" onclick="return gordianenvelopepage.loadExample();">Load bc-envelope's Certificate of Completion example</a> (signed with the Rust tests' public "Alice" seed).</p>
+    <table border="0"><tbody>
+      <tr><td><div class="tooltip"><label for="ge_seed">Issuer seed: </label><span class="tooltiptext">A PrivateKeyBase seed (hex). The signing key is HKDF-SHA-256 of it with the salt "signing", as bc-components derives it; an SSH Ed25519 key is HKDF-SHA-256 with the salt "ssh-ed25519-0", as bc-components' HKDFRng gives it. bc-components derives no ML-DSA key from a seed: for ML-DSA this page uses HKDF-SHA-256(seed, "signing") as FIPS 204's 32-byte key generation seed, which is this page's choice.</span></div></td>
+        <td><input type="text" id="ge_seed" name="ge_seed" size="40" onchange="return gordianenvelopepage.showIssuerKey();" />
+          <select id="ge_scheme" name="ge_scheme" onchange="return gordianenvelopepage.showIssuerKey();"><option value="schnorr">Schnorr (BIP-340)</option><option value="ecdsa">ECDSA secp256k1</option><option value="ed25519">Ed25519</option><option value="mldsa44">ML-DSA-44</option><option value="mldsa65">ML-DSA-65</option><option value="mldsa87">ML-DSA-87</option><option value="ssh-ed25519">SSH Ed25519</option></select>
+          <input class="btn2" id="ge_generate_button" type="button" value="Generate" onclick="return gordianenvelopepage.generateSeed();" /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_issuer_public_key">Public key: </label><span class="tooltiptext">The issuer's signing public key (ur:signing-public-key/&hellip;, or the OpenSSH form's tagged text for an SSH key), derived from the seed. Give it to verifiers.</span></div></td>
+        <td><input type="text" id="ge_issuer_public_key" name="ge_issuer_public_key" class="ge-wide" readonly /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_subject_arid">Subject ARID: </label><span class="tooltiptext">The credential's subject: a 32-byte ARID (hex). Empty: a random one.</span></div></td>
+        <td><input type="text" id="ge_subject_arid" name="ge_subject_arid" class="ge-wide" /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_issue_claims">Claims: </label><span class="tooltiptext">One "predicate: value" per line. 'isA' in single quotes is a known value; "date 2020-01-01" is a Date; a whole number is a number; anything else is text.</span></div></td>
+        <td><textarea id="ge_issue_claims" name="ge_issue_claims" rows="8" class="ge-wide"></textarea></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_salt">Salt claims: </label><span class="tooltiptext">Give every claim its own salt, so an elided claim cannot be guessed from its digest.</span></div></td>
+        <td><input type="checkbox" id="ge_salt" name="ge_salt" /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_note">Note: </label><span class="tooltiptext">An optional 'note' assertion added after signing, so it is outside the signature.</span></div></td><td><input type="text" id="ge_note" name="ge_note" class="ge-wide" /></td></tr>
+      <tr><td><input class="btn2" id="ge_issue_button" type="button" value="Issue" onclick="return gordianenvelopepage.issueEnvelope();" /></td>
+        <td><div class="vc-status" id="ge_issue_status">&nbsp;</div></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_issue_output">Credential: </label><span class="tooltiptext">The issued credential, wrapped then signed, as ur:envelope/&hellip;.</span></div></td>
+        <td><textarea id="ge_issue_output" name="ge_issue_output" rows="4" class="ge-wide" readonly></textarea>
+          <input class="btn2" id="ge_read_issued_button" type="button" value="Verify It" onclick="return gordianenvelopepage.readIssued();" /></td></tr>
+    </tbody></table>
+  </fieldset>
+</div>
+
+<div class="step0 dbg-pane" id="pane_ge_encrypt">
+  <legend class="dbg-legend" onclick="return gordianenvelopepage.togglePane('ge_encrypt_fieldset');">Encrypt and Decrypt</legend>
+  <fieldset name="ge_encrypt_fieldset" id="ge_encrypt_fieldset" style="display: none;">
+    <p class="vc-note">An ENCRYPTED element (tag 40002) is ChaCha20-Poly1305 over the element's tagged CBOR, authenticated with its digest, so the tree's digests &mdash; and a signature over them &mdash; do not change. The content key can be given directly, sealed to recipients (<code>'hasRecipient'</code>), or locked with a password (<code>'hasSecret'</code>). As bc-envelope 0.43 and bc-envelope-cli 0.35 do it. Nothing here is stored.</p>
+    <table border="0"><tbody>
+      <tr><td><div class="tooltip"><label for="ge_enc_input">Envelope: </label><span class="tooltiptext">The envelope to encrypt or decrypt: ur:envelope/&hellip;, its parts, or the hex of its CBOR.</span></div></td>
+        <td><textarea id="ge_enc_input" name="ge_enc_input" rows="3" class="ge-wide"></textarea></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_enc_wrap">Wrap first: </label><span class="tooltiptext">Wrap the envelope before encrypting, so its assertions are encrypted with its subject (bc-envelope's encrypt()). Unticked, only the subject is encrypted and the assertions stay readable (encrypt_subject(), what bc-envelope-cli's encrypt does).</span></div></td>
+        <td><input type="checkbox" id="ge_enc_wrap" name="ge_enc_wrap" checked /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_enc_key">Content key: </label><span class="tooltiptext">The 32-byte symmetric key: ur:crypto-key/&hellip; or 64 hex digits. Empty when encrypting: a new random one (shown here afterwards). Kept only in this field, for this page load.</span></div></td>
+        <td><input type="text" id="ge_enc_key" name="ge_enc_key" class="ge-wide" autocomplete="off" />
+          <input class="btn2" id="ge_enc_key_button" type="button" value="Generate" onclick="return gordianenvelopepage.generateContentKey();" /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_enc_recipients">Recipients: </label><span class="tooltiptext">Public keys to seal the content key to, one ur:crypto-pubkeys/&hellip; per line (an X25519 or ML-KEM-512/768/1024 encapsulation key). Each becomes a 'hasRecipient': SealedMessage assertion.</span></div></td>
+        <td><textarea id="ge_enc_recipients" name="ge_enc_recipients" rows="2" class="ge-wide"></textarea></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_enc_password">Password: </label><span class="tooltiptext">A password to lock the content key with ('hasSecret': EncryptedKey). Also what Decrypt tries. Never stored.</span></div></td>
+        <td><input type="password" id="ge_enc_password" name="ge_enc_password" size="30" autocomplete="off" />
+          <select id="ge_enc_kdf" name="ge_enc_kdf"><option value="argon2id">Argon2id</option><option value="pbkdf2">PBKDF2-SHA-256</option><option value="scrypt">scrypt</option><option value="hkdf">HKDF-SHA-256</option></select></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_enc_private_keys">Private keys: </label><span class="tooltiptext">For Decrypt as a recipient: ur:crypto-prvkeys/&hellip;, ur:crypto-prvkey-base/&hellip;, ur:seed/&hellip;, or a seed in hex (its X25519 key is HKDF-SHA-256(seed, "agreement"), as bc-components derives it). Kept only in this field.</span></div></td>
+        <td><input type="text" id="ge_enc_private_keys" name="ge_enc_private_keys" class="ge-wide" autocomplete="off" /></td></tr>
+      <tr><td></td><td><input class="btn2" id="ge_encrypt_button" type="button" value="Encrypt" onclick="return gordianenvelopepage.encryptEnvelope();" />
+          <input class="btn2" id="ge_decrypt_button" type="button" value="Decrypt" onclick="return gordianenvelopepage.decryptEnvelope();" /></td></tr>
+      <tr><td></td><td><div class="vc-status" id="ge_enc_status">&nbsp;</div></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_enc_output">Result: </label><span class="tooltiptext">The encrypted or decrypted envelope, as ur:envelope/&hellip;. Read It shows it in the first pane.</span></div></td>
+        <td><textarea id="ge_enc_output" name="ge_enc_output" rows="3" class="ge-wide" readonly></textarea>
+          <input class="btn2" id="ge_enc_read_button" type="button" value="Read It" onclick="return gordianenvelopepage.readResult('ge_enc_output');" /></td></tr>
+      <tr><td></td><td><pre class="ge-pre" id="ge_enc_notation"></pre></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_kp_seed">Recipient key pair: </label><span class="tooltiptext">Make a recipient's keys: from a seed (hex; empty for a random one) with X25519, as bc-components' PrivateKeyBase does, or a random ML-KEM pair. The private keys go into the Private keys field and the public keys into Recipients; neither is stored.</span></div></td>
+        <td><input type="text" id="ge_kp_seed" name="ge_kp_seed" size="36" autocomplete="off" />
+          <select id="ge_kp_scheme" name="ge_kp_scheme"><option value="x25519">X25519</option><option value="mlkem512">ML-KEM-512</option><option value="mlkem768">ML-KEM-768</option><option value="mlkem1024">ML-KEM-1024</option></select>
+          <input class="btn2" id="ge_kp_button" type="button" value="Make Keys" onclick="return gordianenvelopepage.makeRecipientKeys();" /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_kp_public">Public keys: </label><span class="tooltiptext">The recipient's ur:crypto-pubkeys/&hellip;: give it to whoever encrypts to them. Make Keys also adds it to Recipients.</span></div></td>
+        <td><input type="text" id="ge_kp_public" name="ge_kp_public" class="ge-wide" readonly /></td></tr>
+    </tbody></table>
+  </fieldset>
+</div>
+
+<div class="step0 dbg-pane" id="pane_ge_compress">
+  <legend class="dbg-legend" onclick="return gordianenvelopepage.togglePane('ge_compress_fieldset');">Compress and Decompress</legend>
+  <fieldset name="ge_compress_fieldset" id="ge_compress_fieldset" style="display: none;">
+    <p class="vc-note">A COMPRESSED element (tag 40003) is [CRC-32, size, raw DEFLATE, digest]: its digest is the uncompressed element's, so nothing above it changes. The DEFLATE bytes need not be miniz's (bc-components') &mdash; the digest does not cover them.</p>
+    <table border="0"><tbody>
+      <tr><td><div class="tooltip"><label for="ge_comp_input">Envelope: </label><span class="tooltiptext">The envelope to compress or decompress: ur:envelope/&hellip;, its parts, or the hex of its CBOR.</span></div></td>
+        <td><textarea id="ge_comp_input" name="ge_comp_input" rows="3" class="ge-wide"></textarea></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_comp_subject">Subject only: </label><span class="tooltiptext">Compress (or decompress) only the subject, leaving the assertions &mdash; a signature, say &mdash; outside, as bc-envelope's compress_subject() does.</span></div></td>
+        <td><input type="checkbox" id="ge_comp_subject" name="ge_comp_subject" /></td></tr>
+      <tr><td></td><td><input class="btn2" id="ge_compress_button" type="button" value="Compress" onclick="return gordianenvelopepage.compressEnvelope();" />
+          <input class="btn2" id="ge_decompress_button" type="button" value="Decompress" onclick="return gordianenvelopepage.decompressEnvelope();" /></td></tr>
+      <tr><td></td><td><div class="vc-status" id="ge_comp_status">&nbsp;</div></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_comp_output">Result: </label><span class="tooltiptext">The compressed or decompressed envelope, as ur:envelope/&hellip;. Its digest is unchanged.</span></div></td>
+        <td><textarea id="ge_comp_output" name="ge_comp_output" rows="3" class="ge-wide" readonly></textarea>
+          <input class="btn2" id="ge_comp_read_button" type="button" value="Read It" onclick="return gordianenvelopepage.readResult('ge_comp_output');" /></td></tr>
+    </tbody></table>
+  </fieldset>
+</div>
+
+<div class="step0 dbg-pane" id="pane_ge_sskr">
+  <legend class="dbg-legend" onclick="return gordianenvelopepage.togglePane('ge_sskr_fieldset');">SSKR: Split and Join</legend>
+  <fieldset name="ge_sskr_fieldset" id="ge_sskr_fieldset" style="display: none;">
+    <p class="vc-note">Sharded Secret Key Reconstruction (BCR-2020-011): the envelope is wrapped and encrypted, and its content key split by Shamir's scheme into groups of shares. Each share envelope is the encrypted envelope with one <code>'sskrShare'</code>; any shares meeting the thresholds rejoin it. As bc-envelope-cli's <code>sskr split</code> and <code>sskr join</code>.</p>
+    <table border="0"><tbody>
+      <tr><td><div class="tooltip"><label for="ge_sskr_input">Envelope: </label><span class="tooltiptext">The envelope to split.</span></div></td>
+        <td><textarea id="ge_sskr_input" name="ge_sskr_input" rows="3" class="ge-wide"></textarea></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_sskr_groups">Groups: </label><span class="tooltiptext">One "m-of-n" per group, separated by commas (2-of-3, 3-of-5): n shares in the group, any m of which recover the group's secret. At most 16 groups of at most 16 shares.</span></div></td>
+        <td><input type="text" id="ge_sskr_groups" name="ge_sskr_groups" size="30" value="2-of-3" /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_sskr_threshold">Group threshold: </label><span class="tooltiptext">How many groups must meet their own threshold (1 to the number of groups).</span></div></td>
+        <td><input type="number" id="ge_sskr_threshold" name="ge_sskr_threshold" min="1" max="16" value="1" /></td></tr>
+      <tr><td></td><td><input class="btn2" id="ge_sskr_split_button" type="button" value="Split" onclick="return gordianenvelopepage.splitEnvelope();" /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_sskr_shares">Shares: </label><span class="tooltiptext">Share envelopes, one ur:envelope/&hellip; per line. Split writes every share here; for Join, paste the ones you have, in any order.</span></div></td>
+        <td><textarea id="ge_sskr_shares" name="ge_sskr_shares" rows="6" class="ge-wide"></textarea></td></tr>
+      <tr><td></td><td><input class="btn2" id="ge_sskr_join_button" type="button" value="Join" onclick="return gordianenvelopepage.joinShares();" /></td></tr>
+      <tr><td></td><td><div class="vc-status" id="ge_sskr_status">&nbsp;</div></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_sskr_output">Joined: </label><span class="tooltiptext">The envelope the shares rebuild, as ur:envelope/&hellip;.</span></div></td>
+        <td><textarea id="ge_sskr_output" name="ge_sskr_output" rows="3" class="ge-wide" readonly></textarea>
+          <input class="btn2" id="ge_sskr_read_button" type="button" value="Read It" onclick="return gordianenvelopepage.readResult('ge_sskr_output');" /></td></tr>
+    </tbody></table>
+  </fieldset>
+</div>
+
+<div class="step0 dbg-pane" id="pane_ge_parts">
+  <legend class="dbg-legend" onclick="return gordianenvelopepage.togglePane('ge_parts_fieldset');">Multi-part UR</legend>
+  <fieldset name="ge_parts_fieldset" id="ge_parts_fieldset" style="display: none;">
+    <p class="vc-note">An envelope too large for one QR code is sent as <code>ur:envelope/&lt;seq&gt;-&lt;count&gt;/&hellip;</code> parts (BCR-2020-005, BCR-2024-001): the first <em>count</em> are its fragments and every later one a fountain part, the XOR of a pseudo-random set of fragments, so any large enough set of parts, in any order, rebuilds it. As the ur 0.4.1 crate (bc-ur 0.19) writes them.</p>
+    <table border="0"><tbody>
+      <tr><td><div class="tooltip"><label for="ge_parts_input">Envelope: </label><span class="tooltiptext">The envelope to split into parts: ur:envelope/&hellip; or the hex of its CBOR.</span></div></td>
+        <td><textarea id="ge_parts_input" name="ge_parts_input" rows="3" class="ge-wide"></textarea></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_parts_max">Fragment size: </label><span class="tooltiptext">The most CBOR bytes in one part's fragment; the fragments are then made equal in length.</span></div></td>
+        <td><input type="number" id="ge_parts_max" name="ge_parts_max" min="10" max="100000" value="100" /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_parts_extra">Fountain parts: </label><span class="tooltiptext">How many mixed parts to write after the fragments themselves.</span></div></td>
+        <td><input type="number" id="ge_parts_extra" name="ge_parts_extra" min="0" max="1000" value="5" /></td></tr>
+      <tr><td></td><td><input class="btn2" id="ge_parts_encode_button" type="button" value="Make Parts" onclick="return gordianenvelopepage.encodeParts();" /></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_parts_list">Parts: </label><span class="tooltiptext">One part per line. Make Parts writes them here; for Join Parts, paste any parts of one envelope, in any order.</span></div></td>
+        <td><textarea id="ge_parts_list" name="ge_parts_list" rows="6" class="ge-wide"></textarea></td></tr>
+      <tr><td></td><td><input class="btn2" id="ge_parts_decode_button" type="button" value="Join Parts" onclick="return gordianenvelopepage.decodeParts();" /></td></tr>
+      <tr><td></td><td><div class="vc-status" id="ge_parts_status">&nbsp;</div></td></tr>
+      <tr><td><div class="tooltip"><label for="ge_parts_output">Envelope: </label><span class="tooltiptext">The envelope the parts rebuild, as a single-part ur:envelope/&hellip;.</span></div></td>
+        <td><textarea id="ge_parts_output" name="ge_parts_output" rows="3" class="ge-wide" readonly></textarea>
+          <input class="btn2" id="ge_parts_read_button" type="button" value="Read It" onclick="return gordianenvelopepage.readResult('ge_parts_output');" /></td></tr>
+    </tbody></table>
+  </fieldset>
+</div>
+
+<!--#include file="/partials/vc_tools.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

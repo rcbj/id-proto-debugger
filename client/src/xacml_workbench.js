@@ -701,12 +701,26 @@ function createWorkbench(repository) {
     }
     var chosen = given.policy ? repository.read(given.policy) : rootRow();
     if (!chosen) {
-      var rows = repository.all();
+      var rows = repository.all().filter(function (row) {
+        return row.enabled;
+      });
       chosen = rows[0] || null;
     }
     if (!chosen) {
       log.debug("Leaving decide(). No policy.");
       return { asked: true, problem: "There is no policy to decide with." };
+    }
+    // ONLY AN ENABLED POLICY TAKES PART IN A DECISION, which is what the page
+    // tells the user. Until 2026-11-17 `enabled` only hid a policy from
+    // PolicyIdReference lookups (repositoryMap() below) and the root or a
+    // chosen policy was evaluated anyway, so disabling the root, as the
+    // editor's own warning advises before experimenting, changed nothing.
+    if (!chosen.enabled) {
+      log.debug("Leaving decide(). " + chosen.name + " is disabled.");
+      return { asked: true, policy: chosen.name,
+               problem: chosen.name + " is disabled, and only an enabled " +
+                 "policy takes part in a decision. Enable it, or choose " +
+                 "another policy." };
     }
     var loaded = tryParse(chosen.document);
     if (!loaded.policy) {

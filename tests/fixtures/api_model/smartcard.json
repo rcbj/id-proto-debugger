@@ -1,0 +1,887 @@
+{
+  "family": "smartcard",
+  "about": "GET /smartcard/limits and /smartcard/readers, POST /smartcard/transmit, /smartcard/session, /smartcard/session/transmit, /smartcard/session/close and /smartcard/otp/challenge. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md), on api/env/docker-tests.js, where the reader relay is ON and reaches nothing: the containerized api has no pcscd socket and no HID device, so every request that passes validation fails for want of a service. That failure's sentence depends on what the api has installed (pcsclite, node-hid, the client's yubico_otp.js), so it is volatile; the status is not. No case here can reach a card.",
+  "cases": [
+    {
+      "name": "limits: the relay is on, and what it can reach",
+      "method": "GET",
+      "path": "/smartcard/limits",
+      "volatile": [
+        "available",
+        "reason",
+        "hid.reason"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "enabled": true,
+          "available": false,
+          "reason": "PC/SC is not installed on this api. Install libpcsclite and the native module the operator chooses. Nothing in this image installs either.",
+          "maxApduBytes": 8192,
+          "maxSequence": 16,
+          "reader": "the machine this api runs on",
+          "hid": {
+            "available": false,
+            "reason": "HID needs the node-hid module, which this api does not have. Run the api natively (node api/native.js --smartcard), where npm installs it."
+          }
+        }
+      }
+    },
+    {
+      "name": "readers: no PC/SC service to list them",
+      "method": "GET",
+      "path": "/smartcard/readers",
+      "volatile": [
+        "error"
+      ],
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "PC/SC is not installed on this api. Install libpcsclite and the native module the operator chooses. Nothing in this image installs either."
+        }
+      }
+    },
+    {
+      "name": "transmit: an empty body is refused for its reader",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The reader name is empty."
+        }
+      }
+    },
+    {
+      "name": "transmit: a reader that is a number",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": 5,
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "changed": "The model types reader as a string. Until then smartcard_reader.js refused a number with the sentence for an empty name.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "The reader name is empty."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `reader` must be a JSON string. GET /api-docs describes what smartcardTransmit takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "transmit: an empty reader",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The reader name is empty."
+        }
+      }
+    },
+    {
+      "name": "transmit: a reader that is a URL",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "https://evil.example/r",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The reader is a name, not a URL."
+        }
+      }
+    },
+    {
+      "name": "transmit: a reader that is a URI",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "host.example:443x",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The reader is a name, not a URI."
+        }
+      }
+    },
+    {
+      "name": "transmit: a reader that is a host and port",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico Reader:443",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The reader is a name, not a host and port."
+        }
+      }
+    },
+    {
+      "name": "transmit: a reader that is a path",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "/dev/hidraw0",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The reader is a name, not a filesystem path."
+        }
+      }
+    },
+    {
+      "name": "transmit: a reader name that is too long",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The reader name is longer than 256 characters."
+        }
+      }
+    },
+    {
+      "name": "transmit: a reader name with a control character",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "a\u0001b",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The reader name has a control character."
+        }
+      }
+    },
+    {
+      "name": "transmit: an empty sequence",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdus": []
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A sequence is 1 to 16 APDUs."
+        }
+      }
+    },
+    {
+      "name": "transmit: seventeen APDUs",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdus": [
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101",
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A sequence is 1 to 16 APDUs."
+        }
+      }
+    },
+    {
+      "name": "transmit: an APDU that is not hex",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdus": [
+          "zz"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The APDU is an even number of hex characters."
+        }
+      }
+    },
+    {
+      "name": "transmit: an APDU shorter than its header",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdu": "00"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "An APDU is at least 4 bytes."
+        }
+      }
+    },
+    {
+      "name": "transmit: an APDU past the size cap",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdu": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "An APDU is at most 8192 bytes."
+        }
+      }
+    },
+    {
+      "name": "transmit: the second APDU of a sequence is bad",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdus": [
+          "00a4040008a000000527200101",
+          "00a4"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "APDU 2: An APDU is at least 4 bytes."
+        }
+      }
+    },
+    {
+      "name": "transmit: a remainingIns that is neither c0 nor a5",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ],
+        "remainingIns": "99"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "remainingIns is c0 (GET RESPONSE) or a5 (YKOATH SEND REMAINING)."
+        }
+      }
+    },
+    {
+      "name": "transmit: apdus that is a string, not an array",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdus": "00a4040008a000000527200101"
+      },
+      "changed": "apdus is an array (or null) in the model. Until then a string was ignored, apdu (absent) was read in its place, and the refusal blamed the hex of an APDU the caller never sent.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "The APDU is an even number of hex characters."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `apdus` must be a JSON array or null. GET /api-docs describes what smartcardTransmit takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "transmit: an apdu that is a number",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdu": 12345678
+      },
+      "changed": "apdu is a string or null in the model. Until then smartcard_reader.js stringified a number and sent its decimal digits as hex to the card, which no caller meant.",
+      "before": {
+        "status": 502,
+        "body": {
+          "error": "PC/SC is not installed on this api. Install libpcsclite and the native module the operator chooses. Nothing in this image installs either."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `apdu` must be a JSON string or null. GET /api-docs describes what smartcardTransmit takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "transmit: an APDU in the sequence that is a number",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdus": [
+          12345678
+        ]
+      },
+      "changed": "Each of apdus is a string or null in the model. Until then a number was stringified and its decimal digits sent as hex to the card.",
+      "before": {
+        "status": 502,
+        "body": {
+          "error": "PC/SC is not installed on this api. Install libpcsclite and the native module the operator chooses. Nothing in this image installs either."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `apdus.0` must be a JSON string or null. GET /api-docs describes what smartcardTransmit takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "transmit: a getResponse that is a number",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ],
+        "getResponse": 0
+      },
+      "changed": "getResponse is a boolean, a string or null in the model. Until then a 0 was read as 'not false', so GET RESPONSE stayed on and the sequence was sent.",
+      "before": {
+        "status": 502,
+        "body": {
+          "error": "PC/SC is not installed on this api. Install libpcsclite and the native module the operator chooses. Nothing in this image installs either."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `getResponse` must be a JSON boolean or a JSON string or null. GET /api-docs describes what smartcardTransmit takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "transmit: a well-formed APDU finds no PC/SC service",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdu": "00a4040008a000000527200101"
+      },
+      "volatile": [
+        "error"
+      ],
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "PC/SC is not installed on this api. Install libpcsclite and the native module the operator chooses. Nothing in this image installs either."
+        }
+      }
+    },
+    {
+      "name": "transmit: a well-formed sequence, raw, finds no PC/SC service",
+      "method": "POST",
+      "path": "/smartcard/transmit",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00",
+        "apdus": [
+          "00a4040008a000000527200101",
+          "00cb3fff035c017e"
+        ],
+        "getResponse": false,
+        "remainingIns": "A5"
+      },
+      "volatile": [
+        "error"
+      ],
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "PC/SC is not installed on this api. Install libpcsclite and the native module the operator chooses. Nothing in this image installs either."
+        }
+      }
+    },
+    {
+      "name": "session: an empty body is refused for its reader",
+      "method": "POST",
+      "path": "/smartcard/session",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The reader name is empty."
+        }
+      }
+    },
+    {
+      "name": "session: an empty reader",
+      "method": "POST",
+      "path": "/smartcard/session",
+      "body": {
+        "reader": ""
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The reader name is empty."
+        }
+      }
+    },
+    {
+      "name": "session: a reader that is a number",
+      "method": "POST",
+      "path": "/smartcard/session",
+      "body": {
+        "reader": 5
+      },
+      "changed": "The model types reader as a string. Until then smartcard_reader.js refused a number with the sentence for an empty name.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "The reader name is empty."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `reader` must be a JSON string. GET /api-docs describes what smartcardSessionOpen takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "session: a reader that is a URL",
+      "method": "POST",
+      "path": "/smartcard/session",
+      "body": {
+        "reader": "https://evil.example/r"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The reader is a name, not a URL."
+        }
+      }
+    },
+    {
+      "name": "session: a well-formed open finds no PC/SC service",
+      "method": "POST",
+      "path": "/smartcard/session",
+      "body": {
+        "reader": "Yubico YubiKey OTP+FIDO+CCID 00 00"
+      },
+      "volatile": [
+        "error"
+      ],
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "PC/SC is not installed on this api. Install libpcsclite and the native module the operator chooses. Nothing in this image installs either."
+        }
+      }
+    },
+    {
+      "name": "session transmit: an empty body is refused for its id",
+      "method": "POST",
+      "path": "/smartcard/session/transmit",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The session id is 32 hex characters."
+        }
+      }
+    },
+    {
+      "name": "session transmit: an id that is not an id",
+      "method": "POST",
+      "path": "/smartcard/session/transmit",
+      "body": {
+        "id": "not-an-id",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The session id is 32 hex characters."
+        }
+      }
+    },
+    {
+      "name": "session transmit: an id in upper case",
+      "method": "POST",
+      "path": "/smartcard/session/transmit",
+      "body": {
+        "id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The session id is 32 hex characters."
+        }
+      }
+    },
+    {
+      "name": "session transmit: an id that is a number",
+      "method": "POST",
+      "path": "/smartcard/session/transmit",
+      "body": {
+        "id": 5,
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The session id is 32 hex characters."
+        }
+      }
+    },
+    {
+      "name": "session transmit: an APDU that is not hex",
+      "method": "POST",
+      "path": "/smartcard/session/transmit",
+      "body": {
+        "id": "00000000000000000000000000000000",
+        "apdus": [
+          "xyz"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The APDU is an even number of hex characters."
+        }
+      }
+    },
+    {
+      "name": "session transmit: a remainingIns that is neither c0 nor a5",
+      "method": "POST",
+      "path": "/smartcard/session/transmit",
+      "body": {
+        "id": "00000000000000000000000000000000",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ],
+        "remainingIns": "99"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "remainingIns is c0 (GET RESPONSE) or a5 (YKOATH SEND REMAINING)."
+        }
+      }
+    },
+    {
+      "name": "session transmit: apdus that is a string, not an array",
+      "method": "POST",
+      "path": "/smartcard/session/transmit",
+      "body": {
+        "id": "00000000000000000000000000000000",
+        "apdus": "00a4040008a000000527200101"
+      },
+      "changed": "apdus is an array (or null) in the model. Until then a string was ignored, apdu (absent) was read in its place, and the refusal blamed the hex of an APDU the caller never sent.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "The APDU is an even number of hex characters."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `apdus` must be a JSON array or null. GET /api-docs describes what smartcardSessionTransmit takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "session transmit: an id that names no session",
+      "method": "POST",
+      "path": "/smartcard/session/transmit",
+      "body": {
+        "id": "00000000000000000000000000000000",
+        "apdus": [
+          "00a4040008a000000527200101"
+        ]
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "No such session: it was closed, or it was idle for 60 seconds."
+        }
+      }
+    },
+    {
+      "name": "session close: an empty body is refused for its id",
+      "method": "POST",
+      "path": "/smartcard/session/close",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The session id is 32 hex characters."
+        }
+      }
+    },
+    {
+      "name": "session close: an id that is not an id",
+      "method": "POST",
+      "path": "/smartcard/session/close",
+      "body": {
+        "id": "nope"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The session id is 32 hex characters."
+        }
+      }
+    },
+    {
+      "name": "session close: an id that is a number",
+      "method": "POST",
+      "path": "/smartcard/session/close",
+      "body": {
+        "id": 5
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The session id is 32 hex characters."
+        }
+      }
+    },
+    {
+      "name": "session close: an id that names no session",
+      "method": "POST",
+      "path": "/smartcard/session/close",
+      "body": {
+        "id": "00000000000000000000000000000000"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "closed": false
+        }
+      }
+    },
+    {
+      "name": "challenge: an empty body is refused for its slot",
+      "method": "POST",
+      "path": "/smartcard/otp/challenge",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The slot is 20, 28, 30 or 38."
+        }
+      }
+    },
+    {
+      "name": "challenge: a slot that is not one of the four",
+      "method": "POST",
+      "path": "/smartcard/otp/challenge",
+      "body": {
+        "slot": "40",
+        "challenge": "00"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The slot is 20, 28, 30 or 38."
+        }
+      }
+    },
+    {
+      "name": "challenge: a challenge that is not hex",
+      "method": "POST",
+      "path": "/smartcard/otp/challenge",
+      "body": {
+        "slot": "38",
+        "challenge": "zz"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The challenge is up to 64 bytes of hex."
+        }
+      }
+    },
+    {
+      "name": "challenge: a challenge longer than 64 bytes",
+      "method": "POST",
+      "path": "/smartcard/otp/challenge",
+      "body": {
+        "slot": "38",
+        "challenge": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The challenge is up to 64 bytes of hex."
+        }
+      }
+    },
+    {
+      "name": "challenge: a slot that is a number",
+      "method": "POST",
+      "path": "/smartcard/otp/challenge",
+      "body": {
+        "slot": 38,
+        "challenge": "0102030405"
+      },
+      "changed": "slot is a string or null in the model: it is hex text. Until then the number 38 was stringified and read as hex 0x38, which only works because the digits happen to coincide.",
+      "before": {
+        "status": 502,
+        "body": {
+          "error": "HID needs the node-hid module, which this api does not have. Run the api natively (node api/native.js --smartcard), where npm installs it."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `slot` must be a JSON string or null. GET /api-docs describes what smartcardOtpChallenge takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "challenge: a challenge that is a number",
+      "method": "POST",
+      "path": "/smartcard/otp/challenge",
+      "body": {
+        "slot": "38",
+        "challenge": 1234
+      },
+      "changed": "challenge is a string or null in the model. Until then a number was stringified and its decimal digits sent to the key as hex.",
+      "before": {
+        "status": 502,
+        "body": {
+          "error": "HID needs the node-hid module, which this api does not have. Run the api natively (node api/native.js --smartcard), where npm installs it."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `challenge` must be a JSON string or null. GET /api-docs describes what smartcardOtpChallenge takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "challenge: a variable that is a number",
+      "method": "POST",
+      "path": "/smartcard/otp/challenge",
+      "body": {
+        "slot": "38",
+        "challenge": "0102030405",
+        "variable": 0
+      },
+      "changed": "variable is a boolean, a string or null in the model. Until then a 0 was read as 'not false', so variable-length HMAC stayed selected and the challenge was sent.",
+      "before": {
+        "status": 502,
+        "body": {
+          "error": "HID needs the node-hid module, which this api does not have. Run the api natively (node api/native.js --smartcard), where npm installs it."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `variable` must be a JSON boolean or a JSON string or null. GET /api-docs describes what smartcardOtpChallenge takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "challenge: a well-formed challenge finds no HID",
+      "method": "POST",
+      "path": "/smartcard/otp/challenge",
+      "body": {
+        "slot": "38",
+        "challenge": "0102030405",
+        "variable": false
+      },
+      "volatile": [
+        "error"
+      ],
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "HID needs the node-hid module, which this api does not have. Run the api natively (node api/native.js --smartcard), where npm installs it."
+        }
+      }
+    }
+  ]
+}

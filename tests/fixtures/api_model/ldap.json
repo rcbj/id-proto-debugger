@@ -1,0 +1,761 @@
+{
+  "family": "ldap",
+  "about": "POST /ldap/* and GET /ldap/limits. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md). Every target is ldap.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 502 on any machine.",
+  "cases": [
+    {
+      "name": "bind: an empty body is refused for its url",
+      "method": "POST",
+      "path": "/ldap/bind",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "bind: an empty url is refused",
+      "method": "POST",
+      "path": "/ldap/bind",
+      "body": {
+        "url": ""
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "bind: a well-formed request reaches the network (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/ldap/bind",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "bindDn": "cn=admin,dc=example,dc=com",
+        "password": "secret"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      }
+    },
+    {
+      "name": "search: an empty body is refused for its url",
+      "method": "POST",
+      "path": "/ldap/search",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "search: an empty url is refused",
+      "method": "POST",
+      "path": "/ldap/search",
+      "body": {
+        "url": "",
+        "baseDn": "dc=example,dc=com"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "search: a well-formed request reaches the network (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/ldap/search",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "bindDn": "cn=admin,dc=example,dc=com",
+        "password": "secret",
+        "baseDn": "dc=example,dc=com"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      }
+    },
+    {
+      "name": "add: an empty body is refused for its url",
+      "method": "POST",
+      "path": "/ldap/add",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "add: an empty url is refused",
+      "method": "POST",
+      "path": "/ldap/add",
+      "body": {
+        "url": "",
+        "dn": "cn=x,dc=example,dc=com",
+        "attributes": {
+          "objectClass": [
+            "top"
+          ],
+          "cn": "x"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "add: a well-formed request reaches the network (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/ldap/add",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "bindDn": "cn=admin,dc=example,dc=com",
+        "password": "secret",
+        "dn": "cn=x,dc=example,dc=com",
+        "attributes": {
+          "objectClass": [
+            "top"
+          ],
+          "cn": "x"
+        }
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      }
+    },
+    {
+      "name": "delete: an empty body is refused for its url",
+      "method": "POST",
+      "path": "/ldap/delete",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "delete: an empty url is refused",
+      "method": "POST",
+      "path": "/ldap/delete",
+      "body": {
+        "url": "",
+        "dn": "cn=x,dc=example,dc=com"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "delete: a well-formed request reaches the network (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/ldap/delete",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "bindDn": "cn=admin,dc=example,dc=com",
+        "password": "secret",
+        "dn": "cn=x,dc=example,dc=com"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      }
+    },
+    {
+      "name": "modify: an empty body is refused for its url",
+      "method": "POST",
+      "path": "/ldap/modify",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "modify: an empty url is refused",
+      "method": "POST",
+      "path": "/ldap/modify",
+      "body": {
+        "url": "",
+        "dn": "cn=x,dc=example,dc=com",
+        "changes": [
+          {
+            "operation": "replace",
+            "type": "cn",
+            "values": [
+              "y"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "modify: a well-formed request reaches the network (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/ldap/modify",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "bindDn": "cn=admin,dc=example,dc=com",
+        "password": "secret",
+        "dn": "cn=x,dc=example,dc=com",
+        "changes": [
+          {
+            "operation": "replace",
+            "type": "cn",
+            "values": [
+              "y"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      }
+    },
+    {
+      "name": "modifydn: an empty body is refused for its url",
+      "method": "POST",
+      "path": "/ldap/modifydn",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "modifydn: an empty url is refused",
+      "method": "POST",
+      "path": "/ldap/modifydn",
+      "body": {
+        "url": "",
+        "dn": "cn=x,dc=example,dc=com",
+        "newRdn": "cn=y"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "modifydn: a well-formed request reaches the network (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/ldap/modifydn",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "bindDn": "cn=admin,dc=example,dc=com",
+        "password": "secret",
+        "dn": "cn=x,dc=example,dc=com",
+        "newRdn": "cn=y"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      }
+    },
+    {
+      "name": "compare: an empty body is refused for its url",
+      "method": "POST",
+      "path": "/ldap/compare",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "compare: an empty url is refused",
+      "method": "POST",
+      "path": "/ldap/compare",
+      "body": {
+        "url": "",
+        "dn": "cn=x,dc=example,dc=com",
+        "attribute": "cn",
+        "value": "x"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "compare: a well-formed request reaches the network (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/ldap/compare",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "bindDn": "cn=admin,dc=example,dc=com",
+        "password": "secret",
+        "dn": "cn=x,dc=example,dc=com",
+        "attribute": "cn",
+        "value": "x"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      }
+    },
+    {
+      "name": "bind: a body that is an array is refused for its url",
+      "method": "POST",
+      "path": "/ldap/bind",
+      "body": [],
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "bind: a URL that is not ldap(s) is refused by ldap_client.js",
+      "method": "POST",
+      "path": "/ldap/bind",
+      "body": {
+        "url": "http://ldap.invalid/"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to use \"http://ldap.invalid/\": not an LDAP URL. It must begin ldap:// or ldaps://. This endpoint speaks LDAP, so the scheme is the one thing about the URL it cannot be flexible about.",
+          "code": "ELDAPBADURL"
+        }
+      }
+    },
+    {
+      "name": "bind: a port outside ldapAllowedPorts is refused",
+      "method": "POST",
+      "path": "/ldap/bind",
+      "body": {
+        "url": "ldap://ldap.invalid:1"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to connect to port 1. This service speaks LDAP to LDAP ports only (389, 636, 1389, 1636, 3268, 3269). Add the port to ldapAllowedPorts if this deployment needs it, or set that setting to the string \"any\".",
+          "code": "ELDAPPORTNOTALLOWED"
+        }
+      }
+    },
+    {
+      "name": "bind: an anonymous bind (no bindDn) is well-formed",
+      "method": "POST",
+      "path": "/ldap/bind",
+      "body": {
+        "url": "ldap://ldap.invalid:389"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      }
+    },
+    {
+      "name": "bind: a null bindDn and password are well-formed",
+      "method": "POST",
+      "path": "/ldap/bind",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "bindDn": null,
+        "password": null
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      }
+    },
+    {
+      "name": "bind: a url that is not a string",
+      "method": "POST",
+      "path": "/ldap/bind",
+      "body": {
+        "url": 5
+      },
+      "changed": "The model types url as a string and refuses anything else with url's own sentence. Until then a number reached ldap_client.js, which stringified it and refused it as a bad scheme.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to use 5: not an LDAP URL. It must begin ldap:// or ldaps://. This endpoint speaks LDAP, so the scheme is the one thing about the URL it cannot be flexible about.",
+          "code": "ELDAPBADURL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+        }
+      }
+    },
+    {
+      "name": "bind: a bindDn that is not a string",
+      "method": "POST",
+      "path": "/ldap/bind",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "bindDn": 7
+      },
+      "changed": "bindDn is a string or null in the model. Until then ldap_client.js stringified a number and bound as \"7\", which no caller meant.",
+      "before": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `bindDn` must be a JSON string or null. GET /api-docs describes what ldapBind takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "search: an unknown scope is refused by ldap_client.js",
+      "method": "POST",
+      "path": "/ldap/search",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "scope": "tree"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Unknown search scope \"tree\". RFC 4511 section 4.5.1.2 has three: base, one and sub.",
+          "code": "ELDAPBADSCOPE"
+        }
+      }
+    },
+    {
+      "name": "search: a scope in capitals is accepted",
+      "method": "POST",
+      "path": "/ldap/search",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "scope": "ONE",
+        "filter": "(uid=*)",
+        "attributes": [
+          "uid"
+        ],
+        "sizeLimit": "10"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      }
+    },
+    {
+      "name": "search: attributes that are not an array",
+      "method": "POST",
+      "path": "/ldap/search",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "attributes": "uid"
+      },
+      "changed": "attributes is an array or null in the model. Until then a string was silently replaced with [] (all attributes), so the caller asked for one attribute and got every one.",
+      "before": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `attributes` must be a JSON array or null. GET /api-docs describes what ldapSearch takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "add: no dn",
+      "method": "POST",
+      "path": "/ldap/add",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "attributes": {
+          "cn": "x"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "An add needs the DN of the entry to create.",
+          "code": "ELDAPNODN"
+        }
+      }
+    },
+    {
+      "name": "add: no attributes",
+      "method": "POST",
+      "path": "/ldap/add",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "dn": "cn=x,dc=example,dc=com"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "An add needs at least one attribute. An entry with no attributes has no objectClass, and every directory refuses that — refusing here names the mistake instead of relaying it.",
+          "code": "ELDAPNOATTRIBUTES"
+        }
+      }
+    },
+    {
+      "name": "add: attribute values that are numbers are sent as text",
+      "method": "POST",
+      "path": "/ldap/add",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "dn": "cn=x,dc=example,dc=com",
+        "attributes": {
+          "uidNumber": 1001
+        }
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve ldap.invalid: getaddrinfo ENOTFOUND ldap.invalid (ENOTFOUND).",
+          "code": "ELDAPDNS"
+        }
+      }
+    },
+    {
+      "name": "delete: no dn",
+      "method": "POST",
+      "path": "/ldap/delete",
+      "body": {
+        "url": "ldap://ldap.invalid:389"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A delete needs the DN of the entry to remove.",
+          "code": "ELDAPNODN"
+        }
+      }
+    },
+    {
+      "name": "modify: no dn",
+      "method": "POST",
+      "path": "/ldap/modify",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "changes": [
+          {
+            "operation": "add",
+            "type": "cn",
+            "values": [
+              "x"
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A modify needs the DN of the entry to change.",
+          "code": "ELDAPNODN"
+        }
+      }
+    },
+    {
+      "name": "modify: no changes",
+      "method": "POST",
+      "path": "/ldap/modify",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "dn": "cn=x,dc=example,dc=com"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A modify needs at least one change (RFC 4511 section 4.6).",
+          "code": "ELDAPNOCHANGES"
+        }
+      }
+    },
+    {
+      "name": "modify: an unknown change operation",
+      "method": "POST",
+      "path": "/ldap/modify",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "dn": "cn=x,dc=example,dc=com",
+        "changes": [
+          {
+            "operation": "increment",
+            "type": "cn"
+          }
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Unknown modify operation \"increment\". RFC 4511 section 4.6 has three: add, delete and replace.",
+          "code": "ELDAPBADCHANGE"
+        }
+      }
+    },
+    {
+      "name": "modify: a change with no attribute",
+      "method": "POST",
+      "path": "/ldap/modify",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "dn": "cn=x,dc=example,dc=com",
+        "changes": [
+          {
+            "operation": "add"
+          }
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Every change has to name an attribute.",
+          "code": "ELDAPBADCHANGE"
+        }
+      }
+    },
+    {
+      "name": "modifydn: no newRdn",
+      "method": "POST",
+      "path": "/ldap/modifydn",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "dn": "cn=x,dc=example,dc=com"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A modifyDN needs the entry's DN and its new RDN.",
+          "code": "ELDAPNODN"
+        }
+      }
+    },
+    {
+      "name": "compare: no attribute",
+      "method": "POST",
+      "path": "/ldap/compare",
+      "body": {
+        "url": "ldap://ldap.invalid:389",
+        "dn": "cn=x,dc=example,dc=com"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A compare needs a DN and the attribute to compare.",
+          "code": "ELDAPNODN"
+        }
+      }
+    },
+    {
+      "name": "limits: what the LDAP client will do",
+      "method": "GET",
+      "path": "/ldap/limits",
+      "expect": {
+        "status": 200,
+        "body": {
+          "allowedPorts": [
+            389,
+            636,
+            1389,
+            1636,
+            3268,
+            3269
+          ],
+          "addressPolicyEnabled": false,
+          "schemes": [
+            "ldap",
+            "ldaps"
+          ],
+          "scopes": [
+            "base",
+            "one",
+            "sub"
+          ],
+          "modifyOperations": [
+            "add",
+            "delete",
+            "replace"
+          ],
+          "followsReferrals": false,
+          "startTls": false,
+          "saslMechanisms": [],
+          "limits": {
+            "connectTimeout": 5000,
+            "callTimeout": 10000,
+            "maxResultBytes": 1048576,
+            "maxEntries": 1000
+          }
+        }
+      }
+    }
+  ]
+}

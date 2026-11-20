@@ -32,6 +32,7 @@
 //   node tests/run-report.js --demo   # write a SAMPLE report (no tests run)
 //
 const { spawn, execFileSync } = require("child_process");
+const nodeCrypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -79,7 +80,17 @@ const REPORT_DIR = path.join(TESTS_DIR, "report");
 const RUN_ID = new Date().toISOString().replace(/:/g, "-").replace(/\..+$/, "");
 const RUN_DIR = path.join(REPORT_DIR, RUN_ID);
 const LOGS_DIR = path.join(RUN_DIR, "logs");
+// The storage keys every browser held on the debugger's origin when it
+// closed (tools/record-storage-on-quit.js), for storage_keys_recorded.js.
+const STORAGE_RECORD_FILE = path.join(RUN_DIR, "storage-keys.jsonl");
 const BASE_URL = process.env.DEBUGGER_BASE_URL || "https://localhost:3000";
+const STORAGE_RECORD_ORIGIN = (function () {
+  try {
+    return new URL(BASE_URL).origin;
+  } catch (e) {
+    return "";
+  }
+})();
 const env = process.env;
 
 // ---------------------------------------------------------------------------
@@ -217,8 +228,8 @@ function jobTypeOf(script) {
 //     admin_api.js, sts_admin_api_operations.js, sts_admin_console.js and
 //     sts_metadata.js — drove the mock's own /admin and /admin-api surface
 //     and were removed from this suite on 2026-08-28; they live in the mock
-//     STS's own suite now (see the note in docs/mock-sts.md), which is the
-//     tree that changes them.
+//     STS's own suite now (see the note in docs/v0.9.5/mock-sts.md), which
+//     is the tree that changes them.
 //
 //     A SECOND SHAPE NEEDED IT FOR ONE DAY, and the record is worth keeping
 //     because the shape will recur. `sts_userinfo_protected.js` and
@@ -258,12 +269,25 @@ const JOB_LOCKS = {
   "sd_jwt_vc_presentation.js": "sts-vc",
   "ldp_vc_issuance.js": "sts-vc",
   "ldp_vc_presentation.js": "sts-vc",
+  // Configures nothing, but every case's request is built from the
+  // Verifier configuration sd_jwt_vc_presentation.js pins (the claims and
+  // the default format), and its credentials from /admin/vc: a pin landing
+  // mid-case changes what is asked for under a credential minted before it.
+  "vc_presentation_protocols.js": "sts-vc",
+  // Mints with oid4vci.credentialCertificateHeader=none for the length of
+  // one issuance (Polaris verifies an issuer chain with ECDSA only, and
+  // iya-sts's CA tiers are RSA-signed), and puts it back.
+  "vc_presentation_polaris.js": "sts-vc",
   "ldp_vc_refresh.js": "sts-vc",
   "jwt_vc_json_issuance.js": "sts-vc",
   "jwt_vc_json_presentation.js": "sts-vc",
   "vc_did.js": "sts-vc",
   "oid4vci_request_encryption.js": "sts-vc",
   "dpop_workflow.js": "sts-vc",
+  "vci_offer_modes.js": "sts-vc",
+  // The user guide's walk through the VC pages (docs/v0.9.5/vc/): it collects
+  // credentials through the same shared wallet entry the job above declares.
+  "vc_user_guide.js": "sts-vc",
   "metadata_schema_validation.js": "sts-vc",
   // walt.id's issuer-api2 and verifier-api2.
   "sd_jwt_vc_waltid.js": "waltid",
@@ -415,6 +439,15 @@ function locksOf(job) {
 // Mirror of the *active* (non-commented) test invocations in
 // common/common.sh runTests(). Each job maps the suite's config vars onto the
 // generic names (AUDIENCE, CLIENT_ID, ...) each test script reads.
+// A password for an account a guide job creates on iya-sts for one run.
+// Upper, lower, digit and symbol, so a product-mode password policy takes
+// it; never logged, and passed to the job only in its environment.
+function guidePassword() {
+  log.debug("Entering guidePassword().");
+  log.debug("Leaving guidePassword().");
+  return "Gd-" + nodeCrypto.randomBytes(18).toString("base64url") + "9a!";
+}
+
 function buildJobs() {
   log.debug("Entering buildJobs().");
   const jobs = [];
@@ -459,6 +492,68 @@ function buildJobs() {
     name: "Compose environment forwarding (what survives sudo: " +
         "TEST_CONCURRENCY, TEST_JOB_TIMEOUT_MS, STS_LOG_LEVEL)",
     script: "compose_env_forwarding.js",
+    env: {},
+  });
+
+  // THE ABSTRACT DATA MODEL (models/CLAUDE.md). common/model/ is generated
+  // from models/ and committed, so nothing else stops a .tsp edit landing
+  // without its regeneration, or a generated file being edited by hand. This
+  // runs `generate.mjs --check`, proves an edit to a copy reaches the output,
+  // holds every api and client env file to its schema, and holds the
+  // validator to refusing what it does not understand. Node only.
+  jobs.push({
+    name: "Abstract data model (common/model is what models/ generates; " +
+        "every env file matches its schema)",
+    script: "data_model.js",
+    env: {},
+  });
+
+  // Both api jobs below replay requests against a running api. A static
+  // site deploys none (remote-run-tests.sh sets API_AVAILABLE=false for it),
+  // so there they would report the site's 404s as the api's answers.
+  const apiJobSkip = env.API_AVAILABLE === "false"
+    ? "this target deploys no api: a static site's API_BASE_URL is the site " +
+      "itself. The job replays requests against the api and its record of " +
+      "answers, so it says nothing about a static deployment. Set " +
+      "API_AVAILABLE=true for a remote target that IS api-backed."
+    : null;
+
+  // THE API ANSWERS WHAT IT ANSWERED BEFORE ITS MODEL. Each family's
+  // requests were recorded against the api as it was, into
+  // fixtures/api_model/, before its hand-written checks gave way to the
+  // model's validator; this replays every one against the running api and
+  // holds each answer to the API document too. Needs the api only.
+  jobs.push({
+    name: "API answers match their recordings and the API document " +
+        "(fixtures/api_model)",
+    script: "api_model_wire.js",
+    env: {
+      API_URL: env.API_URL || "https://localhost:4000",
+    },
+    skip: apiJobSkip,
+  });
+
+  // NO ANSWER THIS RUN IS ONE THE API DOCUMENT DOES NOT DESCRIBE. LAST, so
+  // the api's record (GET /model/gaps, kept because docker-tests.js sets
+  // validateResponses) covers every answer every other job provoked.
+  jobs.push({
+    name: "No API answer this run is missing from the API document " +
+        "(GET /model/gaps, after every other job)",
+    script: "api_model_gaps.js",
+    last: true,
+    env: {
+      API_URL: env.API_URL || "https://localhost:4000",
+    },
+    skip: apiJobSkip,
+  });
+
+  // EVERY STORAGE KEY THE RUN'S PAGES WROTE IS DECLARED. LAST, so every
+  // browser job has closed its browser through record-storage-on-quit.js.
+  jobs.push({
+    name: "Every browser storage key this run wrote is declared " +
+        "(models/storage, after every other job)",
+    script: "storage_keys_recorded.js",
+    last: true,
     env: {},
   });
 
@@ -675,7 +770,7 @@ function buildJobs() {
   // a REALM, since a realm binds no socket. common/common.sh's
   // configureStsRfc9700Realm() creates it and is what leaves this variable
   // unset — and therefore these five jobs unscheduled — when the mock is too
-  // old to have it. See docs/rfc9700.md.
+  // old to have it. See docs/v0.9.5/rfc9700.md.
   if (env.RFC9700_STS_URL) {
     const RFC9700_JOBS = [
       ["refused", "the refusals, and that the mode is reversible"],
@@ -966,7 +1061,7 @@ function buildJobs() {
   // Then it SAVES THE PICTURES. That register is in memory and dies with the
   // process, so the only moment the map of this chain can be drawn is while the
   // run is happening; the SVGs land in this run's own report directory. See
-  // docs/test-suite-map.md.
+  // docs/v0.9.5/test-suite-map.md.
   //
   // The mock only, in EITHER of its modes, and the job asks it which
   // (`GET /admin-api/mode`). In development it needs nothing beyond the four
@@ -1305,6 +1400,15 @@ function buildJobs() {
     env: {},
   });
 
+  // No browser code calls Web Crypto except common/crypto/crypto_webcrypto.js,
+  // the opt-in backend (#463): every operation must work on a plain-HTTP
+  // page, where crypto.subtle does not exist. Read in node, no browser.
+  jobs.push({
+    name: "Only the opt-in backend calls Web Crypto (in node)",
+    script: "no_direct_webcrypto_engine.js",
+    env: {},
+  });
+
   // Every script a job above or below names must be in the tests image.
   // A missing COPY otherwise surfaces minutes into a run as
   // `Cannot find module`, and it reached develop three times in a row.
@@ -1574,6 +1678,25 @@ function buildJobs() {
     env: {},
   });
 
+  // common/crypto/crypto_provider.js, the one cryptography facade of issue
+  // #463 that JOSE, XML DSig/Enc and COSE are to call, in node with no
+  // browser, against node's own crypto (OpenSSL), which shares no code with
+  // the @noble / node-forge the facade is built on: every classical key type
+  // generated here must re-export from node BYTE-IDENTICAL as SPKI and
+  // PKCS#8, node's keys must import to node's own JWK, every signature
+  // algorithm signs one way and verifies the other (ECDSA raw and DER,
+  // including P-521's long-form DER), ECDH/X25519/X448, HMAC, HKDF, PBKDF2,
+  // AES-GCM/CBC/KW, ChaCha20-Poly1305 and RSA-OAEP agree with node, plus RFC
+  // 7638, 8037, 3394, 5869, 7518 App. C, 9052 C.7 and SP 800-185 values.
+  // Also asserts the facade's source never names Web Crypto. No browser and
+  // no services, so it never skips.
+  jobs.push({
+    name: "Crypto provider (common/crypto facade vs OpenSSL: keys, " +
+        "signatures, ECDH, KDFs, ciphers, key wrap, in node)",
+    script: "crypto_provider_engine.js",
+    env: {},
+  });
+
   // The Digital Signature page's STATEFUL hash-based signature pane, in node
   // with no browser, and the job with the most to prove of any in this
   // directory: LMS/HSS and XMSS/XMSS^MT are the only signature schemes in
@@ -1622,6 +1745,18 @@ function buildJobs() {
     name: "JWS engine (RFC 7515/7518/7797/8037/8812 — every registered " +
         "algorithm cross-checked against OpenSSL and jsonwebtoken, in node)",
     script: "jws_engine.js",
+    env: {},
+  });
+
+  // The test-stack CORS proxy (tests/cors-proxy/cors-proxy.js, #431), in
+  // node in front of throwaway upstreams, plain and TLS. It fronts walt.id's
+  // issuer and verifier and Polaris, and until this job it was exercised
+  // only through them — so a broken preflight read as four walt.id failures
+  // naming walt.id. Needs no stack.
+  jobs.push({
+    name: "CORS proxy (preflight, exposed headers, origin allow-list, " +
+        "upstream TLS, health — in node)",
+    script: "cors_proxy_engine.js",
     env: {},
   });
 
@@ -1681,6 +1816,18 @@ function buildJobs() {
   jobs.push({
     name: "JOSE JWE module (RFC 7516/7518: RSA-OAEP, ECDH-ES, Concat KDF)",
     script: "jose_jwe_encryption.js",
+    env: {},
+  });
+
+  // ML-KEM (draft-ietf-jose-pqc-kem-05) and HPKE (draft-ietf-jose-hpke-
+  // encrypt-22, draft-reddy-cose-jose-pqc-hybrid-hpke-11, X-Wing among
+  // them) in JWE, #312: client/src/hpke.js and jwe_kem.js against the
+  // drafts' own published vectors (committed beside the test), the
+  // pqc-kem-05 KMAC256 KDF against `openssl mac KMAC256`, X-Wing against
+  // pqc.js, and every alg x enc through jose_jwe.js. No services.
+  jobs.push({
+    name: "Post-quantum and HPKE JWE (ML-KEM, HPKE-0..16, X-Wing; in node)",
+    script: "hpke_jwe_engine.js",
     env: {},
   });
 
@@ -2653,7 +2800,7 @@ function buildJobs() {
   // rcbj/iya-sts submodule. The mock was written from the same reading of RFC
   // 4120 and [MS-PAC] as the client it checks, so the two agree by construction
   // and a shared misreading is invisible to all of them. This job is the answer
-  // to that, and it is the open risk docs/kerberos.md names.
+  // to that, and it is the open risk docs/v0.9.5/kerberos.md names.
   //
   // It needs a real Windows Server domain controller, which is what
   // infra/terraform-krb5 stands up and infra/krb5-test.sh drives:
@@ -3226,6 +3373,10 @@ function buildJobs() {
       SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
           "https://localhost:8081",
       SSF_RECEIVER_HOST: env.SSF_RECEIVER_HOST || "localhost",
+      // Section 7 drives the api's hosted transmitter (#363). A static site
+      // has no api, so the section is told there is none.
+      SSF_HOSTED_API_URL: ldapOff ? "" : (env.API_URL ||
+          "https://localhost:4000"),
     },
   });
 
@@ -3371,8 +3522,9 @@ function buildJobs() {
     script: "caep_page.js",
     env: {
       // API_URL only where this target HAS an api: the page's pushes land in
-      // its inbox until #363 (see the note at the top of caep_page.js). A
-      // static site gets none, and the job sends its events nowhere.
+      // its inbox (see the note at the top of caep_page.js; iya-sts as the
+      // receiver is ssf_protocol.js section 7). A static site gets none, and
+      // the job sends its events nowhere.
       API_URL: env.LDAP_AVAILABLE === "false" ? "" :
           (env.API_URL || "https://localhost:4000"),
       SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
@@ -3386,6 +3538,42 @@ function buildJobs() {
       CLIENT_ID: env.CLIENT_ID || "webapp1",
     },
   });
+
+  // THE DEBUGGER AS THE OPENID4VP VERIFIER (#364): vc-verifier.html creates
+  // a request through the api's request_uri / response_uri, node answers it
+  // as the wallet, and every check the page draws is read. API_URL only
+  // where the target HAS an api: on a static site the job asserts the page
+  // says it cannot host a request.
+  jobs.push({
+    name: "VC Verifier page (the debugger as the OpenID4VP Verifier: a " +
+        "request created through the api, answered over direct_post and " +
+        "direct_post.jwt, every check one row, a wrong nonce failing only " +
+        "its own)",
+    script: "vc_verifier_page.js",
+    env: {
+      API_URL: env.LDAP_AVAILABLE === "false" ? "" :
+          (env.API_URL || "https://localhost:4000"),
+    },
+  });
+
+  // AND THE SAME PAGE AGAINST A WALLET THAT IS NOT OURS (#364, PR 2):
+  // rcbj/oid4vc-wallet redeems an iya-sts pre-authorized offer, then answers
+  // the Verifier page through its headless command line. It needs iya-sts
+  // (the issuer) and the api (request_uri, response_uri), so it is gated on
+  // both, as the VC jobs and vc_verifier_page.js are.
+  if (env.WSTRUST_STS_URL && env.LDAP_AVAILABLE !== "false") {
+    jobs.push({
+      name: "VC Verifier page against rcbj/oid4vc-wallet (an independent " +
+          "wallet redeems an iya-sts offer and presents over direct_post " +
+          "and direct_post.jwt, then refuses)",
+      script: "vc_verifier_oid4vc_wallet.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        API_URL: env.API_URL || "https://localhost:4000",
+      },
+    });
+  }
 
   // ------------------------------------------------------------------------
   // RISC, THE SECOND VOCABULARY OVER THE SAME PIPE.
@@ -3630,12 +3818,11 @@ function buildJobs() {
   // the reason spelled out on the AS job above: that address is TYPED INTO THE
   // PAGE and resolved by the relay inside the api container, where localhost is
   // the api itself and port 88 is nothing. It stayed invisible because the two
-  // stacks disagree about localhost — under local-tests.yml every service is on
-  // host networking, so the api's loopback IS the host the mock KDC listens on
-  // and the default worked; on the bridge stack it is not, and the page
-  // reported `Could not talk to ::1:88` from a KDC that was up. The compose
-  // name is right on both, since local-tests.yml gives the api an
-  // `extra_hosts` entry mapping sts to 127.0.0.1.
+  // stacks disagreed about localhost — under the host-networked stack every
+  // service was on host networking, so the api's loopback WAS the host the
+  // mock KDC listens on and the default worked; on the bridge stack it is not,
+  // and the page reported `Could not talk to ::1:88` from a KDC that was up.
+  // The compose name is right on the bridge stack.
   const delegationPageJob = {
     name: "Kerberos delegation page (S4U2Self, S4U2Proxy, RBCD, forwarding, renewal)",
     script: "kerberos_delegation_page.js",
@@ -3747,6 +3934,243 @@ function buildJobs() {
     env: {},
   });
 
+  // The presentation PROTOCOLS in node: x509_hash and x509_san_dns against
+  // certificates node reads itself, the direct_post.jwt response opened with
+  // the Verifier's key, self-issued ID Tokens in three subject syntaxes,
+  // RFC 8785's own JCS vectors and the ecdsa-jcs-2019 holder proof, and every
+  // rule HAIP and SIOPv2 refuse on. Needs nothing.
+  jobs.push({
+    name: "VC presentation protocols (HAIP 1.0, SIOPv2 and OpenID4VP rules, " +
+        "x509 Client Identifiers, response encryption, in node)",
+    script: "vp_protocols_engine.js",
+    env: {},
+  });
+
+  // Every `name.member` in the browser bundles' source names something bound
+  // in that file or a known global: a missing require is an Uncaught
+  // ReferenceError on the page that no node test sees (#482 lost five jobs
+  // to one). Reads client/src and the staged common/ modules. Needs nothing.
+  jobs.push({
+    name: "Browser bundle source binds every module it uses (no missing " +
+        "require, in node)",
+    script: "client_module_bindings.js",
+    env: {},
+  });
+
+  // Every Data Integrity cryptosuite and legacy Linked Data proof type an
+  // ldp_vc arrives with (client/src/data_integrity.js, #475), in both
+  // directions against Digital Bazaar's and Blockcerts' released
+  // implementations and jose, with two byte-for-byte vectors. Needs
+  // nothing.
+  jobs.push({
+    name: "Data Integrity proofs (eddsa/ecdsa rdfc and jcs, Ed25519 " +
+        "2018/2020, JWS 2020, secp256k1 2019; cross-implementation, in node)",
+    script: "data_integrity_engine.js",
+    env: {},
+  });
+
+  // OAuth 2.0 client authentication at the token endpoint
+  // (client/src/client_auth.js): each method's wire form from RFC 6749,
+  // RFC 7523 / 7523bis-11 and draft-ietf-oauth-attestation-based-client-
+  // auth-12, every signature verified by node. No services.
+  jobs.push({
+    name: "Client authentication (basic, post, client_secret_jwt, " +
+        "private_key_jwt, Client Attestation; in node)",
+    script: "client_auth_engine.js",
+    env: {},
+  });
+
+  // AnonCreds (#479): the holder and verifier of client/src/anoncreds.js
+  // against anoncreds-rs v0.2.3 (tests/anoncreds_witness.js, from the
+  // private mirror's anoncreds-witness image) in every direction, and what
+  // must fail. No services. Fails, naming the image, without the witness.
+  jobs.push({
+    name: "AnonCreds (CL holder and verifier against anoncreds-rs, in node)",
+    script: "anoncreds_engine.js",
+    env: {},
+  });
+
+  // Predicate queries (#474): DIF Presentation Exchange 2.1.1 and its
+  // Predicate Feature, OpenID4VP 1.0 section 6.4.1's values matching, the
+  // debugger's DCQL predicate extension and its crit rule, the fail-closed
+  // plans, and AnonCreds predicates through the new paths against
+  // anoncreds-rs both ways. No services; fails without the witness.
+  jobs.push({
+    name: "Predicate queries (Presentation Exchange, DCQL extension, " +
+        "AnonCreds against anoncreds-rs; in node)",
+    script: "vp_query_engine.js",
+    env: {},
+  });
+
+  // VC Barcodes (#480, W3C Working Draft): CBOR-LD 1.0 and ecdsa-xi-2023 —
+  // the specification's three printed payloads, its PDF417 and QR text, and
+  // Digital Bazaar's released cborld 8.1.0 and ecdsa-xi-2023-cryptosuite
+  // 1.2.0 byte for byte and both ways; the ISO (Appendix B) vector built
+  // there; status lists against @digitalbazaar/vc-bitstring-status-list
+  // 2.0.1 both ways; and the PDF417 draw/read round trip. No services.
+  jobs.push({
+    name: "VC Barcodes (CBOR-LD and ecdsa-xi-2023 against the spec's " +
+        "vectors and Digital Bazaar's library, in node)",
+    script: "vc_barcodes_engine.js",
+    env: {},
+  });
+
+  // Gordian Envelope (#480, IETF drafts): dCBOR, the digest tree, UR, and
+  // Schnorr / ECDSA / Ed25519, reproducing bc-envelope 0.43.0's and dcbor
+  // 0.25.2's own test vectors byte for byte, signatures included; then the
+  // obscuring cases (encryption, recipients, password locks, compression,
+  // SSKR), multi-part URs, ML-DSA and SSH signatures, against the crates'
+  // vectors and bc-envelope-cli 0.35.0 both ways. No services.
+  jobs.push({
+    name: "Gordian Envelope (the Rust crates' vectors, and Blockchain " +
+        "Commons' bc-envelope-cli both ways, in node)",
+    script: "gordian_envelope_engine.js",
+    env: {},
+  });
+
+  // ACDC (#480, ToIP KERI Suite specifications): the issuer's KEL, the
+  // registry and issuance events and their anchors, and the credential,
+  // both ways with signify-ts 0.4.1 (the KERIA client vLEI uses), and the
+  // specifications' CESR and SAID vectors. No services.
+  jobs.push({
+    name: "ACDC (KEL, registry, anchors and credential, both ways with " +
+        "signify-ts, in node)",
+    script: "acdc_engine.js",
+    env: {},
+  });
+
+  // ACDC against keri-ts 2.2.9 and cesr-ts 2.2.1 (#480): CESR version 2
+  // KELs, weighted thresholds, delegation, witness receipts, credentials
+  // (no-backer and backer registries, chains), IPEX and v2 ACDC messages,
+  // both ways, in memory. No services.
+  jobs.push({
+    name: "ACDC (CESR v2, thresholds, delegation, witnesses, chains and " +
+        "IPEX, both ways with keri-ts and cesr-ts, in node)",
+    script: "acdc_keri_ts.js",
+    env: {},
+  });
+
+  // SD-CWT (draft-ietf-spice-sd-cwt-09; #478): the working group's encoded
+  // examples (issued, nested, decoys, both KBTs), our issuance and KBTs
+  // checked by @auth0/cose and node's SHA-256, and what must fail.
+  jobs.push({
+    name: "SD-CWT and Key Binding Tokens (draft -09 examples, @auth0/cose " +
+        "and node crypto, in node)",
+    script: "sd_cwt_engine.js",
+    env: {},
+  });
+
+  // JSON Web Proofs (draft-ietf-jose-json-web-proof-15, JPA-15, JPT-15;
+  // #478): the drafts' Appendix A byte for byte, every offered algorithm
+  // round-tripped and checked by node's crypto, BBS against Digital
+  // Bazaar's bbs-signatures, and what must fail. No services.
+  jobs.push({
+    name: "JSON Web Proofs (JPT/CPT: SU, MAC, BBS; the drafts' examples, " +
+        "node crypto and Digital Bazaar BBS, in node)",
+    script: "jwp_engine.js",
+    env: {},
+  });
+
+  // W3C VC-JOSE-COSE (vc+jwt, vc+sd-jwt, vc+cose and their envelopes,
+  // #477): both directions against iya-sts's own vc_jose_cose.js (loaded
+  // from its image), jose, @sd-jwt/core and @auth0/cose, and the
+  // specification's rules. Fails, naming the image, without iya-sts's tree.
+  jobs.push({
+    name: "VC-JOSE-COSE (vc+jwt, vc+sd-jwt, vc+cose; against iya-sts, jose, " +
+        "@sd-jwt/core and @auth0/cose, in node)",
+    script: "vc_jose_cose_engine.js",
+    env: {},
+  });
+
+  // ecdsa-sd-2023: the specification's own vectors (canonical statements,
+  // hashes, and the derived proofValue byte for byte) and Digital Bazaar's
+  // released implementation in every direction (#476). Needs nothing.
+  jobs.push({
+    name: "ecdsa-sd-2023 (W3C test vectors byte for byte; base and derived " +
+        "proofs against Digital Bazaar, in node)",
+    script: "ecdsa_sd_2023_engine.js",
+    env: {},
+  });
+
+  // BbsBlsSignature2020 and BbsBlsSignatureProof2020: the 2020 BBS+ scheme
+  // and the JSON-LD suite over it, in both directions against MATTR's
+  // released bbs-signatures and jsonld-signatures-bbs 1.2.0. Needs nothing.
+  jobs.push({
+    name: "BbsBlsSignature2020 and its derived proofs (BBS+ 2020, " +
+        "cross-implementation with MATTR, in node)",
+    script: "bbs_bls_2020_engine.js",
+    env: {},
+  });
+
+  // The holder key follows the issuer's proof_signing_alg_values_supported
+  // and the format, and the key proof, KB-JWT, VP JWT and ldp_vc holder VP
+  // each sign in that key's algorithm, verified by OpenSSL. Needs nothing.
+  jobs.push({
+    name: "Holder key algorithms (ES256, EdDSA, ES384, ES256K, ES512, " +
+        "PS256, RS256; every wallet signature, in node)",
+    script: "holder_key_algs.js",
+    env: {},
+  });
+
+  // The same engine against iya-sts's own vc_data_integrity.js, loaded in
+  // process from the image the stack runs: its credentials verified here,
+  // ours there, and the wallet's holder VP through its Verifier. Fails,
+  // naming the image, when that tree cannot be had.
+  jobs.push({
+    name: "Data Integrity proofs against iya-sts (both directions, and the " +
+        "wallet's holder VP through its Verifier, in node)",
+    script: "data_integrity_iyasts.js",
+    env: {},
+  });
+
+  // The debugger as an OpenID4VP 1.0 VERIFIER (#364): the DCQL builder, the
+  // Verifier's x509 identity (read back by node and by the wallet's own
+  // verifyX509Request), and verifyResponse() over dc+sd-jwt, mso_mdoc,
+  // jwt_vc_json and ldp_vc in both direct_post modes, each defect failing
+  // exactly its own check. Needs nothing.
+  jobs.push({
+    name: "OpenID4VP Verifier (DCQL, x509 Request Object, response " +
+        "verification per check, in node)",
+    script: "vp_verifier_engine.js",
+    env: {},
+  });
+
+  // POST /oid4vp/call, the wallet's route to a Verifier that sends no CORS
+  // headers: every refusal api/oid4vp_proxy.js makes, its defaults and its
+  // status rule, with no Verifier and no api running.
+  jobs.push({
+    name: "OpenID4VP relay (POST /oid4vp/call: refusals by rule, form " +
+        "bodies, text answers, in node)",
+    script: "api_oid4vp_proxy.js",
+    env: {},
+  });
+
+  // The Verifier role's request_uri and response_uri, which the api hosts
+  // for a page because a page is not an HTTP server (#364). The module half
+  // needs nothing and always runs; the route half runs when the job is
+  // given an API_URL, which every target with an api gets and a static site
+  // (no api at all) does not.
+  jobs.push({
+    name: "OpenID4VP Verifier sessions (the request_uri and response_uri " +
+        "the api hosts for a page: lifecycle, secret, caps and expiry in " +
+        "node, and the routes, media types and CORS over HTTP)",
+    script: "api_oid4vp_verifier.js",
+    env: ldapOff ? {} : {
+      API_URL: env.API_URL || "https://localhost:4000",
+    },
+  });
+
+  // ISO mdoc in the wallet (client/src/mdoc.js), in node, against an issuer
+  // written apart from it (tests/mdoc_test_issuer.js): reading, the digest
+  // and issuer-signature checks, and a DeviceResponse whose device signature
+  // the issuer's own encoder verifies over OpenID4VP's session transcript.
+  jobs.push({
+    name: "ISO mdoc wallet (IssuerSigned, MSO digests, DeviceResponse and " +
+        "its device signature over the OpenID4VP transcript, in node)",
+    script: "mdoc_engine.js",
+    env: {},
+  });
+
   // The SD-JWT VC issuance workflow (OID4VCI + RFC 9901): the mock Credential
   // Issuer the STS service hosts, the three vc-issuance pages, and the
   // ?sdjwtvc=1 hand-off through oauth2_oidc_1.html / oauth2_oidc_2.html. Needs
@@ -3760,6 +4184,20 @@ function buildJobs() {
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         KEYCLOAK_BASE_URL: env.KEYCLOAK_BASE_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // Client authentication at the token endpoint against a CONFIDENTIAL
+    // client this job provisions in a trust realm of its own (RFC 9700 mode
+    // on there, so a wrong secret IS refused): basic, a wrong secret, post,
+    // private_key_jwt and a Client Attestation by an attester that realm
+    // trusts. Configures nothing any other job reads, so it takes no lock.
+    jobs.push({
+      name: "VC Issuance — client authentication at the token endpoint " +
+          "(confidential client on iya-sts)",
+      script: "vc_issuance_client_auth.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
@@ -3824,6 +4262,90 @@ function buildJobs() {
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
+    // An ldp_vc that is NOT bbs-2023, through the presentation pages: an
+    // eddsa-rdfc-2022 credential presented whole in the holder's VP (in the
+    // suite the key and the Verifier allow), and a BbsBlsSignature2020 one
+    // derived to one claim. Made in node by Digital Bazaar and MATTR, the
+    // request handed to step 1 by value, and the result verified by them —
+    // iya-sts's Verifier reads only the bbs-2023 envelope. Needs only the
+    // client.
+    jobs.push({
+      name: "VC Presentation — ldp_vc presented whole (eddsa, ecdsa) and " +
+          "BbsBlsSignature2020 derived, verified by Digital Bazaar and MATTR",
+      script: "ldp_vc_whole_presentation.js",
+      env: {},
+    });
+    // AnonCreds through the presentation pages (#479): anoncreds-rs issues
+    // to our holder, the wallet reveals two of three attributes, and
+    // anoncreds-rs verifies. Needs the client and the anoncreds witness.
+    jobs.push({
+      name: "VC Presentation — AnonCreds (anoncreds-rs issuer and verifier)",
+      script: "anoncreds_presentation.js",
+      env: {},
+    });
+    // The predicate query page (#474): age >= 18 composed in Presentation
+    // Exchange and in the DCQL extension, proven by the wallet without
+    // revealing age, verified by anoncreds-rs and by the page; and the
+    // wallet's DCQL values matching (OpenID4VP 1.0 section 6.4.1). Needs
+    // the client and the anoncreds witness.
+    jobs.push({
+      name: "VC Predicates page — compose, prove in the wallet, verify; " +
+          "DCQL values matching",
+      script: "vc_predicates_browser.js",
+      env: {},
+    });
+    // The VC Barcodes page (#480): the specification's two examples, a
+    // changed MRZ refused, and an MRZ and an AAMVA barcode issued in the
+    // page, the drawn QR code and PDF417 symbol read back from their
+    // images; the ISO example and an ISO issue; a status list fetched from
+    // a server the job runs itself, and pasted. Needs only the client.
+    jobs.push({
+      name: "VC Barcodes page — read, verify and issue (MRZ QR code, " +
+          "AAMVA PDF417)",
+      script: "vc_barcodes_browser.js",
+      env: {},
+    });
+    // The Gordian Envelope page (#480): issue bc-envelope's example,
+    // present four claims (the root digest unchanged, verified in the page
+    // and in node), another key refused, salted Ed25519; encrypt to a
+    // recipient and a password, compress, split into SSKR shares, send as
+    // multi-part URs, and issue with ML-DSA-44 and SSH Ed25519. Needs only
+    // the client.
+    jobs.push({
+      name: "Gordian Envelope page — issue, verify, present, encrypt, " +
+          "compress, SSKR and multi-part URs",
+      script: "gordian_envelope_browser.js",
+      env: {},
+    });
+    // The ACDC page (#480): signify-ts's presentation stream verifies, the
+    // page's own issuance verifies there and in node, revocation, a changed
+    // attribute. Needs only the client.
+    jobs.push({
+      name: "ACDC page — verify a presentation stream, issue and revoke",
+      script: "acdc_browser.js",
+      env: {},
+    });
+    // JPT and SD-CWT through the presentation pages (#478, drafts): the
+    // JPA-15 SU-ES256 example, a BBS JPT signed by Digital Bazaar and the
+    // SD-CWT-09 example, each presentation checked by node's crypto,
+    // Digital Bazaar's verifyProof and @auth0/cose. Needs only the client.
+    jobs.push({
+      name: "VC Presentation — JPT (SU-ES256, BBS) and SD-CWT, verified by " +
+          "node crypto, Digital Bazaar and @auth0/cose",
+      script: "jwp_sd_cwt_presentation.js",
+      env: {},
+    });
+    // W3C VC-JOSE-COSE through the presentation pages (#477): a vc+jwt
+    // (jose) and a vc+cose (@auth0/cose) enveloped in the holder's vp+jwt,
+    // and a vc+sd-jwt (@sd-jwt/core) presented as one Disclosure and a Key
+    // Binding JWT, each verified by the library that made it. Needs only
+    // the client.
+    jobs.push({
+      name: "VC Presentation — W3C vc+jwt, vc+cose (enveloped) and " +
+          "vc+sd-jwt, verified by jose, @auth0/cose and @sd-jwt/core",
+      script: "vc_jose_cose_presentation.js",
+      env: {},
+    });
     jobs.push({
       name: "VC Presentation — ldp_vc / bbs-2023 (statement disclosure, " +
           "unlinkable)",
@@ -3885,7 +4407,7 @@ function buildJobs() {
     // console walked in a browser). All four asserted things about the mock
     // STS rather than about this debugger, and the mock's own suite drives
     // them now, in the tree where a change to that console is made. They were
-    // removed here on 2026-08-28; see docs/mock-sts.md.
+    // removed here on 2026-08-28; see docs/v0.9.5/mock-sts.md.
     jobs.push({
       name: "VC Issuance — issuer named by DID (did:web, domain linkage, " +
           "both formats)",
@@ -3898,12 +4420,14 @@ function buildJobs() {
   }
 
   // The cryptosuite ABOVE the primitive: JSON-LD canonicalization, the base
-  // proof, and selective disclosure. The STS issues with one BBS implementation
-  // and the wallet derives with the other, so neither marks its own homework.
+  // proof, and selective disclosure, as W3C Data Integrity BBS Cryptosuites
+  // v1.0 has them. Held to the specification's own Appendix A vectors and to
+  // Digital Bazaar's independent implementation in both directions, so
+  // nothing here marks its own homework. Node only, never skipped.
   {
     jobs.push({
-      name: "bbs-2023 cryptosuite (ldp_vc issue, derive, verify across two " +
-          "implementations)",
+      name: "bbs-2023 cryptosuite (W3C vc-di-bbs vectors, and Digital " +
+          "Bazaar's implementation both ways)",
       script: "bbs2023_cryptosuite.js",
       env: {},
     });
@@ -3918,6 +4442,18 @@ function buildJobs() {
       name: "Metadata schema validation (OID4VCI and RFC 8414 panes, " +
           "positive and negative)",
       script: "metadata_schema_validation.js",
+      env: {},
+    });
+  }
+
+  // The "Credential to request" chooser on vc-issuance-1.html: the issuer's
+  // entries, a built-in one per format, and Clear. Its issuer document is
+  // planted in localStorage, so it needs only the client.
+  {
+    jobs.push({
+      name: "VC Issuance — the Credential to request chooser (issuer and " +
+          "built-in entries)",
+      script: "vci_configuration_chooser.js",
       env: {},
     });
   }
@@ -4009,6 +4545,66 @@ function buildJobs() {
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
+    // The chooser's cross-device and deferred cards (#365): a DEFERRED
+    // pre-authorized offer from iya-sts's portal, collected by the wallet
+    // polling the Deferred Credential Endpoint on its own, and a
+    // cross-device offer handed over as its QR CODE image and decoded on
+    // step 1. Nothing else drives either.
+    jobs.push({
+      name: "VC Issuance — deferred (H.3) and QR-image (H.2) pre-authorized " +
+          "offers through the wallet pages",
+      script: "vci_offer_modes.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // THE USER GUIDE'S TUTORIALS, walked the way docs/v0.9.5/vc/ tells a reader
+    // to walk them: step 1 from the issuer's metadata, pre-authorized offers
+    // (Transaction Code, DPoP, deferred, every format the issuer offers), DID
+    // Tools against the issuer's origin, and a presentation to the debugger's
+    // own Verifier page under OpenID4VP 1.0 and HAIP 1.0 where the target has
+    // an api. Its doc_screenshots.js calls are inert unless DOC_SCREENSHOT_DIR
+    // is set.
+    jobs.push({
+      name: "VC user guide — the tutorials of docs/v0.9.5/vc/ (issuance by " +
+          "pre-authorized offer, DID Tools, presentation to the debugger's " +
+          "own Verifier)",
+      script: "vc_user_guide.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        API_URL: env.LDAP_AVAILABLE === "false" ? "" :
+            (env.API_URL || "https://localhost:4000"),
+      },
+    });
+    // THE SAML AND WS-TRUST USER GUIDES' WALK (docs/v0.9.5/saml/,
+    // docs/v0.9.5/wstrust/), the way vc_user_guide.js walks docs/v0.9.5/vc/: a
+    // SAML 2.0 sign-in from saml_request.html, then the WS-Trust pages' Issue,
+    // OnBehalfOf and ActAs. It creates its two accounts (guide-saml,
+    // guide-wstrust) on iya-sts with passwords made here for this run, and
+    // declares its service provider and AppliesTo applications through
+    // /admin-api. Its doc_screenshots.js calls are inert unless
+    // DOC_SCREENSHOT_DIR is set.
+    jobs.push({
+      name: "SAML and WS-Trust user guides — the walks of " +
+          "docs/v0.9.5/saml/ and docs/v0.9.5/wstrust/",
+      script: "saml_wstrust_user_guide.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        GUIDE_SAML_PASSWORD: env.GUIDE_SAML_PASSWORD ||
+            guidePassword(),
+        GUIDE_WST_PASSWORD: env.GUIDE_WST_PASSWORD || guidePassword(),
+        // A service provider of its own. The page's default entityID is the
+        // one the SAML SSO jobs register, and the walk adds its own signing
+        // certificate to the provider it registers.
+        GUIDE_SP_ENTITY_ID: BASE_URL.replace(/\/+$/, "") +
+            "/saml/sp-user-guide",
+        // A static target cannot run the Artifact binding; the walk leaves
+        // that one round trip out there.
+        SAML_BACKEND_AVAILABLE: env.SAML_BACKEND_AVAILABLE || "true",
+      },
+    });
     jobs.push({
       name: "VC Presentation — SD-JWT VC (OID4VP: selective disclosure, " +
           "positive and negative)",
@@ -4016,6 +4612,22 @@ function buildJobs() {
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // The same workflow under its three PROTOCOLS (vp_protocols.js): HAIP
+    // 1.0 — x509_hash, a signed request by request_uri, an encrypted
+    // direct_post.jwt answer — and SIOPv2, a self-issued ID Token beside the
+    // presentation and on its own, for every format the wallet holds. It
+    // configures nothing, but holds `sts-vc` (JOB_LOCKS) because what it is
+    // asked for comes from the configuration other jobs pin.
+    jobs.push({
+      name: "VC Presentation — HAIP 1.0 and SIOPv2 (x509_hash, " +
+          "direct_post.jwt, self-issued ID Tokens, every format)",
+      script: "vc_presentation_protocols.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        OID4VP_VERIFIER_URL: env.OID4VP_VERIFIER_URL || "",
       },
     });
   }
@@ -4072,6 +4684,28 @@ function buildJobs() {
         WALTID_VERIFIER_URL: env.WALTID_VERIFIER_URL,
         WALTID_ISSUER_URL: env.WALTID_ISSUER_URL || "",
         KEYCLOAK_BASE_URL: env.KEYCLOAK_BASE_URL || "",
+      },
+    });
+  }
+
+  // HAIP against POLARIS (#423): polaris-oid4vp, an independently written
+  // OpenID4VP 1.0 + HAIP 1.0 verifier, from its own published image, with an
+  // ES256 SD-JWT VC iya-sts issues in the same run. Scheduled where the
+  // volume it shares with the polaris-verifier container is mounted, which
+  // is the containerized stack. POLARIS_CONTROL_URL is that container's
+  // plain-HTTP listener: each case is POST /control/request. Holds `sts-vc`
+  // (JOB_LOCKS) because it mints with one iya-sts setting changed and put
+  // back.
+  if (env.POLARIS_DATA_DIR) {
+    jobs.push({
+      name: "VC Presentation — HAIP 1.0 against Polaris (x509_hash, " +
+          "request_uri POST, direct_post.jwt, an independent verifier)",
+      script: "vc_presentation_polaris.js",
+      env: {
+        POLARIS_DATA_DIR: env.POLARIS_DATA_DIR,
+        POLARIS_CONTROL_URL: env.POLARIS_CONTROL_URL || "",
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
   }
@@ -4399,6 +5033,41 @@ function buildJobs() {
     jobs.push(job);
   }
 
+  // THE SAME ROUND TRIP AGAINST SHIBBOLETH (#425): somebody else's SAML 1.1
+  // identity provider, the side-car in shibboleth-idp/. The debugger is
+  // registered the way a Shibboleth deployment takes a service provider —
+  // its own SP metadata, written where the IdP's metadata providers read —
+  // and the IdP's metadata is loaded from <base>/shibboleth. Nothing of
+  // iya-sts is used. Only the containerized stack starts the side-car, and
+  // anywhere else these two are declared skips naming it.
+  for (const SAML_BINDING of ["post", "artifact"]) {
+    const job = {
+      name: `SAML 1.1 SSO — Browser/${SAML_BINDING === 'artifact' ?
+          'Artifact' : 'POST'} profile (Shibboleth IdP)`,
+      script: "saml11_sso.js",
+      env: {
+        SAML_BINDING,
+        SAML11_PEER: "shibboleth",
+        SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
+        SHIBBOLETH_IDP_URL: env.SHIBBOLETH_IDP_URL,
+        SHIBBOLETH_SP_METADATA_DIR: env.SHIBBOLETH_SP_METADATA_DIR,
+        SHIBBOLETH_IDP_USER: env.SHIBBOLETH_IDP_USER,
+        SHIBBOLETH_IDP_PASSWORD: env.SHIBBOLETH_IDP_PASSWORD,
+        SHIBBOLETH_SP_ENTITY_ID: env.SHIBBOLETH_SP_ENTITY_ID,
+      },
+    };
+    if (!env.SHIBBOLETH_IDP_URL || !env.SHIBBOLETH_SP_METADATA_DIR) {
+      job.skip = "no Shibboleth IdP on this stack (SHIBBOLETH_IDP_URL or " +
+        "SHIBBOLETH_SP_METADATA_DIR unset). Only the containerized stack " +
+        "starts the shibboleth-idp side-car.";
+    } else if (SAML_BINDING === "artifact" && !samlBackendAvailable) {
+      job.skip = "HTTP Artifact needs the API backend (the SAML 1.1 SOAP " +
+        "responder is a server-side call); unavailable on the static " +
+        "deployment.";
+    }
+    jobs.push(job);
+  }
+
   // What the SP / Request pane offers on SAML 1.1 and what it must stop
   // offering — the username hint, request signing, request encryption, Single
   // Logout and the SLO endpoints, each asserted DISABLED and greyed rather than
@@ -4434,6 +5103,7 @@ function buildJobs() {
       SHIBBOLETH_IDP_PASSWORD: env.SHIBBOLETH_IDP_PASSWORD,
       SHIBBOLETH_SP_ENTITY_ID: env.SHIBBOLETH_SP_ENTITY_ID,
       SHIBBOLETH_ACS_URL: env.SHIBBOLETH_ACS_URL,
+      SHIBBOLETH_SP_METADATA_DIR: env.SHIBBOLETH_SP_METADATA_DIR,
     },
   });
 
@@ -4466,10 +5136,11 @@ function buildJobs() {
   // rather than an omission in the test.** The mock STS's Web Browser SSO
   // profile does not encrypt an assertion: there is no recipient certificate in
   // an AuthnRequest to encrypt to unless SP metadata is consumed, and that
-  // service publishes metadata and does not consume it. (Its WS-Trust endpoint
-  // does encrypt, at /sts?encrypt=1, because a WS-Security signature carries
-  // the certificate.) So there is no `sts` half to add here — adding one would
-  // be a job that could only ever fail or be skipped.
+  // service publishes metadata and does not consume it. WS-Trust encryption
+  // is that relying party's XPath map, and the element comes back as
+  // xenc:EncryptedData rather than a SAML EncryptedAssertion. So there is
+  // no `sts` half to add here — adding one would be a job that could only
+  // ever fail or be skipped.
   {
     const encJob = {
       name: "SAML 2.0 EncryptedAssertion — decrypt on Response page",
@@ -4772,9 +5443,10 @@ function buildJobs() {
     jobs.push(job);
   }
 
-  // Encrypted-token round-trip: sign the request, ask the STS to encrypt the
-  // issued assertion (?encrypt=1) to the requestor cert, then DECRYPT it on the
-  // response page and confirm a plaintext assertion (exercises decryptXml).
+  // Encrypted issued assertion. WS-Trust does not name that element in
+  // the RST. The job sets wstrustEncryptResponse and the assertion XPath
+  // on its own relying party, signs so the BinarySecurityToken is the
+  // recipient, then decrypts the EncryptedData on the response page.
   var encJob = {
     name: "WS-Trust 1.4 — Issue (encrypted token, decrypt)",
     script: "wstrust.js",
@@ -4784,12 +5456,36 @@ function buildJobs() {
       WSTRUST_SIGN: "true",
       WSTRUST_ROUTE: wstrustRoute("back"),
       WSTRUST_ENCRYPT: "true",
+      WSTRUST_APPLIES_TO: "urn:wstrust:test:rp:encrypted-assertion",
     },
   };
   if (!wstrustStsUrl) {
     encJob.skip = wstrustSkip;
   }
   jobs.push(encJob);
+
+  // Encrypted RST. WS-Security allows the client to encrypt the body.
+  // Requiring that element is not an RST field, so the job sets
+  // wstrustEncryptRequest and the RequestSecurityToken XPath.
+  // wstrustAcceptEncryptedElements stays false. The page encrypts the
+  // RST to the decryption key the job issues for that application, then
+  // the job removes the key. GET /sts/cert is the signing certificate.
+  var reqEncJob = {
+    name: "WS-Trust 1.4 — Issue (encrypted request body)",
+    script: "wstrust.js",
+    env: {
+      WSTRUST_STS_URL: wstrustStsUrl,
+      WSTRUST_OP: "issue",
+      WSTRUST_SIGN: "false",
+      WSTRUST_ROUTE: wstrustRoute("back"),
+      WSTRUST_ENCRYPT_REQUEST: "true",
+      WSTRUST_APPLIES_TO: "urn:wstrust:test:rp:encrypted-request",
+    },
+  };
+  if (!wstrustStsUrl) {
+    reqEncJob.skip = wstrustSkip;
+  }
+  jobs.push(reqEncJob);
 
   // Cycle the WS-Trust protocol version (1.0–1.4) with an Issue each, so each
   // version's trust namespace and option-gating (Bearer key type is 1.3+,
@@ -5378,6 +6074,11 @@ function runJob(job, index, live, again) {
     // shared module in-process covers real branches in it. Off unless
     // COVERAGE=true, so an ordinary run is byte-for-byte what it was.
     const childEnv = { ...process.env, ...job.env };
+    // Where tools/record-storage-on-quit.js writes the storage keys each
+    // browser held on the debugger's origin, and storage_keys_recorded.js
+    // (last) reads them. One file for the run.
+    childEnv.STORAGE_RECORD_FILE = STORAGE_RECORD_FILE;
+    childEnv.STORAGE_RECORD_ORIGIN = STORAGE_RECORD_ORIGIN;
     if (nodeCoverageOn) {
       childEnv.NODE_V8_COVERAGE = NODE_COVERAGE_TMP;
     }
@@ -5393,6 +6094,8 @@ function runJob(job, index, live, again) {
         path.join(TESTS_DIR, "tools", "attach-admin-token.js"),
         "--require",
         path.join(TESTS_DIR, "tools", "flush-coverage-on-quit.js"),
+        "--require",
+        path.join(TESTS_DIR, "tools", "record-storage-on-quit.js"),
         path.join(TESTS_DIR, job.script), "--url",
         BASE_URL], {
       env: childEnv,
@@ -5632,7 +6335,26 @@ async function runAllJobs(jobs, results) {
     reportOne(results[i], i, total);
   }
 
+  // LAST jobs wait for the pool to drain: each reads what every other job
+  // left behind (api_model_gaps.js reads the api's record of every answer
+  // the run provoked), so starting one early would read half a run. Marked
+  // started here so the pool never picks them, then run in order.
+  const last = [];
+  for (const [i, job] of jobs.entries()) {
+    if (!started[i] && job.last) {
+      started[i] = true;
+      last.push(i);
+    }
+  }
+
   await runPool(jobs, results, started, total);
+
+  for (const i of last) {
+    log.info(`===== [${i + 1}/${total}] ${jobs[i].name} — last =====`);
+    results[i] = await runJobAllowingOneRendererWedge(jobs[i], i,
+                                                      CONCURRENCY === 1);
+    reportOne(results[i], i, total);
+  }
   log.debug("Leaving runAllJobs().");
 }
 
@@ -5825,9 +6547,10 @@ function fetchTestingBrowser() {
 // image pins — and Chromium both allow it.
 //
 // It used to answer with the FIRST browser it found and let the job skip when
-// that one was branded Chrome, which is what `./local-run-tests.sh` reported on
-// every host whose `google-chrome` is the real thing — a permanent skip on the
-// launcher most people run. Two things changed on 2026-08-18:
+// that one was branded Chrome, which is what the host-run launcher (since
+// removed) reported on every host whose `google-chrome` is the real thing — a
+// permanent skip on the launcher most people ran. Two things changed on
+// 2026-08-18:
 //
 //   * every candidate is probed and a CAPABLE one wins, so a host carrying
 //     both Chromium and branded Chrome uses the Chromium rather than reporting
@@ -6176,7 +6899,7 @@ function reportJobsThatDidNotRun(results) {
 //
 // This is what ./docker-run-tests.sh's focused modes (--saml-only,
 // --wsfed-only, --delegation-only, --federation-only) are built on. They used
-// to be loops in ./local-run-tests.sh that called the scripts by hand with an
+// to be loops in a host-run launcher that called the scripts by hand with an
 // environment of their own, which was a second copy of what each job here
 // already knows about its identity provider. Selecting the jobs instead means
 // a focused run drives exactly the jobs the full suite does, with the same

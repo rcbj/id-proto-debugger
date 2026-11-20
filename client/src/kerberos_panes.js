@@ -867,12 +867,8 @@ async function reportEnvironment(hostId, options) {
     log.debug("Leaving reportEnvironment().");
     return { ok: false, reason: "no api" };
   }
-  if (!(window.crypto && window.crypto.subtle)) {
-    note.appendChild(make("p", "krb-note krb-bad",
-      "This page is not in a secure context, so Web Crypto is unavailable " +
-          "and no key can be " +
-      "derived or verified. Load it over https, or from localhost."));
-  }
+  // No secure-context warning: keys are derived and verified by
+  // crypto_provider.js, pure JS, since #463.
   try {
     var limits = await relayLimits();
     var text = "The api relays to KDC ports " + (limits.allowedPorts ||

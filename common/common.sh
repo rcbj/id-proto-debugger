@@ -98,9 +98,9 @@ common_setup()
 # compose as empty, the pool sized itself from the container's cores as though
 # nothing had been asked for, and the run gave no sign either way.
 # TEST_JOB_TIMEOUT_MS is the per-job watchdog and joins them so the whole pool
-# is tunable from one place. All three are absent from ./local-run-tests.sh's
-# problems: that launcher runs run-report.js on the host, where the variables
-# are simply inherited.
+# is tunable from one place. ./remote-run-tests.sh has none of these
+# problems: it runs run-report.js on the host, where the variables are simply
+# inherited.
 COMPOSE_FORWARDED_VARS="CONFIG_FILE COMPOSE_PROJECT_NAME OID4VCI_WALLET_URL"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} BUILD_NUMBER GIT_COMMIT"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} TEST_CONCURRENCY TEST_JOB_TIMEOUT_MS"
@@ -1080,12 +1080,24 @@ requireIyaStsImage()
   fi
   if ! ${docker_cmd} pull -q "${image}" >/dev/null;
   then
-    echo "ERROR: could not pull ${image}, the iya-sts release this run" \
-         "uses. It is the private mirror copy on ghcr.io; the login" \
-         "requireGhcrMirror() describes covers it, or set IYA_STS_IMAGE" \
-         "to an image this machine has." >&2
-    echo "Leaving requireIyaStsImage(). Pull failed."
-    return 1
+    # A CANDIDATE built on this machine (IYA_STS_IMAGE=iya-sts-candidate:...)
+    # has no registry to pull from, and that is the case the override exists
+    # for. Use the local image when there is one, and say so; fail only when
+    # the image is neither pullable nor present.
+    if ${docker_cmd} image inspect "${image}" >/dev/null 2>&1;
+    then
+      echo "WARNING: could not pull ${image}; using the copy already on" \
+           "this machine ($(${docker_cmd} image inspect -f '{{.Id}}' \
+           "${image}" | cut -c1-19))." >&2
+    else
+      echo "ERROR: could not pull ${image}, the iya-sts release this run" \
+           "uses, and this machine has no copy of it. The default is the" \
+           "private mirror copy on ghcr.io; the login requireGhcrMirror()" \
+           "describes covers it, or set IYA_STS_IMAGE to an image this" \
+           "machine has." >&2
+      echo "Leaving requireIyaStsImage(). Pull failed."
+      return 1
+    fi
   fi
   declare -gx IYA_STS_IMAGE="${image}"
   echo "Leaving requireIyaStsImage(). IYA_STS_IMAGE=${IYA_STS_IMAGE}"
@@ -1445,7 +1457,7 @@ requireStsReachable()
         echo "       Find it and stop it BY PID, never by pattern:" >&2
         echo "         ss -ltnp | grep ':${sts_port}'   # then: kill <pid>" >&2
       fi
-      reportContainerLog "local-tests.yml" "${service}" 2>/dev/null || true
+      echo "       Its log: docker logs ${service}" >&2
       [ -n "${xtrace_was_on}" ] && set -x
       echo "Leaving requireStsReachable(). ${service} did not answer."
       return 1
@@ -1459,125 +1471,10 @@ requireStsReachable()
 }
 
 # ---------------------------------------------------------------------------
-# Require that the mock STS BOUND its two SPIFFE gRPC ports, and fail with the
-# port when it did not.
-#
-# requireStsReachable() above asks that question of the HTTP port, and the mock
-# answers it by dying: that listen has no error handler, so a stranger holding
-# 8081 leaves no container to check. THE SPIFFE LISTENERS ARE DIFFERENT AND
-# THAT IS THE HAZARD. They are optional to that service — it logs `spiffe:
-# could not bind 0.0.0.0:8181 ... EADDRINUSE` at level 50 and CARRIES ON — so
-# the stack comes up healthy, every HTTP-backed job passes, and the three
-# SPIFFE jobs spend the run talking to whatever holds those ports. That is not
-# hypothetical: it cost the 2026-09-01 run two red tests whose messages named
-# an authorization rule and a TLS chain, and a third that passed against the
-# stranger because the stranger was another instance of the same mock.
-#
-# The fact is the mock's own: GET /spiffe?format=json publishes every listener
-# with `listening` and the bind error beside it. So this asks, rather than
-# probing the ports — a probe cannot tell our listener from somebody else's,
-# which is the entire problem.
-#
-# FATAL, like requireStsReachable(). A stranger on those ports does not make
-# the SPIFFE workflow absent; it makes three jobs' results untrue, and one of
-# them writes `spiffe.adminIds` to this mock and exercises it on the other.
-#
-# node rather than jq: this reads one document with two nested arrays, every
-# launcher already runs node, and the parse belongs where the shape is known.
-#
-# $1 the mock's base URL, $2 the service name, for the message.
-# ---------------------------------------------------------------------------
-requireStsSpiffeListeners()
-{
-  echo "Entering requireStsSpiffeListeners(). url=${1}"
-  local url="${1%/}"
-  local service="${2:-sts}"
-  if [ -z "${url}" ];
-  then
-    echo "ERROR: requireStsSpiffeListeners() needs the mock's base URL." >&2
-    echo "Leaving requireStsSpiffeListeners(). No URL."
-    return 1
-  fi
-
-  local xtrace_was_on=""
-  case "$-" in
-    *x*) xtrace_was_on="yes"; set +x ;;
-  esac
-
-  local document unbound
-  # --insecure for requireStsReachable()'s own reason: this is asking what the
-  # service says about itself, not whether its certificate is trusted yet.
-  document=$(curl -s -k -m 10 "${url}/spiffe?format=json" 2>/dev/null || true)
-  if [ -z "${document}" ];
-  then
-    # No document is not a failure here. A deployment with no SPIFFE service at
-    # all is one the three jobs skip by themselves, with a reason, and inventing
-    # a stack failure from a missing endpoint would break every target that has
-    # none.
-    [ -n "${xtrace_was_on}" ] && set -x
-    echo "Leaving requireStsSpiffeListeners(). Nothing described."
-    return 0
-  fi
-
-  unbound=$(printf '%s' "${document}" | node -e '
-    let raw = "";
-    process.stdin.on("data", function (chunk) { raw += chunk; });
-    process.stdin.on("end", function () {
-      let doc = null;
-      try {
-        doc = JSON.parse(raw);
-      } catch (e) {
-        process.exit(0);
-      }
-      if (!doc || !doc.enabled) {
-        process.exit(0);
-      }
-      const surfaces = [["workloadApi", "the Workload API"],
-                        ["serverApi", "the SPIRE Server API"]];
-      surfaces.forEach(function (pair) {
-        const one = doc[pair[0]] || {};
-        (one.listeners || []).forEach(function (listener) {
-          if (listener.socket === true || listener.listening === true) {
-            return;
-          }
-          console.log(pair[1] + " on " + listener.address + ": " +
-                      (listener.error || "no reason given"));
-        });
-      });
-    });
-  ' 2>/dev/null || true)
-
-  if [ -n "${unbound}" ];
-  then
-    echo "ERROR: ${service} has SPIFFE enabled but did NOT bind:" >&2
-    # sed rather than printf's own padding: `unbound` is one line per listener
-    # and a format string indents only the first of them.
-    printf '%s\n' "${unbound}" | sed 's/^/       /' >&2
-    echo "       Under host networking that port is this machine's, so" \
-         "whoever bound it first is what answers there —" >&2
-    echo "       and it is not this mock. The SPIFFE jobs would write a" \
-         "setting to this process over HTTP and then" >&2
-    echo "       exercise it against another one over gRPC, which reads as" \
-         "an authorization bug and a TLS chain" >&2
-    echo "       failure rather than as a port. Find it BY PID, never by" \
-         "pattern:" >&2
-    echo "         ss -ltnp | grep -E ':(8092|8181)'   # then: kill <pid>" >&2
-    reportContainerLog "local-tests.yml" "${service}" 2>/dev/null || true
-    [ -n "${xtrace_was_on}" ] && set -x
-    echo "Leaving requireStsSpiffeListeners(). A port is held by somebody else."
-    return 1
-  fi
-
-  [ -n "${xtrace_was_on}" ] && set -x
-  echo "Leaving requireStsSpiffeListeners(). Every SPIFFE listener is bound."
-  return 0
-}
-
-# ---------------------------------------------------------------------------
 # INSTALL THE MOCK STS'S CERTIFICATE, FOR NODE AND FOR CHROME.
 #
 # The mock serves its main port over TLS in every stack here (STS_HTTPS=true in
-# local-tests.yml, docker-compose-run-tests.yml and keycloak-tests.yml). That is
+# docker-compose-run-tests.yml and keycloak-tests.yml). That is
 # not a preference: the RFC 9700 pass is a TRUST REALM on that one instance now
 # rather than a second container, a realm binds no socket of its own, and the
 # pass is only honest over TLS — requirement 8.1 is that every configured
@@ -1799,7 +1696,7 @@ trustStsCertificate()
 # step and not a setting in a compose file. There is nowhere to declare it: that
 # service persists nothing at all, on purpose.
 #
-# IT IS ALSO THE CAPABILITY PROBE, and it replaced a worse one. local-run-tests.sh
+# IT IS ALSO THE CAPABILITY PROBE, and it replaced a worse one. A launcher
 # used to decide whether to schedule those jobs by looking for `oauth2_bcp.js`
 # in the sts/ submodule (removed since) — a path test, which silently took
 # its else branch and printed a confident, wrong explanation when iya-sts
@@ -1853,8 +1750,8 @@ adminApiToolsDir()
 # / `admin:write`. The full suite gets its token from run-report.js, which
 # mints one before the pool starts; this function is for everything that does
 # NOT go through the runner — configureStsRfc9700Realm() and
-# declareStsLogoutService() below, which are curl, and the `--*-only` modes in
-# local-run-tests.sh, which spawn a test script directly.
+# declareStsLogoutService() below, which are curl, and the launchers'
+# own direct calls to the management API.
 #
 # It exports two things and both are load-bearing:
 #
@@ -2716,9 +2613,9 @@ configureKeycloak()
   SAML_SLO_URL="${SAML_SLO_URL:-${SAML_API_BASE_URL}/samlslo}"
   # AuthnRequest signature validation. Enabled by default (registers this run's
   # generated SP signing cert so the signed requests from tests/saml_sso.js
-  # validate). Set
-  # SAML_SIG_VALIDATION=false (local-run-tests.sh --saml-dev) to turn it off so a
-  # browser-generated / unregistered SP key can drive the SAML flow manually.
+  # validate). Set SAML_SIG_VALIDATION=false (docker-run-tests.sh --saml-dev)
+  # to turn it off so a browser-generated / unregistered SP key can drive the
+  # SAML flow manually.
   SAML_SIG_VALIDATION="${SAML_SIG_VALIDATION:-true}"
   if [ "${SAML_SIG_VALIDATION}" = "false" ] || [ "${SAML_SIG_VALIDATION}" = "0" ]; then
     echo "SAML: AuthnRequest signature validation DISABLED on the Keycloak client."

@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Presentation (the Verifier)</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/vc_verifier.js">
+</script>
+
+<p class="vc-return"><a id="return_link" href="/vc-presentation-0.html">&larr; The VC presentation workflow</a></p>
+
+<h3 class="vc-title">VC Presentation &mdash; the debugger as the Verifier</h3>
+
+<p class="vc-intro">Here the debugger is the <strong>Verifier</strong> of
+<a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html" target="_blank" rel="noopener noreferrer">OpenID for Verifiable Presentations 1.0</a>:
+it asks a wallet for claims and checks what comes back. You compose a
+<a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#name-digital-credentials-query-l" target="_blank" rel="noopener noreferrer">DCQL</a>
+query, the page signs the Authorization Request with a certificate issued under the Verifier's own root, and you hand the request
+to a wallet. The wallet posts its answer to a <code>response_uri</code> this debugger's api hosts on the page's
+behalf, because a page cannot receive a POST. Every check on the answer is reported on its own line. The other
+side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-0.html">the presentation workflow</a>.</p>
+
+<p class="vc-note vc-status" id="vpv_api_status">&nbsp;</p>
+
+<!-- ============ 1. What to ask for ============ -->
+<div class="dbg-pane" id="pane_query">
+  <legend class="dbg-legend" onclick="return vcverifier.togglePane('query_fieldset');">1. What to ask for</legend>
+  <fieldset id="query_fieldset" style="display: block;">
+    <p class="vc-note">One credential query. The DCQL below is generated from these fields and stays editable, so
+    a second query or <code>credential_sets</code> can be written by hand.</p>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><label for="vpv_query_id">Credential query id</label></td>
+          <td><input type="text" id="vpv_query_id" size="30" value="credential"
+                     onchange="return vcverifier.regenerateDcql();" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_format">Format</label></td>
+          <td><select id="vpv_format" onchange="return vcverifier.formatChanged();">
+                <option value="dc+sd-jwt">dc+sd-jwt (SD-JWT VC)</option>
+                <option value="jwt_vc_json">jwt_vc_json (W3C VC as a JWT)</option>
+                <option value="mso_mdoc">mso_mdoc (ISO mdoc)</option>
+                <option value="ldp_vc">ldp_vc (W3C VC with a Data Integrity proof)</option>
+                <option value="anoncreds">anoncreds (AnonCreds; this debugger's identifier, no OpenID4VP format)</option>
+              </select></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_type" id="vpv_type_label">vct</label></td>
+          <td><input type="text" id="vpv_type" size="60"
+                     placeholder="urn:eudi:pid:1  (several, separated by spaces)"
+                     onchange="return vcverifier.regenerateDcql();" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_claims">Claims (one path per line)</label></td>
+          <td><textarea id="vpv_claims" rows="4" cols="60"
+                        placeholder="given_name&#10;address.country"
+                        onchange="return vcverifier.regenerateDcql();"></textarea>
+              <span class="vc-note">Segments separated by dots; a number is an array index and * is every
+              element. For an mdoc, the first segment is the namespace. A line may start with a claim id and a
+              colon (<code>a: address.country</code>), and end with the values it must have
+              (<code>= DE | AT</code>; a whole number is an integer, true and false are booleans).</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_claim_sets">Claim sets (optional)</label></td>
+          <td><textarea id="vpv_claim_sets" rows="2" cols="60" placeholder="a, c&#10;b"
+                        onchange="return vcverifier.regenerateDcql();"></textarea>
+              <span class="vc-note">One set per line, the claim ids above separated by commas, most preferred
+              first (DCQL <code>claim_sets</code>, OpenID4VP 1.0 section 6.1). Every claim then needs an id.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_intent_to_retain">Intent to retain (mdoc)</label></td>
+          <td><select id="vpv_intent_to_retain" onchange="return vcverifier.regenerateDcql();">
+                <option value="">not said</option>
+                <option value="true">true: this Verifier will keep the elements</option>
+                <option value="false">false: it will not</option>
+              </select>
+              <span class="vc-note">intent_to_retain on every claim of an mso_mdoc query (Appendix B.2.4,
+              ISO/IEC 18013-5's IntentToRetain).</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_binding">Holder binding</label></td>
+          <td><label><input type="checkbox" id="vpv_binding" checked="checked"
+                            onchange="return vcverifier.regenerateDcql();" />
+              require cryptographic holder binding (a Key Binding JWT, a signed VP, a device signature)</label></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_trusted_authorities">Trusted authorities</label></td>
+          <td><label><input type="checkbox" id="vpv_trusted_authorities"
+                            onchange="return vcverifier.regenerateDcql();" />
+              ask for credentials whose X.509 chain is under the "Trust anchors for issuers" below
+              (DCQL <code>trusted_authorities</code>, type <code>aki</code>)</label>
+              <span class="vc-note" id="vpv_trusted_authorities_note">&nbsp;</span>
+              <span class="vc-note">Each anchor's SubjectKeyIdentifier, base64url, which is the
+              AuthorityKeyIdentifier of every certificate it issues (OpenID4VP 1.0 section 6.1.1.1; HAIP 1.0
+              section 5). The wallet SHOULD return a credential that matches; one that does not is reported on
+              its own row, and its issuer's trust is still decided by the anchors.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_predicates">Predicates (optional)</label></td>
+          <td><textarea id="vpv_predicates" rows="2" cols="60" placeholder="age &gt;= 18"
+                        onchange="return vcverifier.regenerateDcql();"></textarea>
+              <span class="vc-note">One per line, <code>name op integer</code> with op one of
+              <code>&gt;= &gt; &lt;= &lt;</code>: prove it, do not show it. OpenID4VP 1.0's DCQL has no predicates, so
+              in DCQL they go in <strong>this debugger's extension</strong> (<code>x_debugger_predicates</code>, marked
+              critical); in Presentation Exchange they are its standard Predicate Feature. Only AnonCreds proves a
+              range in zero knowledge; an mdoc answers an age bound with <code>age_over_NN</code>; any other format
+              fails the predicate. A predicate's claim must not also be in Claims.
+              <a href="/vc-predicates.html">Predicate query page</a>.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_query_language">Query language</label></td>
+          <td><select id="vpv_query_language" onchange="return vcverifier.regenerateDcql();">
+                <option value="dcql">DCQL (OpenID4VP 1.0)</option>
+                <option value="pe">Presentation Exchange 2.1.1 &mdash; OpenID4VP drafts, presentation_definition, removed in 1.0</option>
+              </select>
+              <span class="vc-note">Presentation Exchange is sent as <code>presentation_definition</code> and answered
+              with a <code>presentation_submission</code>, as the drafts defined; this Verifier checks such an answer
+              in AnonCreds only, and reports any other format's as incomplete.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_anoncreds_material">AnonCreds issuer material</label></td>
+          <td><textarea id="vpv_anoncreds_material" class="vc-mono" rows="3" cols="80"
+                        placeholder='{"format":"anoncreds","schema":{...},"schema_id":"...","credential_definition":{...},"cred_def_id":"..."}'></textarea>
+              <span class="vc-note">An AnonCreds proof is checked against the issuer's schema and credential definition
+              (and, for a revocable credential, its registry definition, status list and tails), which a Verifier with
+              no ledger is given out of band: an AnonCreds bundle. Without it an AnonCreds answer is incomplete. Not
+              stored.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_dcql">DCQL query</label></td>
+          <td><textarea id="vpv_dcql" class="vc-mono" rows="10" cols="80"></textarea>
+              <span class="vc-status" id="vpv_dcql_status">&nbsp;</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ 2. How to ask ============ -->
+<div class="dbg-pane" id="pane_request">
+  <legend class="dbg-legend" onclick="return vcverifier.togglePane('request_fieldset');">2. How to ask</legend>
+  <fieldset id="request_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><label for="vpv_profile">Profile</label></td>
+          <td><select id="vpv_profile" onchange="return vcverifier.settingsChanged();">
+                <option value="openid4vp">OpenID4VP 1.0</option>
+                <option value="haip">HAIP 1.0 (High Assurance Interoperability Profile)</option>
+              </select>
+              <span class="vc-note">HAIP is a profile of OpenID4VP, not another protocol. Under it this Verifier
+              does not send a request HAIP forbids it to (anything but x509_hash, a request by value, an
+              unencrypted response, a format other than dc+sd-jwt or mso_mdoc), and names the rule. An answer
+              that breaks one of HAIP's rules is reported on its own "HAIP 1.0" rows, and every other check
+              still runs; the HAIP line says whether the answer conforms.</span>
+              <span class="vc-note" id="vpv_profile_note">&nbsp;</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_request_key">Request key</label></td>
+          <td><select id="vpv_request_key" onchange="return vcverifier.settingsChanged();">
+                <option value="ec-p256">P-256 (ES256)</option>
+                <option value="ec-p384">P-384 (ES384)</option>
+                <option value="ed25519">Ed25519 (EdDSA)</option>
+              </select>
+              <span class="vc-note">The key of the leaf certificate an x509_hash or x509_san_dns request is
+              signed with. The root stays P-256. HAIP 1.0 section 7 makes ES256 the one every wallet must
+              verify.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_scope">Ask by scope (optional)</label></td>
+          <td><input type="text" id="vpv_scope" size="60" placeholder="com.example.healthCardCredential_presentation"
+                     onchange="return vcverifier.settingsChanged();" />
+              <span class="vc-note">Sent INSTEAD of dcql_query (section 5.1: one or the other, never both). A scope
+              is an alias for a DCQL query the wallet already knows (section 5.5); this page checks the answer
+              against the query above, so make it the one the scope stands for.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_transaction_data">transaction_data (optional)</label></td>
+          <td><textarea id="vpv_transaction_data" class="vc-mono" rows="3" cols="80"
+                        placeholder='[{ "type": "example_type", "credential_ids": ["credential"] }]'
+                        onchange="return vcverifier.settingsChanged();"></textarea>
+              <span class="vc-note">A JSON array of transaction objects, each { type, credential_ids, ... }
+              (section 8.4), sent base64url-encoded. For an SD-JWT VC the answer is checked by Appendix B.3.3.1:
+              the KB-JWT's transaction_data_hashes must hold the hash of each string as sent (sha-256, or one of
+              the object's transaction_data_hashes_alg). A query a transaction is bound to must require holder
+              binding (B.3.3).</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_verifier_info">verifier_info (optional)</label></td>
+          <td><textarea id="vpv_verifier_info" class="vc-mono" rows="3" cols="80"
+                        placeholder='[{ "format": "jwt", "data": "eyJ...", "credential_ids": ["credential"] }]'
+                        onchange="return vcverifier.settingsChanged();"></textarea>
+              <span class="vc-note">A JSON array of attestations about this Verifier, each { format, data,
+              credential_ids? } (section 5.1). Carried as given; the wallet decides whether to use them.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_client_prefix">Client Identifier prefix</label></td>
+          <td><select id="vpv_client_prefix" onchange="return vcverifier.settingsChanged();">
+                <option value="x509_hash">x509_hash (the hash of the request's certificate)</option>
+                <option value="x509_san_dns">x509_san_dns (a DNS name in the certificate)</option>
+                <option value="redirect_uri">redirect_uri (an unsigned request)</option>
+                <option value="decentralized_identifier">decentralized_identifier (a did:jwk of the request key)</option>
+                <option value="verifier_attestation">verifier_attestation (a Verifier Attestation JWT from the Verifier's attester)</option>
+                <option value="pre-registered">pre-registered (no prefix: a client_id the wallet already knows)</option>
+              </select>
+              <span class="vc-note">The certificate is a leaf made for this request, under the Verifier's
+              root CA (below), which is kept across runs. The leaf's subjectAltName is the api's host name and
+              its Authority Information Access points at the root, which the api serves. A signed Digital
+              Credentials API request is the exception: its leaf names this page's host (see the note
+              under the response mode).</span></td>
+        </tr>
+        <tr id="vpv_client_id_row">
+          <td><label for="vpv_client_id_typed">Pre-registered client_id</label></td>
+          <td><input type="text" id="vpv_client_id_typed" size="40" placeholder="verifier-1"
+                     onchange="return vcverifier.settingsChanged();" />
+              <span class="vc-note">Only for the pre-registered prefix. The request is signed with the
+              Verifier's request key (below); the JWKS the wallet must have registered for it is shown there and
+              in pane 3.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_response_mode">Response mode</label></td>
+          <td><select id="vpv_response_mode" onchange="return vcverifier.settingsChanged();">
+                <option value="direct_post">direct_post (a form POST to response_uri)</option>
+                <option value="direct_post.jwt">direct_post.jwt (the same, encrypted to a key made for this run)</option>
+                <option value="dc_api">dc_api (the browser's Digital Credentials API)</option>
+                <option value="dc_api.jwt">dc_api.jwt (the same, encrypted)</option>
+              </select>
+              <span class="vc-note" id="vpv_dc_api_note">&nbsp;</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_dc_signed">Digital Credentials API request</label></td>
+          <td><label><input type="checkbox" id="vpv_dc_signed" checked="checked"
+                            onchange="return vcverifier.settingsChanged();" />
+              signed (openid4vp-v1-signed); unticked, unsigned (openid4vp-v1-unsigned) and the
+              Client Identifier is this page's origin</label>
+              <br /><label><input type="checkbox" id="vpv_dc_multisigned"
+                            onchange="return vcverifier.settingsChanged();" />
+              multisigned (openid4vp-v1-multisigned): signed again as a second Client Identifier,</label>
+              <select id="vpv_dc_second_prefix" onchange="return vcverifier.settingsChanged();">
+                <option value="decentralized_identifier">decentralized_identifier</option>
+                <option value="x509_hash">x509_hash</option>
+                <option value="x509_san_dns">x509_san_dns</option>
+                <option value="verifier_attestation">verifier_attestation</option>
+              </select>
+              <span class="vc-note">One payload, one signature per Client Identifier, in a JWS JSON Serialization
+              (Appendix A.3.2.2). client_id and verifier_info go in each signature's protected header only. The
+              first signer is the prefix chosen above.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_delivery">Request delivery</label></td>
+          <td><select id="vpv_delivery" onchange="return vcverifier.settingsChanged();">
+                <option value="reference-get">by reference: request_uri, fetched with GET</option>
+                <option value="reference-post">by reference: request_uri_method=post</option>
+                <option value="reference-get-explicit">by reference: request_uri_method=get (said explicitly)</option>
+                <option value="value">by value: the signed Request Object in the link</option>
+              </select>
+              <span class="vc-note">Under request_uri_method=post the wallet may send a wallet_nonce; this page
+              signs a fresh Request Object holding it while the wallet waits (the api holds its request open).
+              If it cannot in time, the wallet is answered HTTP 503 (section 5.10.2), never an object without
+              its nonce.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_scheme">Wallet invocation scheme</label></td>
+          <td><input type="text" id="vpv_scheme" size="30" value="openid4vp://"
+                     onchange="return vcverifier.settingsChanged();" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_trust_anchors">Trust anchors for issuers (PEM, optional)</label></td>
+          <td><textarea id="vpv_trust_anchors" class="vc-mono" rows="4" cols="80"
+                        placeholder="-----BEGIN CERTIFICATE-----"
+                        onchange="return vcverifier.anchorsChanged();"></textarea>
+              <span class="vc-note">The roots (an IACA for mdoc) an issuer's x5c must chain to. With none, an
+              x5c-signed credential's issuer trust is reported as not performed, and the verdict is
+              incomplete rather than a pass: a certificate is not trusted just because it is in x5c
+              (SD-JWT VC section 2.5).</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_public_base_url">Public base URL of the api (optional)</label></td>
+          <td><input type="text" id="vpv_public_base_url" size="60"
+                     placeholder="https://verifier.example.net:4000"
+                     onchange="return vcverifier.settingsChanged();" />
+              <span class="vc-note">Where a wallet reaches this debugger's api. The request_uri, the
+              response_uri and the root's caIssuers URL are built from it. Empty: the api's
+              <code>oid4vpVerifierPublicBaseUrl</code>, or else the address this page reached the api at, which a
+              phone scanning the QR code usually cannot reach (<code>localhost</code>, <code>api</code>). An
+              https URL. It only shapes the URLs handed to the wallet; the api still serves on its own host, so
+              the address must lead back to it. When the host is an IP address the leaf names it in an iPAddress
+              subjectAltName, and x509_san_dns cannot be used: an address is not a DNS name.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_fetch_via_api">Issuer-side fetches</label></td>
+          <td><label><input type="checkbox" id="vpv_fetch_via_api"
+                            onchange="return vcverifier.settingsChanged();" />
+              Fetch issuer metadata, DID documents and status lists through the api</label>
+              <span class="vc-note">On by default wherever there is an api. From the page, each of these is a
+              cross-origin GET the browser lets it read only when the server sends CORS headers, and SD-JWT VC
+              issuer metadata and did:web hosts usually send none (Token Status List section 8.1 makes it only a
+              SHOULD). Through the api it is fetched server-side under the api's address policy. Either way a
+              fetch that fails is reported as a check not performed, naming the URL. A static site has no api,
+              so the box is off there.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_issuer_bindings">Issuer bindings (optional)</label></td>
+          <td><textarea id="vpv_issuer_bindings" class="vc-mono" rows="3" cols="80"
+                        placeholder="https://issuer.example = sha256:3f2a...&#10;https://issuer.example = cn:Example Issuer"
+                        onchange="return vcverifier.settingsChanged();"></textarea>
+              <span class="vc-note">One per line: an iss, then the certificate it is bound to, by the SHA-256 of
+              the signing certificate, a certificate of its chain or the anchor it chains to
+              (<code>sha256:&lt;hex&gt;</code>), or by the signing certificate's common name
+              (<code>cn:&lt;name&gt;</code>). SD-JWT VC section 2.5 lets a Verifier configure such a mapping;
+              without one, an iss that no subjectAltName names is reported as not authenticated by the
+              certificate, and never fails the signature.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_redirect_uri">Send the wallet's browser to (optional)</label></td>
+          <td><input type="text" id="vpv_redirect_uri" size="60"
+                     placeholder="https://verifier.example/done"
+                     onchange="return vcverifier.settingsChanged();" />
+              <span class="vc-note">Returned as <code>redirect_uri</code> in the answer to the wallet&rsquo;s
+              POST (section 8.2), with a fresh random <code>response_code</code> added for each answer, as
+              section 8.2 requires. Empty: none &mdash; which a same-device flow should not be (HAIP 1.0
+              section 5.1: Verifiers MUST include one).</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_save_identity">The Verifier's identity</label></td>
+          <td><label><input type="checkbox" id="vpv_save_identity" checked="checked"
+                            onchange="return vcverifier.saveIdentityChanged();" />
+              Keep this identity in this browser (its root CA, its attester and its request key)</label>
+              <span class="vc-note">These are what a wallet is given to trust this Verifier, so they stay the
+              same from one request to the next; only each request's leaf certificate is new, issued under the
+              same root. They are <strong>private keys</strong>. Unticked, nothing is stored and whatever was is
+              removed at once; the identity then lasts this page load, and Download carries it.</span>
+              <br/><textarea id="vpv_identity_trust" class="vc-mono" rows="8" cols="80" readonly="readonly"></textarea>
+              <br/><input class="btn2" id="btn_vpv_identity_download" type="button" value="Download the identity"
+                          onclick="return vcverifier.downloadIdentity();" />
+              <input class="btn2" id="btn_vpv_identity_new" type="button" value="Make a new identity"
+                     onclick="return vcverifier.newIdentity();" />
+              <span class="vc-status" id="vpv_identity_status">&nbsp;</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_identity_import">Use a saved identity</label></td>
+          <td><textarea id="vpv_identity_import" class="vc-mono" rows="3" cols="80"
+                        placeholder='{"type": "oid4vp-verifier-identity", ...}  (a file from Download)'></textarea>
+              <br/><input class="btn2" id="btn_vpv_identity_import" type="button" value="Use this identity"
+                          onclick="return vcverifier.importIdentity();" />
+              <span class="vc-note">Replaces the identity above. What is pasted here is never stored.</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <input class="btn2" id="btn_vpv_create" type="button" value="Create the request"
+             onclick="return vcverifier.createRequest();" />
+      <input class="btn2" id="btn_vpv_dc_api" type="button" value="Ask through the Digital Credentials API"
+             onclick="return vcverifier.askThroughDcApi();" />
+      <input class="btn2" id="btn_vpv_reset" type="button" value="Start over"
+             onclick="return vcverifier.reset();" />
+      <span class="vc-status" id="vpv_create_status">&nbsp;</span>
+    </p>
+  </fieldset>
+</div>
+
+<!-- ============ 3. Hand it to a wallet ============ -->
+<div class="dbg-pane" id="pane_handoff">
+  <legend class="dbg-legend" onclick="return vcverifier.togglePane('handoff_fieldset');">3. Hand it to a wallet</legend>
+  <fieldset id="handoff_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><label for="vpv_invocation">Authorization Request</label></td>
+          <td><textarea id="vpv_invocation" class="vc-mono" rows="4" cols="80" readonly="readonly"></textarea>
+              <br/><a id="vpv_invocation_link" href="#" style="display: none;">Open it on this device</a>
+              <span class="vc-status" id="vpv_same_device_note">&nbsp;</span></td>
+        </tr>
+        <tr>
+          <td>For a wallet on another device</td>
+          <td><div id="vpv_qr" class="vc-qr"></div>
+              <span class="vc-note" id="vpv_qr_note">&nbsp;</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_trust_out">What a wallet must trust</label></td>
+          <td><textarea id="vpv_trust_out" class="vc-mono" rows="6" cols="80" readonly="readonly"></textarea>
+              <span class="vc-note">The attester's key for verifier_attestation, the JWKS for a pre-registered
+              client_id, the DID document for decentralized_identifier.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_client_id">client_id</label></td>
+          <td><input type="text" id="vpv_client_id" size="80" readonly="readonly" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_request_uri">request_uri</label></td>
+          <td><input type="text" id="vpv_request_uri" size="80" readonly="readonly" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_response_uri">response_uri</label></td>
+          <td><input type="text" id="vpv_response_uri" size="80" readonly="readonly" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_request_object">Request Object (decoded)</label></td>
+          <td><textarea id="vpv_request_object" class="vc-mono" rows="12" cols="80" readonly="readonly"></textarea></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_root_pem">The Verifier's root certificate</label></td>
+          <td><textarea id="vpv_root_pem" class="vc-mono" rows="4" cols="80" readonly="readonly"></textarea>
+              <span class="vc-note">A wallet that does not follow Authority Information Access can be given
+              this as a trust anchor.</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ 4. What the wallet sent ============ -->
+<div class="dbg-pane" id="pane_response">
+  <legend class="dbg-legend" onclick="return vcverifier.togglePane('response_fieldset');">4. What the wallet sent, and every check on it</legend>
+  <fieldset id="response_fieldset" style="display: block;">
+    <p class="vc-note vc-status" id="vpv_wait_status">No request yet.</p>
+    <ol class="vc-mono" id="vpv_events"></ol>
+    <p class="vc-note">Or paste an answer the wallet produced (a form body, or its JSON) and check it against the
+    request above. This works without the api.</p>
+    <textarea id="vpv_pasted" class="vc-mono" rows="4" cols="80"
+              placeholder="vp_token=...&amp;state=...   or   response=eyJ..."></textarea>
+    <p><input class="btn2" id="btn_vpv_check" type="button" value="Check this answer"
+              onclick="return vcverifier.checkPasted();" /></p>
+    <div id="vpv_verdict" class="vc-note vc-status">&nbsp;</div>
+    <div id="vpv_profile_verdict" class="vc-note vc-status">&nbsp;</div>
+    <table class="vc-checks" id="vpv_checks"></table>
+    <h4 class="vc-subtitle">Disclosed claims</h4>
+    <pre class="vc-mono" id="vpv_claims_out"></pre>
+  </fieldset>
+</div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

@@ -39,6 +39,28 @@
 }
 .ds-intro strong { color: #b00; }
 
+/* The page introductions fold away (<details>), closed by default, so the
+   panes start near the top of the page. The summary is the one line that
+   stays visible. */
+.ds-intro-more {
+  margin: 6px 0 4px;
+}
+.ds-intro-more > summary {
+  cursor: pointer;
+  color: #31708f;
+  font-size: 0.85em;
+  padding: 1px 0;
+}
+.ds-intro-more > summary:hover {
+  text-decoration: underline;
+}
+.ds-intro-more > .ds-intro {
+  margin: 4px 0 8px;
+}
+.ds-standards-more > summary {
+  color: #8a1c12;
+}
+
 /* Compact panes side by side; wrap to one column on narrow viewports. */
 .ds-grid {
   display: grid;

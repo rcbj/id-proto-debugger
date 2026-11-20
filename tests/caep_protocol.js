@@ -1069,7 +1069,7 @@ async function test() {
     // this workflow rather than found something wrong with it.
     log.warn("No CAEP transmitter at " + adminUrl + "/caep, so this job " +
         "proves nothing and skips. Point SSF_TRANSMITTER_URL at the mock " +
-        "STS, or run ./local-run-tests.sh, which starts one.");
+        "STS, or run ./docker-run-tests.sh, which starts one.");
     log.info("Test completed successfully.");
     return;
   }

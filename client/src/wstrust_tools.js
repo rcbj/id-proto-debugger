@@ -22,7 +22,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
 // The post-quantum SignatureMethods and the bridge to their engines.
-// See docs/xmldsig-pqc.md.
+// See docs/v0.9.5/xmldsig-pqc.md.
 var xdPqc = require("./xmldsig_pqc");
 var pqc = require("./pqc");
 var hbs = require("./hbs");
@@ -157,7 +157,10 @@ function persistedEls() {
 // not an opt-out. wst_enc_cert is deliberately NOT in this list: it is the
 // STS's certificate, someone else's public credential, not part of this key
 // pair.
-var KEYPAIR_FIELDS = ['wst_sp_private_key', 'wst_sp_cert'];
+// The model's (models/storage/, class `keypair`), not a list typed here:
+// the fields this page's save checkbox gates, as field ids.
+var KEYPAIR_FIELDS = require("./secret_storage")
+  .keyPairKeys(STORE_PREFIX + 'wst_save_keypair', STORE_PREFIX);
 
 function keyPairMayBeStored() {
   log.debug("Entering keyPairMayBeStored().");
@@ -668,15 +671,7 @@ function signWsSecurity(soapXml) {
         }),
         keyInfoXml: xd.derEncodedKeyValueXml(
             pqHexToBytes(val('wst_sp_cert'))) }
-    : { privateKeyPem: priv, certPem: val('wst_sp_cert'),
-        // The certificate as a BinarySecurityToken with a reference to it
-        // (the X.509 Token Profile 1.1 shape) AND inline in the KeyInfo.
-        // INTERIM, for iya-sts 1.0.0: it verifies a signature by the token
-        // reference but finds the certificate it encrypts an issued token to
-        // (?encrypt=1) only as an inline ds:X509Certificate, so no single
-        // form satisfies both (rcbj/iya-sts#1668). Back to 'bst' once a
-        // release reads the token for both.
-        keyReference: 'both' };
+    : { privateKeyPem: priv, certPem: val('wst_sp_cert') };
   log.debug("Leaving signWsSecurity().");
   return xd.signWsSecurity(soapXml, Object.assign({
     sigAlg: val('wst_sig_alg') || xd.SIG_ALG_RSA_SHA256,
@@ -1067,7 +1062,7 @@ function setReturnLink() {
 
 window.onload = function () {
   // The sixteen post-quantum SignatureMethods, from the registry. See
-  // client/src/xmldsig_pqc.js and docs/xmldsig-pqc.md.
+  // client/src/xmldsig_pqc.js and docs/v0.9.5/xmldsig-pqc.md.
   xdPqc.appendSignatureOptions(document.getElementById('wst_sig_alg'),
       xd.SIG_METHODS, xd.PQ_SIG_URIS);
   log.debug('Entering onload().');

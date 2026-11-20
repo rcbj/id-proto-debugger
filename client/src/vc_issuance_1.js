@@ -30,10 +30,17 @@ var metadataClient = require("./metadata_client");
 var metadataSchema = require("./metadata_schema");
 var opMetadata = require("./op_metadata");
 var vciMetadata = require("./vci_metadata");
+// What each credential format allows: the format and signing algorithm
+// suggestions on this page (#475).
+var vcFormats = require("./vc_formats");
 var sdJwtVc = require("./sd_jwt_vc");
+// Client authentication at the token endpoint (#vc-client-auth).
+var clientAuthPane = require("./vc_client_auth_pane");
 var vciClaims = require("./vci_claims");
 var didLib = require("./did");
 var urlSafety = require("./url_safety");
+// Reads a QR code out of an image, for an offer that arrives as a picture.
+var jsQR = require("jsqr");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_1',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -318,9 +325,14 @@ function buildConfigRows() {
         'credential_configurations_supported this run asks ' +
     'for. Choosing one rewrites every field in this section from the ' +
         'retrieved metadata, and it is ' +
-    'what step 2 names in the Credential Request. The list appears once a ' +
-        'credential issuer ' +
-    'metadata document has been retrieved.</span></div></td>' +
+    'what step 2 names in the Credential Request. The issuer\'s own ' +
+        'entries come first, once its metadata has been retrieved. Below ' +
+        'them is a built-in example for every format this wallet can ' +
+        'request, each a valid combination of format, type, binding, ' +
+        'signing algorithms and proof types. A built-in entry is NOT one ' +
+        'the issuer offers: OpenID4VCI 1.0 section 8.2 has a request name ' +
+        'an advertised configuration, so edit its id to the issuer\'s, or ' +
+        'expect the issuer to refuse it.</span></div></td>' +
     '<td><select id="vci_credential_configuration_select" ' +
     'onchange="return ' +
         'vcissuance1.onCredentialConfigurationChange();"></select>' +
@@ -333,7 +345,70 @@ function buildConfigRows() {
 
   var body = el("config_rows");
   if (body) body.innerHTML = html;
+  attachFormatChoices();
   log.debug("Leaving buildConfigRows().");
+}
+
+// The format field offers every format identifier, and the signing algorithm
+// field the identifiers THAT format defines, as suggestions (#474). Changing
+// the format moves the binding and algorithm placeholders with it.
+function attachFormatChoices() {
+  log.debug("Entering attachFormatChoices().");
+  var formatInput = el(vciMetadata.idFor("format"));
+  var algInput = el(vciMetadata.idFor(
+      "credential_signing_alg_values_supported"));
+  if (!formatInput || !algInput) {
+    log.debug("Leaving attachFormatChoices(). Fields absent.");
+    return;
+  }
+  var formats = document.createElement("datalist");
+  formats.id = "vci_format_choices";
+  vcFormats.formatIds().forEach(function (id) {
+    var o = document.createElement("option");
+    o.value = id;
+    o.textContent = vcFormats.format(id).name;
+    formats.appendChild(o);
+  });
+  formatInput.parentNode.appendChild(formats);
+  formatInput.setAttribute("list", formats.id);
+  var algs = document.createElement("datalist");
+  algs.id = "vci_signing_alg_choices";
+  algInput.parentNode.appendChild(algs);
+  algInput.setAttribute("list", algs.id);
+  var previous = formatInput.value;
+  formatInput.addEventListener("focus", function () {
+    previous = formatInput.value;
+  });
+  formatInput.addEventListener("change", function () {
+    vciMetadata.onFormatChange(previous);
+    previous = formatInput.value;
+    renderSigningAlgChoices();
+    // A built-in entry follows the format typed here, so the chooser does.
+    renderCredentialConfigurations();
+    renderDidEnabled();
+  });
+  log.debug("Leaving attachFormatChoices().");
+}
+
+// The signing algorithm suggestions for the format the field now names.
+function renderSigningAlgChoices() {
+  log.debug("Entering renderSigningAlgChoices().");
+  var list = el("vci_signing_alg_choices");
+  var row = vcFormats.format(val(vciMetadata.idFor("format")));
+  if (!list) {
+    log.debug("Leaving renderSigningAlgChoices(). No list.");
+    return;
+  }
+  list.innerHTML = "";
+  (row ? row.signingAlgs : []).forEach(function (a) {
+    var o = document.createElement("option");
+    o.value = String(a);
+    if (vcFormats.COSE_ALG_NAMES[String(a)]) {
+      o.textContent = vcFormats.COSE_ALG_NAMES[String(a)];
+    }
+    list.appendChild(o);
+  });
+  log.debug("Leaving renderSigningAlgChoices().");
 }
 
 // --- reading and writing the pane ------------------------------------------
@@ -351,6 +426,7 @@ function loadConfiguration() {
   });
   opMetadata.loadFromLocalStorage();
   vciMetadata.loadFromLocalStorage();
+  renderSigningAlgChoices();
   // The DID fields and the use-DIDs box, after the metadata load: the box's
   // default follows the chosen credential's FORMAT, which vciMetadata has only
   // just restored. Rendering it before that reads an empty format and defaults
@@ -411,6 +487,7 @@ function clearConfiguration() {
   opMetadata.clearStorage();
   vciMetadata.clearFields();
   vciMetadata.clearStorage();
+  renderCredentialConfigurations();
   updateHandoffSummary();
   // No credential is named any more, so there is nothing to offer claims for.
   renderClaimsPane();
@@ -428,10 +505,12 @@ function restoreDefaults() {
     metadataClient.setMetadataField(m.name, m.dflt);
     opMetadata.markNotDefined(m.name, false);
   });
-  vciMetadata.VCI_METADATA.concat(vciMetadata.VCI_CONFIG_METADATA)
-                                  .forEach(function (m) {
-    metadataClient.setMetadataField(vciMetadata.idFor(m.name), m.dflt);
-  });
+  vciMetadata.restoreDefaultFields();
+  renderCredentialConfigurations();
+  // The defaults name a credential; the section is then filled from whatever
+  // entry that selects, so the two agree.
+  applyChosenConfiguration();
+  renderDidEnabled();
   saveConfiguration();
   // The credential configuration id is one of the defaults just restored, and
   // the pane's rows belong to whichever credential it now names.
@@ -459,38 +538,108 @@ function renderVciTable() {
 function renderCredentialConfigurations() {
   log.debug("Entering renderCredentialConfigurations().");
   var select = el("vci_credential_configuration_select");
-  var note = el("vci_configuration_note");
   if (!select) {
     log.debug("Leaving renderCredentialConfigurations().");
     return;
   }
   var configs = (vciInfo && vciInfo.credential_configurations_supported) || {};
   var ids = Object.keys(configs);
-  if (!ids.length) {
-    // The chooser now lives among the fields it fills, which are always on
-    // screen, so it cannot simply be hidden: say why it is empty instead.
-    select.innerHTML = "";
-    if (note) {
-      note.textContent = " Retrieve the credential issuer metadata above to see what this issuer offers.";
-      note.className = "vc-note vc-pending";
-    }
-    log.debug("Leaving renderCredentialConfigurations().");
+  var builtIns = vcFormats.builtInFormatIds();
+  var chosen = chooserSelection(ids);
+  var option = function (value, label) {
+    return '<option value="' + esc(value) + '"' + (value === chosen ?
+        ' selected="selected"' : '') + '>' + esc(label) + '</option>';
+  };
+  // An empty section (Clear All, or Clear above) names no credential, so the
+  // chooser says so rather than showing an entry the fields do not match.
+  var html = chosen ? "" :
+      option("", "\u2014 choose a credential to request \u2014");
+  if (ids.length) {
+    html += '<optgroup label="Offered by this issuer">' +
+      ids.map(function (id) {
+        var cfg = configs[id] || {};
+        return option(id, id + (cfg.format ? " (" + cfg.format + ")" : ""));
+      }).join("") + '</optgroup>';
+  }
+  html += '<optgroup label="Built in \u2014 not offered by this issuer">' +
+    builtIns.map(function (f) {
+      var row = vcFormats.format(f);
+      return option(vcFormats.BUILT_IN_PREFIX + f,
+                    f + " \u2014 " + (row ? row.name : f));
+    }).join("") + '</optgroup>';
+  select.innerHTML = html;
+  describeConfigurationChoice();
+  log.debug("Leaving renderCredentialConfigurations(). " + ids.length +
+            " offered, " + builtIns.length + " built in.");
+}
+
+// Which entry the chooser shows, so that it always matches the section below
+// it: the credential_configuration_id the section names when that is one of
+// the issuer's or a built-in one; otherwise the issuer's first entry; with no
+// issuer document, the built-in entry for the format the section names; and
+// nothing at all when the section is empty.
+function chooserSelection(ids) {
+  log.debug("Entering chooserSelection().");
+  var stored = val(vciMetadata.idFor("credential_configuration_id"));
+  if (ids.indexOf(stored) !== -1 || vcFormats.builtInFormatOf(stored)) {
+    log.debug("Leaving chooserSelection(). The section's own.");
+    return stored;
+  }
+  if (ids.length) {
+    log.debug("Leaving chooserSelection(). The issuer's first.");
+    return ids[0];
+  }
+  var format = val(vciMetadata.idFor("format"));
+  var builtIn = vcFormats.builtInConfiguration(format);
+  log.debug("Leaving chooserSelection().");
+  return builtIn ? builtIn.id : "";
+}
+
+// Fill the Credential configuration section from whatever the chooser now
+// shows: an issuer's entry from its document, a built-in one from
+// vc_formats.js. The placeholder fills nothing.
+function applyChosenConfiguration() {
+  log.debug("Entering applyChosenConfiguration().");
+  var select = el("vci_credential_configuration_select");
+  var value = select ? select.value : "";
+  var builtIn = vcFormats.builtInFormatOf(value);
+  if (vciInfo && Object.keys(vciInfo).length && value) {
+    populateFromVciDocument();
+  } else if (builtIn) {
+    vciMetadata.populateFromBuiltIn(builtIn);
+    renderSigningAlgChoices();
+    describeConfigurationChoice();
+    updateHandoffSummary();
+  }
+  log.debug("Leaving applyChosenConfiguration(). " + value);
+}
+
+// The note beside the chooser: how many the issuer offers, and, when a
+// built-in entry is chosen, that the issuer does not offer it.
+function describeConfigurationChoice() {
+  log.debug("Entering describeConfigurationChoice().");
+  var select = el("vci_credential_configuration_select");
+  var note = el("vci_configuration_note");
+  if (!select || !note) {
+    log.debug("Leaving describeConfigurationChoice().");
     return;
   }
-  var chosen = val(vciMetadata.idFor("credential_configuration_id")) || ids[0];
-  select.innerHTML = ids.map(function (id) {
-    var cfg = configs[id] || {};
-    var label = id + (cfg.format ? " (" + cfg.format + ")" : "");
-    return '<option value="' + esc(id) + '"' + (id === chosen ?
-        ' selected="selected"' : '') + '>' +
-           esc(label) + '</option>';
-  }).join("");
-  if (note) {
-    note.textContent = " " + ids.length + " offered by this issuer.";
-    note.className = "vc-note";
+  var configs = (vciInfo && vciInfo.credential_configurations_supported) || {};
+  var count = Object.keys(configs).length;
+  var offered = count ? " " + count + " offered by this issuer." :
+      " Retrieve the credential issuer metadata above to see what this " +
+      "issuer offers.";
+  if (vcFormats.builtInFormatOf(select.value)) {
+    note.textContent = offered + " The chosen entry is a built-in " +
+        "example, not one this issuer advertises: change " +
+        "credential_configuration_id to the issuer's id for this " +
+        "credential, or the issuer is expected to refuse the request.";
+    note.className = "vc-note vc-pending";
+  } else {
+    note.textContent = offered;
+    note.className = count ? "vc-note" : "vc-note vc-pending";
   }
-  log.debug("Leaving renderCredentialConfigurations(). " + ids.length +
-            " offered.");
+  log.debug("Leaving describeConfigurationChoice().");
 }
 
 // ---------------------------------------------------------------------------
@@ -734,9 +883,10 @@ function clearVciMetadata() {
   setVal(VCI_URL_KEY, "");
   el("vci_metadata_table").innerHTML = "";
   el("vci_metadata_populate").innerHTML = "";
-  el("vci_configuration_row").style.display = "none";
   vciMetadata.clearFields();
   vciMetadata.clearStorage();
+  // The issuer's entries go; the built-in ones stay on offer.
+  renderCredentialConfigurations();
   updateHandoffSummary();
   // The document the claims came from is gone, so the pane goes with it —
   // rows left behind would offer claims no retrieved metadata advertises.
@@ -752,7 +902,15 @@ function populateFromVciDocument() {
   log.debug("Entering populateFromVciDocument().");
   var select = el("vci_credential_configuration_select");
   var chosen = select && select.value ? select.value : "";
-  var used = vciMetadata.populateFromMetadata(vciInfo, chosen);
+  var builtIn = vcFormats.builtInFormatOf(chosen);
+  // The issuer-level half always comes from the document; a built-in choice
+  // then replaces the credential-configuration half.
+  var used = vciMetadata.populateFromMetadata(vciInfo, builtIn ? "" : chosen);
+  if (builtIn) {
+    used = vciMetadata.populateFromBuiltIn(builtIn);
+  }
+  renderSigningAlgChoices();
+  describeConfigurationChoice();
   updateHandoffSummary();
   // The claims a credential can carry come out of the document just applied, so
   // the pane is built from it here rather than only at load.
@@ -841,7 +999,18 @@ function onCredentialConfigurationChange() {
   log.debug("Entering onCredentialConfigurationChange().");
   // Only re-populate the credential-configuration half; the issuer-level values
   // are unaffected by which credential is chosen.
-  if (vciInfo && Object.keys(vciInfo).length) populateFromVci();
+  var select = el("vci_credential_configuration_select");
+  if (vciInfo && Object.keys(vciInfo).length && select && select.value) {
+    populateFromVci();
+  } else {
+    // No issuer document: a built-in entry is all there is to apply.
+    applyChosenConfiguration();
+  }
+  // Once something is chosen the placeholder has nothing left to say.
+  if (select && select.value) {
+    var blank = select.querySelector('option[value=""]');
+    if (blank) blank.parentNode.removeChild(blank);
+  }
   // The format may have changed, and with it whether DIDs default on.
   renderDidEnabled();
   // A different credential advertises different claims, and keeps its own
@@ -1804,6 +1973,137 @@ function readScannedOffer(input) {
                   "code contains." };
 }
 
+// ---------------------------------------------------------------------------
+// AN OFFER THAT EXISTS ONLY AS A PICTURE (#365).
+//
+// A cross-device offer is usually shown as a QR code and nothing else — on
+// the issuer's screen, in a printed letter, in a screenshot somebody sent.
+// The text box above takes what the code ENCODES; this takes the code
+// itself, as an image file or an image pasted into that box, decodes it in
+// the page (jsQR, no network) and puts the result in the box, where it is
+// read exactly as if it had been typed. Nothing about it is issuer-specific:
+// it is OID4VCI's own hand-over, an openid-credential-offer:// URI or a link,
+// whoever drew the code.
+//
+// The image is drawn white-backed and enlarged onto a canvas first, because
+// a QR code drawn as SVG (iya-sts's is) has no background and may be tiny,
+// and a decoder reads neither transparency nor a 50-pixel code reliably.
+// ---------------------------------------------------------------------------
+var QR_SCALE_TARGET = 800;
+
+// The pixels of an image as RGBA, scaled up so its longer side is about
+// QR_SCALE_TARGET, on white.
+function imagePixels(image) {
+  log.debug("Entering imagePixels().");
+  var w = image.naturalWidth || image.width || 0;
+  var h = image.naturalHeight || image.height || 0;
+  if (!w || !h) {
+    // An SVG with only a viewBox reports no size; draw it square.
+    w = QR_SCALE_TARGET;
+    h = QR_SCALE_TARGET;
+  }
+  var scale = Math.max(1, Math.floor(QR_SCALE_TARGET / Math.max(w, h)));
+  var canvas = document.createElement("canvas");
+  canvas.width = w * scale;
+  canvas.height = h * scale;
+  var ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  var data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  log.debug("Leaving imagePixels(). " + canvas.width + "x" + canvas.height);
+  return data;
+}
+
+// A File or Blob holding an image -> a promise of the text its QR code
+// encodes. Rejects with a sentence when there is no readable code.
+function decodeQrImage(blob) {
+  log.debug("Entering decodeQrImage(). type=" + (blob && blob.type));
+  log.debug("Leaving decodeQrImage(). Loading.");
+  return new Promise(function (resolve, reject) {
+    var url = URL.createObjectURL(blob);
+    var image = new Image();
+    image.onload = function () {
+      try {
+        var pixels = imagePixels(image);
+        var found = jsQR(pixels.data, pixels.width, pixels.height,
+                         { inversionAttempts: "attemptBoth" });
+        if (found && found.data) {
+          resolve(found.data);
+        } else {
+          reject(new Error("No QR code could be read in that image. Crop " +
+            "it to the code, or use a sharper picture."));
+        }
+      } catch (e) {
+        reject(e);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    image.onerror = function () {
+      URL.revokeObjectURL(url);
+      reject(new Error("That file is not an image this browser can draw."));
+    };
+    image.src = url;
+  });
+}
+
+function takeQrText(text, from) {
+  log.debug("Entering takeQrText(). from=" + from);
+  setVal("scan_offer_input", text);
+  var read = readScannedOffer(text);
+  status("scan_status", read.error
+    ? "The QR code in the " + from + " reads as \"" + text.slice(0, 120) +
+      "\", which is not a Credential Offer: " + read.error
+    : "Read the QR code in the " + from + " (" + (read.source === "reference"
+      ? "an offer by reference, credential_offer_uri"
+      : "an offer by value, credential_offer") + "). Press \"Take this " +
+      "offer\" to use it.", read.error ? "vc-bad" : "vc-ok");
+  log.debug("Leaving takeQrText().");
+}
+
+// The file chooser.
+function readOfferImage(input) {
+  log.debug("Entering readOfferImage().");
+  var file = input && input.files && input.files[0];
+  if (!file) {
+    log.debug("Leaving readOfferImage(). No file.");
+    return false;
+  }
+  status("scan_status", "Reading the QR code in " + file.name + " …",
+         "vc-pending");
+  decodeQrImage(file).then(function (text) {
+    takeQrText(text, "image " + file.name);
+  }).catch(function (e) {
+    status("scan_status", e.message, "vc-bad");
+  });
+  log.debug("Leaving readOfferImage().");
+  return false;
+}
+
+// An image pasted into the offer box, as a screenshot usually is.
+function pasteOfferImage(event) {
+  log.debug("Entering pasteOfferImage().");
+  var items = (event.clipboardData && event.clipboardData.items) || [];
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].kind === "file" &&
+        String(items[i].type).indexOf("image/") === 0) {
+      event.preventDefault();
+      status("scan_status", "Reading the QR code in the pasted image …",
+             "vc-pending");
+      decodeQrImage(items[i].getAsFile()).then(function (text) {
+        takeQrText(text, "pasted image");
+      }).catch(function (e) {
+        status("scan_status", e.message, "vc-bad");
+      });
+      log.debug("Leaving pasteOfferImage(). An image.");
+      return;
+    }
+  }
+  log.debug("Leaving pasteOfferImage(). Not an image; pasted as text.");
+}
+
 function takeScannedOffer() {
   log.debug("Entering takeScannedOffer().");
   var read = readScannedOffer(val("scan_offer_input"));
@@ -1948,6 +2248,11 @@ function clickLink() {
 
 function onload() {
   log.debug("Entering onload().");
+  // Client authentication at the token endpoint (vc_client_auth_pane.js).
+  clientAuthPane.render("vc_client_auth_pane", "settings");
+  if (el("scan_offer_input")) {
+    el("scan_offer_input").addEventListener("paste", pasteOfferImage);
+  }
   buildConfigRows();
   loadConfiguration();
   // The way of asking for the credential survives a reload like everything else
@@ -2869,6 +3174,7 @@ module.exports = {
   discardOffer: discardOffer,
   acceptOfferFromQuery: acceptOfferFromQuery,
   takeScannedOffer: takeScannedOffer,
+  readOfferImage: readOfferImage,
   readScannedOffer: readScannedOffer,
   clearVciMetadata: clearVciMetadata,
   populateFromVci: populateFromVci,

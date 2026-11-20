@@ -361,6 +361,24 @@ function prettyJson(s) {
   }
 }
 
+// The document Decrypt is given. An element that still carries its
+// EncryptedKey is enough. WS-Security 1.1 section 9 moves that key to
+// wsse:Security and leaves a SecurityTokenReference on the EncryptedData,
+// so the key is only in the whole response.
+function decryptionInput(encEl, responseXml) {
+  log.debug("Entering decryptionInput().");
+  if (!encEl) {
+    log.debug("Leaving decryptionInput(). None.");
+    return '';
+  }
+  if (tags(encEl, 'EncryptedKey').length) {
+    log.debug("Leaving decryptionInput(). The element carries its key.");
+    return serialize(encEl);
+  }
+  log.debug("Leaving decryptionInput(). The key is in the message.");
+  return responseXml || '';
+}
+
 function render(requestXml, responseXml, meta) {
   log.debug("Entering render().");
   meta = meta || {};
@@ -384,10 +402,11 @@ function render(requestXml, responseXml, meta) {
 
   // Detect an encrypted token for the decrypt option. Prefer the
   // <saml:EncryptedAssertion> wrapper (it also carries any sibling
-  // EncryptedKey), else the bare EncryptedData.
+  // EncryptedKey), else the bare EncryptedData. A key that lives in the
+  // security header is only in the whole response.
   var encEl = tags(doc, 'EncryptedAssertion')[0] || tags(doc,
       'EncryptedData')[0];
-  lastEncryptedXml = encEl ? serialize(encEl) : '';
+  lastEncryptedXml = decryptionInput(encEl, responseXml);
   if (encEl) setVal('wst_dec_status', 'Response contains encrypted content — ' +
       'paste/confirm the requestor key and click Decrypt.');
 
@@ -422,7 +441,10 @@ function copyField(id) {
     log.debug("Leaving copyField().");
     return false;
   }
-  var text = e.value || '';
+  // The token box is indented for reading. That indent is not what was
+  // signed. Copy the assertion as the service issued it.
+  var text = (id === 'wst_token_xml' && lastTokenXml &&
+      lastTokenXml.indexOf('<') >= 0) ? lastTokenXml : (e.value || '');
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).catch(function (err) { log.error(
                                   'copyField: ' + err); });

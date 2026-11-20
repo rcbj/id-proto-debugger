@@ -7,6 +7,11 @@
 
 .vc-return { margin: 8px 0 2px; font-size: 0.9em; }
 .vc-title { margin: 6px 0 10px; }
+/* The two choices on presentation step 0 — the protocol, then the flow. */
+.vc-subtitle { margin: 18px 0 4px; }
+/* A protocol's rules on presentation step 1: one row each. */
+.vc-rule-block { color: #a40000; font-weight: 600; }
+.vc-rule-warn { color: #8a5a00; font-weight: 600; }
 .vc-intro, .vc-note { max-width: 1100px; line-height: 1.45; }
 .vc-note { font-size: 0.9em; color: #333; }
 
@@ -196,7 +201,8 @@ button.vc-usecase-soon .vc-usecase-spec { color: #666; background: #eee; }
    line box — which costs the pane ~3px per row now and ~11px per row later. Keep new
    tool descriptions to roughly the length of the DID one for the same reason the
    landing page keeps its card descriptions equal: the row is as tall as its longest
-   cell. See docs/sd-jwt-vc-issuance.md for what the page's budget stands at. */
+   cell. See docs/v0.9.5/sd-jwt-vc-issuance.md for what the page's budget
+   stands at. */
 .vc-fit #pane_vc_tools td { line-height: 1.3; }
 
 /* The VC Tools pane's label column. Its table is the same two-column shape the
@@ -565,3 +571,19 @@ table.vc-table tr.vc-history-active td { font-weight: 600; }
    until it is kept. */
 table.vc-table tr.vc-history-pending { background-color: #fff8e1; }
 table.vc-table tr.vc-history-pending td { font-style: italic; }
+
+/* The Verifier page (vc-verifier.html, #364): one row per check, and the QR
+   code a wallet on another device scans. */
+table.vc-checks { border-collapse: collapse; margin: 8px 0; width: 100%; }
+table.vc-checks td { border-top: 1px solid #e3e3ea; padding: 4px 8px;
+  vertical-align: top; }
+table.vc-checks td:first-child { font-weight: 700; white-space: nowrap; }
+tr.vc-check-pass td:first-child { color: #1b7a3a; }
+tr.vc-check-fail td:first-child { color: #b3261e; }
+tr.vc-check-skip td:first-child { color: #6b6b78; }
+tr.vc-check-fail { background: #fdf1f0; }
+/* An essential check not performed (#467): not a failure, not a pass. */
+tr.vc-check-unperformed td:first-child { color: #8a5a00; }
+tr.vc-check-unperformed { background: #fff8e6; }
+.vc-status.vc-warn { color: #8a5a00; }
+.vc-qr svg { width: 240px; height: 240px; background: #fff; }

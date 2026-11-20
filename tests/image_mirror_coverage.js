@@ -3,7 +3,7 @@
 
 // File: image_mirror_coverage.js
 //
-// Every image the four compose files PULL, and every base image a Dockerfile
+// Every image the three compose files PULL, and every base image a Dockerfile
 // they BUILD names in a FROM, must come from the private mirror on ghcr.io —
 // and the mirror must list it. iya-sts's release image included: the stacks
 // run the mirror's private copy of it, not iya-sts's public package.
@@ -74,7 +74,7 @@ const FILES = {
 // are their own (tests/Dockerfile COPYs each one). The overlays layered on
 // top of them add no image and no build, so they are not read.
 const COMPOSE_FILES = ["docker-compose-run-tests.yml",
-  "docker-compose.yml", "local-tests.yml", "keycloak-tests.yml"];
+  "docker-compose.yml", "keycloak-tests.yml"];
 // The Dockerfiles those compose files build.
 const DOCKERFILES = {
   "api/Dockerfile": "api_Dockerfile",
@@ -143,6 +143,9 @@ const KNOWN_FETCHES = [
   ["infra/Dockerfile", AWSCLI],
   ["infra/Dockerfile", "https://releases.hashicorp.com/terraform/"],
   ["deploy/Dockerfile", AWSCLI],
+  // rcbj/oid4vc-wallet's source at a pinned commit, checked by sha256 (#364),
+  // as iya-sts's own tests image builds it.
+  ["tests/Dockerfile", "https://github.com/rcbj/oid4vc-wallet/archive/"],
 ];
 
 const MIRROR_PREFIX = "${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/";
@@ -791,8 +794,8 @@ function iyaStsReleaseIsNamedOnce(builds) {
   // that runs one, and built into the mirror from that same tag.
   const companionPath = "iya-sts-companion:v" + tag[1];
   const wanted = MIRROR_PREFIX + companionPath;
-  assert.ok(companions.length >= 3,
-    "expected the companion's IYA_STS_COMPANION_IMAGE default in three " +
+  assert.ok(companions.length >= 2,
+    "expected the companion's IYA_STS_COMPANION_IMAGE default in two " +
     "compose files, found " + companions.length + ".");
   const stale = companions.filter(function (one) {
     return one.ref !== wanted;

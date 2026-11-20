@@ -12,8 +12,9 @@
 // reading specific DOM element ids, so they are not tied to the SAML page.
 //
 // node-forge does the crypto (RSA keygen, block ciphers, RSA key wrap) —
-// except the RSA SIGNATURE under node, which is node's OpenSSL (see
-// rsaSign(), issue #302); in a browser bundle that is forge too. Only
+// except the RSA signature and its verification, which are
+// common/crypto/crypto_provider.js's (#463 step 3): OpenSSL under node
+// (issue #302), forge in a browser bundle. Only
 // browser-native APIs (DOMParser/XMLSerializer, window.crypto) are used
 // besides forge, so this bundles cleanly with browserify + envify.
 
@@ -169,8 +170,8 @@ function rsaSigAlgRefusal(sigAlg, who) {
 // forge's private-key operation is JavaScript: its blinding factor comes from
 // forge.random (a Fortuna DRBG on the heap, not the platform's), and its
 // BigInteger modPow has no side-channel hardening. Under node — api/server.js
-// signing the SAML bindings, and every consumer of the copy iya-sts vendors —
-// the same octets are signed by OpenSSL instead, straight from the PEM.
+// signing the SAML bindings, and the tests that load this file in node — the
+// same octets are signed by OpenSSL instead, straight from the PEM.
 //
 // THIS FILE IS ALSO BROWSERIFIED, into ten bundles, which is why the require
 // below is written the way it is. A literal require of the crypto module is
@@ -188,31 +189,18 @@ function rsaSigAlgRefusal(sigAlg, who) {
 // with the message hash and a salt as long as the digest, which is what
 // RFC 9231's sha*-rsa-MGF1 identifiers default to and what defaultVerify()'s
 // pssFor() expects.
-var NODE_CRYPTO_MODULE = 'crypto';
-var nodeCryptoCache;
-function nodeCrypto() {
-  log.debug("Entering nodeCrypto().");
-  if (nodeCryptoCache !== undefined) {
-    log.debug("Leaving nodeCrypto(). Cached.");
-    return nodeCryptoCache;
-  }
-  nodeCryptoCache = null;
-  if (typeof process === 'undefined' || !process.versions ||
-      !process.versions.node || typeof require !== 'function') {
-    log.debug("Leaving nodeCrypto(). Not node.");
-    return null;
-  }
-  try {
-    var c = require(NODE_CRYPTO_MODULE);
-    if (c && typeof c.sign === 'function' &&
-        typeof c.createPrivateKey === 'function') {
-      nodeCryptoCache = c;
-    }
-  } catch (e) {
-    log.debug("nodeCrypto(): no crypto module: " + e.message);
-  }
-  log.debug("Leaving nodeCrypto().");
-  return nodeCryptoCache;
+// THE SIGNATURE ITSELF IS crypto_provider.js's (#463 step 3), which does
+// exactly what this did: OpenSSL in node, forge where there is none, the
+// same bytes for PKCS#1 v1.5 and the same PSS parameters on both. Staged
+// flat beside this file in every bundle, the api image and the embedded
+// tree; from a checkout it is ./crypto/crypto_provider.js, named through a
+// variable so browserify does not try to resolve it.
+var provider;
+try {
+  provider = require("./crypto_provider");
+} catch (e) {
+  var NESTED_PROVIDER = "./crypto/crypto_provider";
+  provider = require(NESTED_PROVIDER);
 }
 
 // Which backend rsaSign() will use here: 'node' or 'forge'. Exported so a test
@@ -220,50 +208,33 @@ function nodeCrypto() {
 function rsaSignBackend() {
   log.debug("Entering rsaSignBackend().");
   log.debug("Leaving rsaSignBackend().");
-  return nodeCrypto() ? 'node' : 'forge';
+  return provider.rsaSignBackend();
 }
 
 // Sign `octets` (a raw binary string — already UTF-8 where it came from
 // text) with an RSA private key in PEM. `hash` is sha1/sha256/sha384/sha512
 // and `pad` is 'pss' or anything else for PKCS#1 v1.5. Returns the signature
-// as a binary string, which is what forge's pk.sign() returned, so every call
-// site keeps its base64 step. `forceForge` exists for the test that compares
-// the two backends.
-//
-// A PEM that is not an RSA key goes to forge, which refuses it with the error
-// it always gave ("OID is not RSA") rather than with a different one here.
+// as a binary string, so every call site keeps its base64 step.
+// `forceForge` exists for the test that compares the two backends.
 function rsaSign(privateKeyPem, hash, octets, pad, forceForge) {
   log.debug("Entering rsaSign(). hash=" + hash + " pad=" + (pad || 'v1_5'));
-  var c = forceForge ? null : nodeCrypto();
-  if (c) {
-    var key = null;
-    try {
-      key = c.createPrivateKey(privateKeyPem);
-    } catch (e) {
-      log.debug("rsaSign(): node could not read the key: " + e.message);
-      key = null;
-    }
-    if (key && key.asymmetricKeyType === 'rsa') {
-      var params = { key: key };
-      if (pad === 'pss') {
-        params.padding = c.constants.RSA_PKCS1_PSS_PADDING;
-        params.saltLength = forge.md[hash].create().digestLength;
-      } else {
-        params.padding = c.constants.RSA_PKCS1_PADDING;
-      }
-      // Uint8Array both ways rather than Buffer: naming Buffer here would
-      // make browserify insert its Buffer shim into every bundle, for a
-      // branch no bundle ever takes.
-      var sig = c.sign(hash, forge.util.binary.raw.decode(octets), params);
-      log.debug("Leaving rsaSign(). node crypto.");
-      return forge.util.binary.raw.encode(new Uint8Array(sig));
-    }
+  var key;
+  try {
+    key = provider.importKey(String(privateKeyPem));
+  } catch (e) {
+    log.debug("Leaving rsaSign(). Unreadable key.");
+    throw new Error('the signing key is not a PEM private key or a JWK: ' +
+                    e.message);
   }
-  var pk = forge.pki.privateKeyFromPem(privateKeyPem);
-  var md = forge.md[hash].create();
-  md.update(octets);
-  log.debug("Leaving rsaSign(). forge.");
-  return pad === 'pss' ? pk.sign(md, pssFor(hash)) : pk.sign(md);
+  if (key.type !== 'rsa') {
+    log.debug("Leaving rsaSign(). Not RSA.");
+    throw new Error('rsaSign: the private key is ' + key.type + ', not RSA.');
+  }
+  var sig = provider.sign('rsa-' + (pad === 'pss' ? 'pss' : 'pkcs1') + '-' +
+      hash, key, forge.util.binary.raw.decode(octets),
+      { forceJs: !!forceForge });
+  log.debug("Leaving rsaSign().");
+  return forge.util.binary.raw.encode(sig);
 }
 
 // --- Canonical XML 1.0 over a DOM element ----------------------------------
@@ -678,6 +649,111 @@ function mgfMdFor(uri) {
       return forge.md.sha1.create();
   }
 }
+// --- XML Encryption's primitives, on crypto_provider.js (#463 step 3b) ------
+// AES-GCM and AES-CBC, RSA key transport and randomness are the central
+// module's. 3DES-CBC (tripledes-cbc) stays on forge: the provider has no 3DES,
+// and rcbj's rule for this move is that no algorithm is lost. Everything here
+// speaks forge binary strings, one character per byte, as the rest of the file
+// does.
+var MD_NAME = { sha1: 'SHA-1', sha256: 'SHA-256', sha384: 'SHA-384',
+                sha512: 'SHA-512' };
+
+function bin(bytesValue) {
+  return forge.util.binary.raw.encode(bytesValue);
+}
+
+function unbin(binaryString) {
+  return forge.util.binary.raw.decode(binaryString);
+}
+
+function randomBin(count) {
+  log.debug("Entering randomBin(). " + count);
+  log.debug("Leaving randomBin().");
+  return bin(provider.randomBytes(count));
+}
+
+// IV || ciphertext (|| the 16-byte tag for GCM), as CipherValue carries it.
+// CBC pads with PKCS#7, which is one instance of what XML Encryption 1.1
+// section 5.2.1 allows (arbitrary bytes, the last naming their count).
+function encryptData(spec, keyBin, plainBin) {
+  log.debug("Entering encryptData(). " + spec.cipher);
+  var iv = randomBin(spec.ivBytes);
+  if (spec.cipher === '3DES-CBC') {
+    var cipher = forge.cipher.createCipher(spec.cipher, keyBin);
+    cipher.start({ iv: iv });
+    cipher.update(forge.util.createBuffer(plainBin));
+    if (!cipher.finish()) throw new Error('Data encryption failed.');
+    log.debug("Leaving encryptData(). 3DES, forge.");
+    return iv + cipher.output.getBytes();
+  }
+  if (spec.gcm) {
+    var sealed = provider.aesGcmEncrypt(unbin(keyBin), unbin(iv),
+                                        unbin(plainBin));
+    log.debug("Leaving encryptData(). AES-GCM.");
+    return iv + bin(sealed.ciphertext) + bin(sealed.tag);
+  }
+  log.debug("Leaving encryptData(). AES-CBC.");
+  return iv + bin(provider.aesCbcEncrypt(unbin(keyBin), unbin(iv),
+                                         unbin(plainBin)));
+}
+
+// The plaintext of a CipherValue, or null when it does not decrypt (a wrong
+// key, an altered ciphertext, a GCM tag that does not verify). CBC padding is
+// removed as section 5.2.1 defines it: the LAST octet is the number of
+// padding octets, 1 to the block size, and the others may be anything. A
+// PKCS#7 unpad would refuse the random padding other implementations write.
+function decryptData(spec, keyBin, cipherRaw) {
+  log.debug("Entering decryptData(). " + spec.cipher);
+  var iv = cipherRaw.substring(0, spec.ivBytes);
+  if (spec.cipher === '3DES-CBC') {
+    var decipher = forge.cipher.createDecipher(spec.cipher, keyBin);
+    decipher.start({ iv: iv });
+    decipher.update(forge.util.createBuffer(cipherRaw.substring(
+        spec.ivBytes)));
+    var ok = decipher.finish();
+    log.debug("Leaving decryptData(). 3DES, forge. " + ok);
+    return ok ? decipher.output.getBytes() : null;
+  }
+  try {
+    if (spec.gcm) {
+      var body = cipherRaw.substring(spec.ivBytes, cipherRaw.length - 16);
+      var tag = cipherRaw.substring(cipherRaw.length - 16);
+      var plain = provider.aesGcmDecrypt(unbin(keyBin), unbin(iv),
+                                         unbin(body), unbin(tag));
+      log.debug("Leaving decryptData(). AES-GCM.");
+      return bin(plain);
+    }
+    var padded = provider.aesCbcDecrypt(unbin(keyBin), unbin(iv),
+        unbin(cipherRaw.substring(spec.ivBytes)), { padding: 'none' });
+    var n = padded.length ? padded[padded.length - 1] : 0;
+    if (!n || n > 16 || n > padded.length) {
+      log.debug("Leaving decryptData(). Bad padding length.");
+      return null;
+    }
+    log.debug("Leaving decryptData(). AES-CBC.");
+    return bin(padded.slice(0, padded.length - n));
+  } catch (e) {
+    log.debug("Leaving decryptData(). " + e.message);
+    return null;
+  }
+}
+
+// The provider's RSA key transport for an EncryptionMethod: rsa-1_5,
+// rsa-oaep-mgf1p (MGF1 fixed to SHA-1) or xenc11 rsa-oaep (MGF named
+// separately), each digest and MGF as this file has always read them.
+function keyTransport(keyAlg, digestUri, mgfUri) {
+  log.debug("Entering keyTransport().");
+  if (keyAlg === XENC_NS + 'rsa-1_5') {
+    log.debug("Leaving keyTransport(). PKCS#1 v1.5.");
+    return { alg: 'rsa-pkcs1v15-enc', opts: {} };
+  }
+  var hash = MD_NAME[forgeMdFor(digestUri).algorithm];
+  var mgf = keyAlg === XENC11_NS + 'rsa-oaep'
+    ? MD_NAME[mgfMdFor(mgfUri).algorithm] : 'SHA-1';
+  log.debug("Leaving keyTransport(). OAEP " + hash + "/MGF1 " + mgf + ".");
+  return { alg: 'rsa-oaep', opts: { hash: hash, mgfHash: mgf } };
+}
+
 // Parse caller-supplied XML, refusing anything that is not well-formed.
 //
 // This is the correct control for an XML input, and note what it deliberately
@@ -774,7 +850,7 @@ function encapsulateXml(xml, opts, ctx) {
         'file holds the identifiers and the key derivation, not the lattice ' +
         '(the same split it makes for post-quantum signatures). Pass ' +
         'opts.kem, which client/src/xmldsig_pqc.js builds from ' +
-        'client/src/pk_encryption.js.');
+        'common/crypto/pk_encryption.js.');
   }
   var recipient = opts.kemPublicKey;
   if (!recipient || !recipient.length) {
@@ -800,16 +876,7 @@ function encapsulateXml(xml, opts, ctx) {
 
   var plaintext = encPlaintext(xml, ctx.c14nMode, ctx.type);
   var ptBytes = forge.util.encodeUtf8(plaintext);
-  var iv = forge.random.getBytesSync(ctx.spec.ivBytes);
-  var cipher = forge.cipher.createCipher(ctx.spec.cipher, sessionKey);
-  cipher.start(ctx.spec.gcm ? { iv: iv, tagLength: 128 } : { iv: iv });
-  cipher.update(forge.util.createBuffer(ptBytes));
-  if (!cipher.finish()) {
-    log.debug("Leaving encapsulateXml(). Data encryption failed.");
-    throw new Error('Data encryption failed.');
-  }
-  var cipherValue = iv + cipher.output.getBytes() +
-      (ctx.spec.gcm ? cipher.mode.tag.getBytes() : '');
+  var cipherValue = encryptData(ctx.spec, sessionKey, ptBytes);
 
   log.debug("Leaving encapsulateXml(). " + ctx.kem.alg + ".");
   return '<xenc:EncryptedData xmlns:xenc="' + XENC_NS + '" Type="' + ctx.type +
@@ -873,34 +940,25 @@ function encryptXml(xml, opts) {
 
   var plaintext = encPlaintext(xml, c14nMode, type);
   var ptBytes = forge.util.encodeUtf8(plaintext);
-  var sessionKey = forge.random.getBytesSync(spec.keyBytes);
-  var iv = forge.random.getBytesSync(spec.ivBytes);
-  var cipher = forge.cipher.createCipher(spec.cipher, sessionKey);
-  cipher.start(spec.gcm ? { iv: iv, tagLength: 128 } : { iv: iv });
-  cipher.update(forge.util.createBuffer(ptBytes));
-  if (!cipher.finish()) throw new Error('Data encryption failed.');
-  var cipherValue = iv + cipher.output.getBytes() + (spec.gcm ?
-      cipher.mode.tag.getBytes() : '');
+  var sessionKey = randomBin(spec.keyBytes);
+  var cipherValue = encryptData(spec, sessionKey, ptBytes);
   var cipherB64 = forge.util.encode64(cipherValue);
 
-  var wrapped, keyMethodInner = '';
-  if (keyAlg === XENC_NS + 'rsa-1_5') {
-    wrapped = pub.encrypt(sessionKey, 'RSAES-PKCS1-V1_5');
-  } else {
-    var digestUri = opts.digest || (XENC_NS + 'sha256');
-    var oaepOpts = { md: forgeMdFor(digestUri) };
+  var keyMethodInner = '';
+  var digestUri = opts.digest || (XENC_NS + 'sha256');
+  var mgfUri = opts.mgf || (XENC11_NS + 'mgf1sha256');
+  if (keyAlg !== XENC_NS + 'rsa-1_5') {
     keyMethodInner = '<ds:DigestMethod xmlns:ds="' + DS_NS + '" Algorithm="' +
         digestUri + '"/>';
     if (keyAlg === XENC11_NS + 'rsa-oaep') {
-      var mgfUri = opts.mgf || (XENC11_NS + 'mgf1sha256');
-      oaepOpts.mgf1 = { md: mgfMdFor(mgfUri) };
       keyMethodInner += '<xenc11:MGF xmlns:xenc11="' + XENC11_NS +
           '" Algorithm="' + mgfUri + '"/>';
-    } else {
-      oaepOpts.mgf1 = { md: forge.md.sha1.create() };
     }
-    wrapped = pub.encrypt(sessionKey, 'RSA-OAEP', oaepOpts);
   }
+  var transport = keyTransport(keyAlg, digestUri, mgfUri);
+  var wrapped = bin(provider.rsaEncrypt(transport.alg,
+      provider.importKey(forge.pki.publicKeyToPem(pub)), unbin(sessionKey),
+      transport.opts));
   var wrappedB64 = forge.util.encode64(wrapped);
 
   log.debug("Leaving encryptXml().");
@@ -945,14 +1003,10 @@ function encryptXml(xml, opts) {
 //                        2026-11-12: <ds:KeyInfo><ds:X509Data> with the
 //                        certificate inline. Valid XMLDSIG, and not a
 //                        WS-Security token reference.
-//   'both'               the token and its reference as 'bst' does, AND the
-//                        certificate inline in the same KeyInfo — XMLDSIG
-//                        lets a KeyInfo name its key more than one way. For a
-//                        receiver that reads one form for the signature and
-//                        the other for something else: iya-sts 1.0.0 checks
-//                        the signature by the token reference but finds the
-//                        certificate it encrypts a token to by looking for an
-//                        inline ds:X509Certificate (rcbj/iya-sts#1668).
+//
+// A KeyInfo does not carry both. The X.509 Token Profile and WS-I BSP put
+// one SecurityTokenReference in KeyInfo, and that token is the certificate
+// element a WS-Trust response is encrypted to.
 //
 // Neither changes what is SIGNED: KeyInfo is outside SignedInfo here, and the
 // BinarySecurityToken is not one of the references.
@@ -1045,8 +1099,12 @@ function signWsSecurity(soapXml, opts) {
   // what goes out is a valid XMLDSIG KeyInfo and not a WS-Security token
   // reference.
   var keyReference = opts.keyReference || 'bst';
-  var byToken = !pqSpec && (keyReference === 'bst' || keyReference === 'both');
-  var alsoInline = !pqSpec && keyReference === 'both';
+  if (keyReference === 'both') {
+    log.debug("Leaving signWsSecurity(). keyReference both is retired.");
+    throw new Error('signWsSecurity: keyReference \'both\' is retired. ' +
+        'The certificate is a BinarySecurityToken, or pass \'x509data\'.');
+  }
+  var byToken = !pqSpec && keyReference === 'bst';
   var tokenId = byToken
     ? 'X509-' + forge.util.bytesToHex(forge.random.getBytesSync(8)) : '';
   var keyInfoXml;
@@ -1055,11 +1113,7 @@ function signWsSecurity(soapXml, opts) {
   } else if (byToken) {
     keyInfoXml = '<ds:KeyInfo><wsse:SecurityTokenReference xmlns:wsse="' +
       WSSE_NS + '"><wsse:Reference URI="#' + tokenId + '" ValueType="' +
-      WSS_X509V3 + '"/></wsse:SecurityTokenReference>' +
-      (alsoInline ? '<ds:X509Data><ds:X509Certificate>' +
-         certPemToB64(opts.certPem) + '</ds:X509Certificate></ds:X509Data>'
-                  : '') +
-      '</ds:KeyInfo>';
+      WSS_X509V3 + '"/></wsse:SecurityTokenReference></ds:KeyInfo>';
   } else {
     keyInfoXml = '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' +
       certPemToB64(opts.certPem) +
@@ -1516,6 +1570,87 @@ function verifyXmlSignature(xml, opts) {
   return result;
 }
 
+// The SHA-256 fingerprint of a certificate (PEM or bare base64 DER), as
+// colon-separated upper-case hex: what a reader compares against the value an
+// identity provider publishes. '' when the input is not a certificate.
+function certFingerprint(certPemOrB64) {
+  log.debug("Entering certFingerprint().");
+  try {
+    var b64 = certPemToB64(pemWrapCert(certPemOrB64));
+    var md = forge.md.sha256.create();
+    md.update(forge.util.decode64(b64));
+    var hex = md.digest().toHex().toUpperCase();
+    log.debug("Leaving certFingerprint().");
+    return hex.match(/.{2}/g).join(':');
+  } catch (e) {
+    log.debug("Leaving certFingerprint(). Not a certificate: " + e.message);
+    return '';
+  }
+}
+
+// Verify the first enveloped signature in `xml` against a set of TRUSTED
+// certificates (#425), rather than against the one in its own KeyInfo.
+//
+// The difference is the whole of what a signature is for. A KeyInfo
+// certificate is supplied by whoever produced the document, so verifying with
+// it proves the document was not altered after signing and nothing about WHO
+// signed it: a forged response carrying a certificate of its own verifies.
+// A relying party trusts the keys its partner published (SAML metadata's
+// KeyDescriptor use="signing") and nothing else. Several may be trusted at
+// once — Shibboleth publishes a back-channel and a front-channel key, and a
+// key rollover publishes the old and the new — so the signature is valid when
+// ANY of them verifies it.
+//
+// The result is verifyXmlSignature()'s, plus:
+//   trusted        true when a trusted certificate verified it
+//   trustedIndex   which one (into `trustedCerts`), -1 when none did
+//   trustedFingerprint  that certificate's SHA-256 fingerprint
+//   keyInfoValid   whether the KeyInfo certificate verifies it — true with
+//                  `trusted` false is a document that is intact and was signed
+//                  by a key nobody trusts, which is reported as INVALID with
+//                  that sentence rather than as a broken digest.
+function verifyXmlSignatureTrusted(xml, trustedCerts) {
+  log.debug("Entering verifyXmlSignatureTrusted().");
+  var list = (trustedCerts || []).filter(function (c) {
+    return c && String(c).trim();
+  });
+  if (!list.length) {
+    log.debug("Leaving verifyXmlSignatureTrusted(). Nothing trusted.");
+    return { valid: false, trusted: false, trustedIndex: -1,
+             error: 'No trusted certificate was given.' };
+  }
+  var embedded = verifyXmlSignature(xml);
+  var last = null;
+  for (var i = 0; i < list.length; i++) {
+    var res = verifyXmlSignature(xml, { certPem: list[i] });
+    if (res.valid) {
+      res.trusted = true;
+      res.trustedIndex = i;
+      res.trustedFingerprint = certFingerprint(list[i]);
+      res.keyInfoValid = !!embedded.valid;
+      log.debug("Leaving verifyXmlSignatureTrusted(). Trusted cert " + i +
+                " verified it.");
+      return res;
+    }
+    last = res;
+  }
+  last = last || { valid: false };
+  last.valid = false;
+  last.trusted = false;
+  last.trustedIndex = -1;
+  last.keyInfoValid = !!embedded.valid;
+  if (!last.error && embedded.valid) {
+    last.untrustedSigner = true;
+    last.error = 'The document is intact, but it was signed with a key ' +
+        'none of the ' + list.length + ' trusted certificate(s) holds' +
+        (embedded.signerSubject ? ' (KeyInfo names "' +
+         embedded.signerSubject + '")' : '') + '.';
+  }
+  log.debug("Leaving verifyXmlSignatureTrusted(). No trusted cert verified " +
+            "it.");
+  return last;
+}
+
 // --- XML DECRYPTION (W3C xmlenc) -------------------------------------------
 // Inverse of encryptXml(): given an <xenc:EncryptedData> (as a string, or an
 // element containing one — e.g. a <saml:EncryptedAssertion>), RSA-unwrap the
@@ -1547,6 +1682,56 @@ function cipherValueOf(container) {
   return cv ? (cv.textContent || '').replace(/\s+/g, '') : '';
 }
 
+// The EncryptedKey that opens this EncryptedData. One nested in it wins.
+// Otherwise the KeyInfo's Reference URI, or a DataReference that names
+// this EncryptedData's Id, selects the key WS-Security 1.1 section 9
+// parked in the security header. The first EncryptedKey in the document
+// is the last resort, which is the sibling key an EncryptedAssertion
+// carries.
+function encryptedKeyFor(doc, ed) {
+  log.debug("Entering encryptedKeyFor().");
+  var own = firstByLocal(ed, 'EncryptedKey');
+  if (own) {
+    log.debug("Leaving encryptedKeyFor(). Nested.");
+    return own;
+  }
+  var keys = doc.getElementsByTagNameNS('*', 'EncryptedKey');
+  var ref = firstByLocal(ed, 'Reference');
+  var uri = ref ? String(ref.getAttribute('URI') || '') : '';
+  var id = uri.charAt(0) === '#' ? uri.substring(1) : '';
+  var i;
+  var r;
+  if (id) {
+    for (i = 0; i < keys.length; i++) {
+      var keyId = keys[i].getAttribute('Id') ||
+          keys[i].getAttributeNS(WSU_NS, 'Id') || '';
+      if (keyId === id) {
+        log.debug("Leaving encryptedKeyFor(). Referenced.");
+        return keys[i];
+      }
+    }
+  }
+  var dataId = ed.getAttribute('Id') ||
+      ed.getAttributeNS(WSU_NS, 'Id') || '';
+  if (dataId) {
+    for (i = 0; i < keys.length; i++) {
+      var listed = keys[i].getElementsByTagNameNS('*', 'DataReference');
+      for (r = 0; r < listed.length; r++) {
+        if (listed[r].getAttribute('URI') === '#' + dataId) {
+          log.debug("Leaving encryptedKeyFor(). Listed.");
+          return keys[i];
+        }
+      }
+    }
+  }
+  if (keys.length) {
+    log.debug("Leaving encryptedKeyFor(). First in the document.");
+    return keys[0];
+  }
+  log.debug("Leaving encryptedKeyFor(). None.");
+  return null;
+}
+
 function decryptXml(xml, opts) {
   log.debug("Entering decryptXml().");
   opts = opts || {};
@@ -1562,10 +1747,11 @@ function decryptXml(xml, opts) {
 
   // The wrapped session key may be nested in EncryptedData/KeyInfo, or a
   // sibling <xenc:EncryptedKey> (referenced by a ds:RetrievalMethod) — the
-  // layout Keycloak and other IdPs emit. Look inside EncryptedData first, then
+  // layout Keycloak and other IdPs emit. WS-Security 1.1 section 9 puts
+  // one EncryptedKey in wsse:Security instead, and the EncryptedData names
+  // it. Look inside EncryptedData first, then by that reference, then
   // anywhere.
-  var ek = firstByLocal(ed, 'EncryptedKey') || firstByLocal(doc,
-      'EncryptedKey');
+  var ek = encryptedKeyFor(doc, ed);
   if (!ek) throw new Error('no <xenc:EncryptedKey> — could not find the ' +
       'wrapped session key.');
   var kmEl = firstByLocal(ek, 'EncryptionMethod');
@@ -1588,28 +1774,21 @@ function decryptXml(xml, opts) {
     log.debug("Leaving decryptXml(). No private key.");
     throw new Error('decryptXml: privateKeyPem is required.');
   }
-  var priv = forge.pki.privateKeyFromPem(opts.privateKeyPem);
   var wrapped = forge.util.decode64(wrappedB64);
   var sessionKey;
   try {
-    if (keyAlg === XENC_NS + 'rsa-1_5') {
-      sessionKey = priv.decrypt(wrapped, 'RSAES-PKCS1-V1_5');
-    } else {
-      var digEl = kmEl ? firstByLocal(kmEl, 'DigestMethod') : null;
-      var digestUri = digEl ? digEl.getAttribute('Algorithm') : (XENC_NS +
-          'sha256');
-      var oaep = { md: forgeMdFor(digestUri) };
-      if (keyAlg === XENC11_NS + 'rsa-oaep') {
-        var mgfEl = kmEl ? firstByLocal(kmEl, 'MGF') : null;
-        var mgfUri = mgfEl ? mgfEl.getAttribute('Algorithm') : (XENC11_NS +
-            'mgf1sha1');
-        oaep.mgf1 = { md: mgfMdFor(mgfUri) };
-      } else {
-        // rsa-oaep-mgf1p: MGF1 is fixed to SHA-1.
-        oaep.mgf1 = { md: forge.md.sha1.create() };
-      }
-      sessionKey = priv.decrypt(wrapped, 'RSA-OAEP', oaep);
-    }
+    var digEl = kmEl ? firstByLocal(kmEl, 'DigestMethod') : null;
+    var digestUri = digEl ? digEl.getAttribute('Algorithm') : (XENC_NS +
+        'sha256');
+    // xenc11 rsa-oaep's MGF defaults to MGF1-SHA1 when absent; for
+    // rsa-oaep-mgf1p it is fixed to SHA-1 (keyTransport()).
+    var mgfEl = kmEl ? firstByLocal(kmEl, 'MGF') : null;
+    var mgfUri = mgfEl ? mgfEl.getAttribute('Algorithm') : (XENC11_NS +
+        'mgf1sha1');
+    var transport = keyTransport(keyAlg, digestUri, mgfUri);
+    sessionKey = bin(provider.rsaDecrypt(transport.alg,
+        provider.importKey(String(opts.privateKeyPem)), unbin(wrapped),
+        transport.opts));
   } catch (e) {
     throw new Error('could not unwrap the session key (wrong private key or ' +
                     'key-transport algorithm mismatch): ' + e.message);
@@ -1618,22 +1797,11 @@ function decryptXml(xml, opts) {
   var dataB64 = cipherValueOf(ed);
   if (!dataB64) throw new Error('EncryptedData has no CipherValue.');
   var cipherRaw = forge.util.decode64(dataB64);
-  var iv = cipherRaw.substring(0, spec.ivBytes);
-  var decipher = forge.cipher.createDecipher(spec.cipher, sessionKey);
-  if (spec.gcm) {
-    var tag = cipherRaw.substring(cipherRaw.length - 16);
-    var body = cipherRaw.substring(spec.ivBytes, cipherRaw.length - 16);
-    decipher.start({ iv: iv, tag: forge.util.createBuffer(tag),
-                   tagLength: 128 });
-    decipher.update(forge.util.createBuffer(body));
-  } else {
-    decipher.start({ iv: iv });
-    decipher.update(forge.util.createBuffer(cipherRaw.substring(spec.ivBytes)));
-  }
-  if (!decipher.finish()) throw new Error('data decryption failed (wrong key ' +
+  var plainBin = decryptData(spec, sessionKey, cipherRaw);
+  if (plainBin === null) throw new Error('data decryption failed (wrong key ' +
       'or corrupted ciphertext).');
   log.debug("Leaving decryptXml().");
-  return forge.util.decodeUtf8(decipher.output.getBytes());
+  return forge.util.decodeUtf8(plainBin);
 }
 
 // ---------------------------------------------------------------------------
@@ -1695,20 +1863,8 @@ function decapsulateXml(doc, ed, ek, kmEl, ciphertextB64, opts, ctx) {
     throw new Error('EncryptedData has no CipherValue.');
   }
   var cipherRaw = forge.util.decode64(dataB64);
-  var iv = cipherRaw.substring(0, ctx.spec.ivBytes);
-  var decipher = forge.cipher.createDecipher(ctx.spec.cipher, sessionKey);
-  if (ctx.spec.gcm) {
-    var tag = cipherRaw.substring(cipherRaw.length - 16);
-    var body = cipherRaw.substring(ctx.spec.ivBytes, cipherRaw.length - 16);
-    decipher.start({ iv: iv, tag: forge.util.createBuffer(tag),
-                     tagLength: 128 });
-    decipher.update(forge.util.createBuffer(body));
-  } else {
-    decipher.start({ iv: iv });
-    decipher.update(forge.util.createBuffer(
-        cipherRaw.substring(ctx.spec.ivBytes)));
-  }
-  if (!decipher.finish()) {
+  var plainBin = decryptData(ctx.spec, sessionKey, cipherRaw);
+  if (plainBin === null) {
     log.debug("Leaving decapsulateXml(). The tag did not check out.");
     throw new Error('The content did not decrypt. With a KEM this is USUALLY ' +
         'THE WRONG DECAPSULATION KEY rather than a corrupted document: ' +
@@ -1717,7 +1873,7 @@ function decapsulateXml(doc, ed, ek, kmEl, ciphertextB64, opts, ctx) {
         'different one, and the first thing that notices is this AEAD tag.');
   }
   log.debug("Leaving decapsulateXml(). Decrypted.");
-  return forge.util.decodeUtf8(decipher.output.getBytes());
+  return forge.util.decodeUtf8(plainBin);
 }
 
 // Generate an RSA key pair + self-signed certificate (for a fresh signing key).
@@ -2095,7 +2251,7 @@ var PQ_SIGS = [
 // material to forge a third message. Nothing else in this table is like that,
 // and nothing in XML Signature expresses it — the URI says HSS/LMS and says
 // nothing about which leaf was spent, so a document signed with a reused index
-// verifies perfectly and is worthless. `client/src/hbs.js` is the
+// verifies perfectly and is worthless. `common/crypto/hbs.js` is the
 // implementation and its pane keeps the index in the key; this registry exists
 // so that a SignatureMethod can name it, not so that this file can manage that
 // state.
@@ -2251,32 +2407,20 @@ function hkdf(prfUri, ikm, salt, info, lengthBytes) {
         'RFC 9231 names the HMAC family; hmac-sha256 is what section 3.8.1 ' +
         'RECOMMENDS.');
   }
-  var hashLen = md.create().digestLength;
-  var actualSalt = salt && salt.length ? salt
-    : new Array(hashLen + 1).join('\x00');
-  var extract = forge.hmac.create();
-  extract.start(md.create(), actualSalt);
-  extract.update(ikm);
-  var prk = extract.digest().getBytes();
-  // Expand. T(0) is empty; T(n) = HMAC(PRK, T(n-1) || info || n).
-  var out = '';
-  var previous = '';
-  var counter = 1;
-  while (out.length < lengthBytes) {
-    if (counter > 255) {
-      log.debug("Leaving hkdf(). Too much output asked for.");
-      throw new Error('HKDF: RFC 5869 section 2.3 allows at most 255 ' +
-          'blocks of output.');
-    }
-    var expand = forge.hmac.create();
-    expand.start(md.create(), prk);
-    expand.update(previous + (info || '') + String.fromCharCode(counter));
-    previous = expand.digest().getBytes();
-    out += previous;
-    counter++;
+  // RFC 5869, by crypto_provider.js. An absent salt is HashLen zero
+  // octets there, as it was here; RFC 5869 section 2.3 caps the output at
+  // 255 blocks, checked here.
+  var maxLen = 255 * md.create().digestLength;
+  if (lengthBytes > maxLen) {
+    log.debug("Leaving hkdf(). Too much output asked for.");
+    throw new Error('HKDF: RFC 5869 section 2.3 allows at most 255 ' +
+        'blocks of output.');
   }
+  var out = bin(provider.hkdf(hmacHashOf(prfUri), unbin(ikm),
+      salt && salt.length ? unbin(salt) : undefined, unbin(info || ''),
+      lengthBytes));
   log.debug("Leaving hkdf(). " + lengthBytes + " bytes.");
-  return out.substring(0, lengthBytes);
+  return out;
 }
 
 // The hash a `hmac-sha*` PRF identifier names. Written as a lookup rather than
@@ -2799,8 +2943,9 @@ function defaultSign(octets, spec, opts) {
         ' SignatureMethod needs a signer — this module implements RSA only, ' +
         'on purpose (see the section header). Pass opts.signer.' +
         (spec.postQuantum ? ' The post-quantum engines are ' +
-          'client/src/pqc.js (ML-DSA and SLH-DSA) and client/src/hbs.js ' +
-          '(HSS/LMS); this file holds the identifiers and not the lattice.'
+          'common/crypto/pqc.js (ML-DSA and SLH-DSA) and ' +
+          'common/crypto/hbs.js (HSS/LMS); this file holds the ' +
+          'identifiers and not the lattice.'
         : ''));
   }
   if (!opts.privateKeyPem) {
@@ -2817,17 +2962,18 @@ function defaultVerify(octets, signature, spec, publicKey) {
         ' SignatureMethod needs a verifier — this module implements RSA ' +
         'only, on purpose. Pass opts.verifier.' +
         (spec.postQuantum ? ' The post-quantum engines are ' +
-          'client/src/pqc.js (ML-DSA and SLH-DSA) and client/src/hbs.js ' +
-          '(HSS/LMS); this file holds the identifiers and not the lattice.'
+          'common/crypto/pqc.js (ML-DSA and SLH-DSA) and ' +
+          'common/crypto/hbs.js (HSS/LMS); this file holds the ' +
+          'identifiers and not the lattice.'
         : ''));
   }
   if (!publicKey) throw new Error('No RSA public key to verify with.');
-  var md = FORGE_MD[spec.hash].create();
-  md.update(octets);
+  // The forge public key this file reads from KeyInfo, as the provider's.
+  var key = provider.importKey(forge.pki.publicKeyToPem(publicKey));
   log.debug("Leaving defaultVerify().");
-  return spec.pad === 'pss'
-    ? publicKey.verify(md.digest().getBytes(), signature, pssFor(spec.hash))
-    : publicKey.verify(md.digest().getBytes(), signature);
+  return provider.verify('rsa-' + (spec.pad === 'pss' ? 'pss' : 'pkcs1') +
+      '-' + spec.hash, key, forge.util.binary.raw.decode(octets),
+      forge.util.binary.raw.decode(signature));
 }
 
 // --- Building the Signature -------------------------------------------------
@@ -3451,6 +3597,8 @@ module.exports = {
   verifyQueryString: verifyQueryString,
   signWsSecurity: signWsSecurity,
   verifyXmlSignature: verifyXmlSignature,
+  verifyXmlSignatureTrusted: verifyXmlSignatureTrusted,
+  certFingerprint: certFingerprint,
   generateKeyPair: generateKeyPair,
   selfSignedCertFor: selfSignedCertFor
 };

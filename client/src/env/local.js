@@ -52,7 +52,7 @@ var config = {
   // EVERY MOCK-STS DEFAULT BELOW IS **https**, AND THE PORT IS STILL 8081.
   //
   // That service binds its main port as TLS on this stack (STS_HTTPS=true on
-  // the `sts` service in local-tests.yml). The reason is the RFC 9700 pass: it is a
+  // the `sts` service in every compose file). The reason is the RFC 9700 pass: it is a
   // TRUST REALM on that one instance now — /realm/rfc9700/... — rather than a
   // second container, a realm binds no socket of its own, and the pass is only
   // honest over TLS, since requirement 8.1 is that every configured endpoint is
@@ -157,7 +157,7 @@ var config = {
   ldapPasswordDefault: "password!",
 
   // ---------------------------------------------------------------------------
-  // SPIFFE (client/public/spiffe.html, docs/spiffe.md).
+  // SPIFFE (client/public/spiffe.html, docs/v0.9.5/spiffe.md).
   //
   // **BOTH gRPC ADDRESSES FOLLOW THE SAME RULE AS ldapUrlDefault ABOVE, AND FOR
   // THE SAME REASON.** A browser cannot produce gRPC at all, so both surfaces
@@ -204,7 +204,7 @@ var config = {
   spiffeBundleUrlDefault: "https://sts:8081/spiffe/bundle",
 
   // ---------------------------------------------------------------------------
-  // SCIM 2.0 (client/public/scim.html, docs/scim.md).
+  // SCIM 2.0 (client/public/scim.html, docs/v0.9.5/scim.md).
   //
   // The service root the page opens on — the host plus the SCIM base path,
   // which is `/scim/v2` on essentially every implementation. NOT a resource
@@ -233,7 +233,7 @@ var config = {
   scimSignInUrlDefault: "",
 
   // ---------------------------------------------------------------------------
-  // SHARED SIGNALS (client/public/ssf.html, docs/ssf.md).
+  // SHARED SIGNALS (client/public/ssf.html, docs/v0.9.5/ssf.md).
   //
   // The TRANSMITTER's base URL. The page looks for
   // /.well-known/ssf-configuration under it in BOTH shapes — RFC 8414 inserts

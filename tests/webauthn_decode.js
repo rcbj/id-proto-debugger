@@ -340,6 +340,31 @@ async function test() {
   await checkAsync("RS256 assertion verifies",
     () => assertionVerifies(VECTORS.rs256_registration, VECTORS.rs256_assertion,
                             { expected: { requireUserVerification: true } }));
+  // #463 step 4: the decoder's signature checks and digests are pure JS,
+  // so the browser's own ES256 and RS256 assertions verify with
+  // crypto.subtle removed (a page served over plain HTTP has none).
+  await checkAsync("ES256 and RS256 assertions verify with no crypto.subtle",
+    async () => {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis,
+                                                         "crypto");
+      const real = globalThis.crypto;
+      Object.defineProperty(globalThis, "crypto", { configurable: true,
+        writable: true, value: { getRandomValues: function (a) {
+          return real.getRandomValues(a);
+        } } });
+      try {
+        assert.strictEqual(typeof crypto.subtle, "undefined");
+        await assertionVerifies(VECTORS.es256_registration,
+          VECTORS.es256_assertion,
+          { expected: { requireUserVerification: true } });
+        await assertionVerifies(VECTORS.rs256_registration,
+          VECTORS.rs256_assertion,
+          { expected: { requireUserVerification: true } });
+      } finally {
+        Object.defineProperty(globalThis, "crypto", descriptor);
+      }
+      return "both verify, and node agrees";
+    });
   await checkAsync("a discoverable-credential assertion carries the " +
                    "user handle", async () => {
     const v = VECTORS.es256_assertion_discoverable;

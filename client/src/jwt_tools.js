@@ -14,6 +14,8 @@ var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 // JWE, and the byte helpers it needs, shared with the OID4VCI issuance panes.
 var jose = require("./jose_jwe");
+// Key generation and export by crypto_provider.js (#463): pure JS.
+var provider = require("./crypto_provider");
 // Key pairs, the PEM<->JWK conversion and every keystore format used to live in
 // THIS file. They were extracted into these two so that the PKI page
 // (client/public/pki.html) could have the same key-pair pane and the same
@@ -657,8 +659,11 @@ async function appendRfc9068Signature(results, compact) {
     } else {
       throw new Error('Unsupported verification method.');
     }
+    // The pure-JS backend (jws.js's default, on crypto_provider.js): it works
+    // on every deployment, plain HTTP included, where crypto.subtle does not
+    // exist (#463, step 2c).
     var result = await jwsLib.verifyJwsAsync({
-      jws: compact, publicKey: keyInput, backend: 'webcrypto'
+      jws: compact, publicKey: keyInput
     });
     var first = result.signatures[0] || {};
     if (result.valid) {
@@ -1054,17 +1059,16 @@ async function signJWT() {
     setVal('jwt_tools_header', JSON.stringify(header, null, 2));
     var payload = parseJson('jwt_tools_payload', 'JWT Payload');
 
-    // backend: 'webcrypto' keeps this pane on crypto.subtle, which is what it
-    // has always signed with. jws.js's pure-JS backend produces byte-identical
-    // output for every deterministic algorithm here (tests/jws_engine.js
-    // asserts exactly that), so this is a choice about blast radius rather
-    // than about correctness: nothing this page emits changes.
+    // jws.js's default pure-JS backend (#463, step 2c). This pane signed on
+    // crypto.subtle until then, which made it depend on a secure context;
+    // the pure-JS backend produces byte-identical output for every
+    // deterministic algorithm here (tests/jws_engine.js asserts exactly
+    // that), and works on every deployment.
     var result = await jwsLib.signJwsAsync({
       algId: jwsAlgId(alg),
       protectedHeader: header,
       payload: payload,
-      privateKey: signingKeyInput(alg, val('sign_private_key')),
-      backend: 'webcrypto'
+      privateKey: signingKeyInput(alg, val('sign_private_key'))
     });
 
     setVal('jwt_tools_signed', result.serialized);
@@ -1460,8 +1464,11 @@ async function verifyJWT() {
     // algorithm selector, so the header's `alg` is all there is to go on.
     // That is RFC 8725 §3.1's bad case, and it is what a debugger is FOR —
     // the pane's job is to tell you what the token says, not to decide.
+    // The pure-JS backend (jws.js's default, on crypto_provider.js): it works
+    // on every deployment, plain HTTP included, where crypto.subtle does not
+    // exist (#463, step 2c).
     var result = await jwsLib.verifyJwsAsync({
-      jws: jwt_, publicKey: keyInput, backend: 'webcrypto'
+      jws: jwt_, publicKey: keyInput
     });
     var first = result.signatures[0] || {};
 
@@ -1501,26 +1508,51 @@ async function verifyJWT() {
 // ECDH-ES key agreement is limited to the P-256 curve in this tool.
 var ECDH_CURVE = jose.ECDH_CURVE;
 
+// ML-KEM and HPKE keys (#312) are JWKs and only JWKs — an AKP key has no PEM
+// form in any specification — so the toggle is set to JWK to match what the
+// fields now hold.
+function generateKemKeys(alg) {
+  log.debug("Entering generateKemKeys(). alg=" + alg);
+  var pair = jose.generateKemKeyPair(alg);
+  setVal('jwe_public_key', JSON.stringify(pair.publicJwk, null, 2));
+  setVal('jwe_private_key', JSON.stringify(pair.privateJwk, null, 2));
+  var toggle = document.getElementById('jwe_key_jwk');
+  if (toggle) toggle.checked = true;
+  var about = jose.describeKemAlg(alg);
+  setVal('jwe_status', 'Generated a ' + about.kty + ' key pair for ' + alg +
+         ' (' + about.summary + '). DRAFT: ' + about.spec + '.');
+  log.debug("Leaving generateKemKeys().");
+  return false;
+}
+
 async function generateEncryptionKeys() {
   log.debug("Entering generateEncryptionKeys().");
   var alg = val('jwe_alg');
   setVal('jwe_status', 'Generating ' + alg + ' key material...');
+  if (jose.isKemAlg(alg)) {
+    try {
+      generateKemKeys(alg);
+    } catch (e) {
+      log.error('generateEncryptionKeys: ' + e.message);
+      setVal('jwe_status', 'Error: ' + e.message);
+    }
+    log.debug("Leaving generateEncryptionKeys(). KEM.");
+    return false;
+  }
   try {
+    // crypto_provider.js generates the pair (#463): pure JS, every
+    // deployment. An RSA-OAEP key is just an RSA key; the hash is the alg's.
     var pair;
     if (isEcdh(alg)) {
-      pair = await crypto.subtle.generateKey({ name: 'ECDH',
-          namedCurve: ECDH_CURVE }, true, ['deriveBits']);
+      pair = provider.generateKeyPair({ 'P-256': 'ec-p256',
+        'P-384': 'ec-p384', 'P-521': 'ec-p521' }[ECDH_CURVE] || 'ec-p256');
     } else {
       var jweBits = parseInt(val('jwe_rsa_bits'), 10) || 2048;
-      pair = await crypto.subtle.generateKey(
-        { name: 'RSA-OAEP', modulusLength: jweBits,
-         publicExponent: new Uint8Array([1, 0, 1]), hash: JWE_RSA_HASH[alg] },
-        true, ['encrypt', 'decrypt']);
+      pair = provider.generateKeyPair('rsa', { bits: jweBits });
     }
-    setVal('jwe_public_key', derToPem(await crypto.subtle.exportKey('spki',
-           pair.publicKey), 'PUBLIC KEY'));
-    setVal('jwe_private_key', derToPem(await crypto.subtle.exportKey('pkcs8',
-           pair.privateKey), 'PRIVATE KEY'));
+    setVal('jwe_public_key', provider.exportKey(provider.publicKeyOf(pair),
+           'spki-pem'));
+    setVal('jwe_private_key', provider.exportKey(pair, 'pkcs8-pem'));
     await applyKeyFormat('enc'); // honor the PEM/JWK toggle
     setVal('jwe_status', 'Generated ' + alg + ' key material' + (isEcdh(alg) ?
            ' (P-256).' : '.'));
@@ -1541,8 +1573,9 @@ async function encryptJWT() {
   try {
     if (!plaintext) throw new Error('Nothing to encrypt. Sign a JWT or enter ' +
         'a payload above.');
-    if (!ENC_KEY_BYTES[enc]) throw new Error('Unsupported content ' +
-        'encryption: ' + enc);
+    if (!jose.isIntegrated(alg) && !ENC_KEY_BYTES[enc]) {
+      throw new Error('Unsupported content encryption: ' + enc);
+    }
 
     // A nested JWT (a JWS as the plaintext) is signalled with cty:"JWT" (RFC
     // 7519 §5.2).
@@ -1589,7 +1622,9 @@ async function encryptJWT() {
     });
     setVal('jwt_tools_header', JSON.stringify(composeHeader, null, 2));
 
-    setVal('jwe_status', 'JWE produced with ' + alg + ' / ' + enc + '.');
+    setVal('jwe_status', 'JWE produced with ' + alg + ' / ' +
+           (protectedHeader.enc || 'no enc — HPKE Integrated Encryption') +
+           '.');
     setVal('jwt_tools_sync_status',
            'Encoded field now holds the JWE encrypted token.');
   } catch (e) {
@@ -1611,8 +1646,9 @@ async function decryptJWT() {
     var protectedHeader = JSON.parse(b64uToStr(parts[0]));
     var alg = protectedHeader.alg;
     var enc = protectedHeader.enc;
-    if (!ENC_KEY_BYTES[enc]) throw new Error('Unsupported content ' +
-        'encryption: ' + enc);
+    if (!jose.isIntegrated(alg) && !ENC_KEY_BYTES[enc]) {
+      throw new Error('Unsupported content encryption: ' + enc);
+    }
 
     // The shared reader, for the reason encryptJWT() above uses the shared
     // writer: an AES-CBC-HMAC JWE is not opened the way an AES-GCM one is, and
@@ -1620,7 +1656,8 @@ async function decryptJWT() {
     var opened = await jose.decryptCompact({ jwe: jwe,
         key: val('jwe_private_key') });
     setVal('jwe_decrypt_output', opened.plaintext);
-    setVal('jwe_status', 'Decrypted with ' + alg + ' / ' + enc + '.');
+    setVal('jwe_status', 'Decrypted with ' + alg + ' / ' +
+           (enc || 'no enc — HPKE Integrated Encryption') + '.');
   } catch (e) {
     log.error('decryptJWT: ' + e.message);
     setVal('jwe_status', 'Error: ' + e.message);
@@ -1659,6 +1696,15 @@ async function applyKeyFormat(step) {
   var toJwk = document.getElementById(s ?
       'sign_key_jwk' : 'jwe_key_jwk').checked;
   var alg = val(s ? 'sign_alg' : 'jwe_alg');
+  if (!s && jose.isKemAlg(alg)) {
+    // An ML-KEM or HPKE key is a JWK only; there is nothing to convert to.
+    if (!toJwk) {
+      setVal('jwe_status', alg + ' keys are JWKs only — there is no PEM ' +
+             'form of an AKP KEM key — so the fields stay JWK.');
+    }
+    log.debug("Leaving applyKeyFormat(). KEM.");
+    return false;
+  }
   var desc = certDescriptor(alg);
   var privId = s ? 'sign_private_key' : 'jwe_private_key';
   var pubId = s ? 'sign_public_key' : 'jwe_public_key';
@@ -1814,6 +1860,11 @@ async function downloadKeys(step) {
         fmt: val('jwe_ks_format'), pw: val('jwe_ks_password'),
                  status: 'jwe_status', base: 'jwt-tools-encryption-key',
                  use: 'enc' };
+  if (cfg.use === 'enc' && jose.isKemAlg(cfg.alg)) {
+    await downloadKemKeys(cfg);
+    log.debug("Leaving downloadKeys(). KEM.");
+    return false;
+  }
   try {
     var desc = certDescriptor(cfg.alg);
     var certs = [];
@@ -1841,6 +1892,38 @@ async function downloadKeys(step) {
     setVal(cfg.status, 'Error: ' + e.message);
   }
   log.debug("Leaving downloadKeys().");
+  return false;
+}
+
+// An ML-KEM or HPKE key pair downloads as a JWK set and nothing else, PBES2
+// encrypted when a password is given.
+async function downloadKemKeys(cfg) {
+  log.debug("Entering downloadKemKeys(). alg=" + cfg.alg);
+  try {
+    if (cfg.fmt !== 'jwk') {
+      throw new Error(cfg.alg + ' keys have no PEM, DER or PKCS#12 form. ' +
+                      'Choose JWK.');
+    }
+    var keysOut = [];
+    [cfg.pub, cfg.priv].forEach(function (text) {
+      if (String(text || '').trim()) keysOut.push(JSON.parse(text));
+    });
+    if (!keysOut.length) throw new Error('No key pair to export.');
+    var jwks = JSON.stringify({ keys: keysOut }, null, 2);
+    var result = cfg.pw
+      ? { files: [{ name: cfg.base + '.jwks.jwe',
+                    data: await jose.pbes2JweEncrypt(jwks, cfg.pw),
+                    mime: 'application/jose' }],
+          status: 'Downloaded the ' + cfg.alg + ' JWK set, PBES2-encrypted.' }
+      : { files: [{ name: cfg.base + '.jwks.json', data: jwks,
+                    mime: 'application/jwk-set+json' }],
+          status: 'Downloaded the ' + cfg.alg + ' JWK set.' };
+    setVal(cfg.status, keys.downloadFiles(result));
+  } catch (e) {
+    log.error('downloadKemKeys: ' + e.message);
+    setVal(cfg.status, 'Error: ' + e.message);
+  }
+  log.debug("Leaving downloadKemKeys().");
   return false;
 }
 

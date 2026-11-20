@@ -97,6 +97,8 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var scimClient = require("./scim_client");
+// Key generation and export by crypto_provider.js (#463): pure JS.
+var provider = require("./crypto_provider");
 var scenarios = require("./scim_scenarios");
 var dpop = require("./dpop");
 var handoff = require("./token_handoff");
@@ -2165,20 +2167,22 @@ var lastDpopNonce = '';
 function generateHobaKey() {
   log.debug("Entering generateHobaKey().");
   statusBusy('scim_hoba_status', 'Generating an RSA key…');
-  return crypto.subtle.generateKey({
-    name: 'RSASSA-PKCS1-v1_5',
-    modulusLength: 2048,
-    publicExponent: new Uint8Array([1, 0, 1]),
-    hash: 'SHA-256'
-  }, true, ['sign', 'verify']).then(function (pair) {
-    return crypto.subtle.exportKey('spki', pair.publicKey)
+  // crypto_provider.js generates and signs (#463), so HOBA works on a
+  // plain-HTTP page too. RSA generation is synchronous JavaScript and takes a
+  // moment, so the status line above is drawn first.
+  return new Promise(function (resolve) {
+    setTimeout(resolve, 0);
+  }).then(function () {
+    var pair = provider.generateKeyPair('rsa', { bits: 2048 });
+    return Promise.resolve(provider.exportKey(provider.publicKeyOf(pair),
+                                              'spki-der'))
       .then(function (spki) {
         hobaKey = {
           // The key id is the client's to choose and the server stores the key
           // under it. A random one per session keeps two browsers from
           // overwriting each other's registration on a shared mock.
           kid: 'scimpage-' + Math.floor(Math.random() * 1e9).toString(36),
-          privateKey: pair.privateKey,
+          privateKey: pair,
           publicPem: pemFromSpki(spki)
         };
         setVal('scim_hoba_kid', hobaKey.kid);
@@ -2192,8 +2196,7 @@ function generateHobaKey() {
       });
   }).catch(function (error) {
     statusBad('scim_hoba_status', 'The key could not be generated: ' +
-        error.message + '. Web Crypto needs a secure context — https, or ' +
-        'localhost.');
+        error.message + '.');
     log.debug("Leaving generateHobaKey(). Failed.");
     throw error;
   });
@@ -2305,8 +2308,8 @@ function signHoba(request) {
   });
   setText('scim_hoba_tbs', tbs);
   log.debug("Leaving signHoba(). Signing " + tbs.length + " characters.");
-  return crypto.subtle.sign('RSASSA-PKCS1-v1_5', hobaKey.privateKey,
-      new TextEncoder().encode(tbs))
+  return Promise.resolve(provider.sign('rsa-pkcs1-sha256', hobaKey.privateKey,
+      new TextEncoder().encode(tbs)))
     .then(function (signature) {
       return {
         kid: hobaKey.kid,

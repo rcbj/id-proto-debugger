@@ -81,6 +81,9 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
+// node's own crypto module (OpenSSL). `crypto` alone is the global Web
+// Crypto object here, which has no ECDSA DER and no SEC 1 import.
+const nodeCrypto = require("crypto");
 const { Command, Option } = require("commander");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -160,7 +163,11 @@ async function issue(algId, subject, options) {
     subject: subject,
     subjectPublicKey: key.publicPem,
     signatureAlg: opts.signatureAlg || algId,
-    extensions: x509.defaultExtensions(opts.profile || "root-ca")
+    // The subject key's algorithm decides the keyUsage (#310). A caller that
+    // brings its own subject key names its algorithm, or gets the profile's
+    // list as written.
+    extensions: x509.defaultExtensions(opts.profile || "root-ca",
+        opts.subjectAlg || (opts.subjectKey ? undefined : algId))
   };
   if (opts.issuerCertPem) {
     spec.issuer = { certificatePem: opts.issuerCertPem,
@@ -527,6 +534,79 @@ async function compositeCertificatesNeedBothHalves() {
   log.debug("Leaving compositeCertificatesNeedBothHalves().");
 }
 
+// ---------------------------------------------------------------------------
+// 6b. The ECDSA half of a composite is DER that OpenSSL agrees with (#351).
+//
+// No released OpenSSL implements the composite drafts, so the checks above
+// only ever hold this module against itself — and an ECDSA half that is
+// self-consistent and not DER passes them. That is exactly what @noble/curves
+// 1.4.0 produces for P-521: its DER writer emits a short-form length, so the
+// 139-byte SEQUENCE comes out as `30 88 ...` where DER needs `30 81 87 ...`,
+// and its reader refuses the correct form. So each EC composite's
+// traditional half is handed to OpenSSL (through node's crypto) both ways:
+// OpenSSL must verify the half this module wrote, and this module must accept
+// a composite whose half OpenSSL wrote.
+// ---------------------------------------------------------------------------
+const NODE_HASH = { "SHA-256": "sha256", "SHA-384": "sha384",
+                    "SHA-512": "sha512" };
+
+// The traditional public half (an uncompressed SEC 1 point) as a node key.
+function nodeEcPublicKey(curve, point) {
+  log.debug("Entering nodeEcPublicKey(). curve=" + curve);
+  const bytes = Buffer.from(point);
+  const size = (bytes.length - 1) / 2;
+  const key = nodeCrypto.createPublicKey({ format: "jwk", key: {
+    kty: "EC", crv: curve,
+    x: bytes.subarray(1, 1 + size).toString("base64url"),
+    y: bytes.subarray(1 + size).toString("base64url") } });
+  log.debug("Leaving nodeEcPublicKey().");
+  return key;
+}
+
+async function compositeEcdsaHalfIsDer() {
+  log.debug("Entering compositeEcdsaHalfIsDer().");
+  const ecComposites = postQuantumAlgIds().filter(function (id) {
+    return familyOf(id) === "Composite ML-DSA" &&
+      pqx.alg(id).composite.trad.kind === "ec";
+  });
+  assert.ok(ecComposites.some(function (id) {
+    return pqx.alg(id).composite.trad.curve === "P-521";
+  }), "no ECDSA P-521 composite was found to check");
+  for (const algId of ecComposites) {
+    const cfg = pqx.alg(algId).composite;
+    const hash = NODE_HASH[cfg.trad.sigHash];
+    const key = await keyFor(algId);
+    const pub = pqx.decodeSpki(pemBytes(key.publicPem)).pub;
+    const priv = pqx.decodePkcs8(pemBytes(key.privatePem)).priv;
+    const message = Buffer.from("composite ECDSA half, " + algId);
+    const mPrime = Buffer.from(pqx.compositeMessage(cfg, message));
+    const nodePub = nodeEcPublicKey(cfg.trad.curve,
+        pqx.splitCompositePublic(cfg, pub).trad);
+
+    // 1. OpenSSL verifies the half this module wrote, as DER.
+    const signature = await pqx.sign(algId, message, priv);
+    const ours = Buffer.from(pqx.splitCompositeSignature(cfg, signature).trad);
+    assert.ok(nodeCrypto.verify(hash, mPrime,
+        { key: nodePub, dsaEncoding: "der" }, ours),
+      algId + ": OpenSSL refuses the ECDSA half this module wrote (first " +
+      "bytes " + ours.subarray(0, 3).toString("hex") + "); it is not DER");
+
+    // 2. This module accepts a composite whose ECDSA half OpenSSL wrote.
+    const nodePriv = nodeCrypto.createPrivateKey({ format: "der", type: "sec1",
+      key: Buffer.from(pqx.splitCompositePrivate(cfg, priv).trad) });
+    const theirs = nodeCrypto.sign(hash, mPrime,
+        { key: nodePriv, dsaEncoding: "der" });
+    const mldsaHalf = pqx.splitCompositeSignature(cfg, signature).mldsa;
+    const assembled = Buffer.concat([Buffer.from(mldsaHalf), theirs]);
+    assert.ok(await pqx.verify(algId, assembled, message, pub),
+      algId + ": a composite whose ECDSA half OpenSSL wrote (first bytes " +
+      theirs.subarray(0, 3).toString("hex") + ") does not verify here");
+  }
+  log.info("Checked the ECDSA half of " + ecComposites.length +
+           " composite algorithms against OpenSSL, both ways.");
+  log.debug("Leaving compositeEcdsaHalfIsDer().");
+}
+
 // The same key material presented as another composite algorithm, where the
 // two share an ML-DSA parameter set and a traditional shape. Returns the
 // private key unchanged when they do not, in which case the cross-algorithm
@@ -820,10 +900,12 @@ function requestParts(der) {
 // ML-KEM is in this loop as a subject key. That is the encryption certificate
 // — the one a KEM key is FOR — and it cannot be self-signed at any point, so
 // it is issued by an ML-DSA CA here exactly as it would be anywhere else.
-// What this test does NOT assert is that the keyUsage bits are the ones RFC
-// 9935 section 4 requires of an ML-KEM certificate (keyEncipherment alone):
-// this is a debugger, every bit is editable on purpose, and issuing the
-// certificate that is wrong in exactly one way is the point of the page.
+// Since issue #310 it also asserts the keyUsage: the profile's DEFAULT bits
+// for each subject key are the ones its specification permits, which for
+// ML-KEM is keyEncipherment alone. Every bit is still editable on the page,
+// because issuing the certificate that is wrong in exactly one way is the
+// point of the page, and keyUsageDefaultsFollowThePostQuantumKey() checks
+// that such a certificate is reported.
 // ---------------------------------------------------------------------------
 async function everyProfileTakesAPostQuantumKey() {
   log.debug("Entering everyProfileTakesAPostQuantumKey().");
@@ -847,11 +929,25 @@ async function everyProfileTakesAPostQuantumKey() {
     const cert = await issue("ml-dsa-65", "CN=" + profileId + ".example," +
         "O=idptools", {
       profile: profileId, subjectKey: subjectKey, signerKey: caKey,
-      signerAlg: "ml-dsa-65", issuerCertPem: ca.pem, signatureAlg: "ml-dsa-65"
+      signerAlg: "ml-dsa-65", issuerCertPem: ca.pem, signatureAlg: "ml-dsa-65",
+      subjectAlg: subjectAlg
     });
     const described = await x509.describeCertificate(cert.pem);
     assert.strictEqual(described.signatureAlgorithm, "ML-DSA-65",
       profileId + ": the describer does not name the signature algorithm");
+    const ku = described.extensions.filter(function (e) {
+      return e.name === "keyUsage";
+    })[0];
+    const expectedKu = expectedPostQuantumKeyUsage(profileId,
+        familyOf(subjectAlg));
+    assert.deepStrictEqual(ku ? ku.value : [], expectedKu,
+      profileId + ": a " + subjectAlg + " certificate carries keyUsage " +
+      JSON.stringify(ku ? ku.value : null) + ", expected " +
+      JSON.stringify(expectedKu));
+    assert.deepStrictEqual(described.findings, [],
+      profileId + ": the describer reports findings on a " + subjectAlg +
+      " certificate issued from the defaults: " +
+      JSON.stringify(described.findings));
     const chain = await x509.verifyChain([cert.pem, ca.pem]);
     assert.strictEqual(chain[0].signatureValid, true,
       profileId + ": a " + subjectAlg + " certificate under this profile " +
@@ -867,6 +963,98 @@ async function everyProfileTakesAPostQuantumKey() {
   log.info("Issued " + issued + " post-quantum certificates, one per " +
       "profile.");
   log.debug("Leaving everyProfileTakesAPostQuantumKey().");
+}
+
+// ---------------------------------------------------------------------------
+// 10c. THE DEFAULT keyUsage FOLLOWS THE POST-QUANTUM KEY (issue #310).
+//
+// Written out here from the specifications, not read from x509.js:
+//
+//   ML-DSA            RFC 9881 section 5   digitalSignature, nonRepudiation,
+//   SLH-DSA           RFC 9909             keyCertSign, cRLSign
+//   Composite ML-DSA  draft-ietf-lamps-pq-composite-sigs-19 (the same four)
+//   ML-KEM            RFC 9935             keyEncipherment, and nothing else
+//
+// The profiles are written for RSA, so a signature key keeps the profile's
+// signature bits and loses the rest, and an ML-KEM key gets keyEncipherment
+// when the profile is about encryption at all and nothing otherwise. Every
+// post-quantum algorithm is crossed with every profile; no key is generated,
+// so the whole grid is cheap.
+//
+// OpenSSL is not asked here. `openssl verify -x509_strict` does not check
+// keyUsage against the key type in any release, and the openssl binary on a
+// host is not pinned to a version that has these algorithms at all (see the
+// file header). The certificates themselves go to OpenSSL 3.5, through node,
+// in everyProfileTakesAPostQuantumKey() above.
+// ---------------------------------------------------------------------------
+const SIGNATURE_KEY_USAGES = ["digitalSignature", "nonRepudiation",
+  "keyCertSign", "cRLSign"];
+const KU_ORDER = ["digitalSignature", "nonRepudiation", "keyEncipherment",
+  "dataEncipherment", "keyAgreement", "keyCertSign", "cRLSign",
+  "encipherOnly", "decipherOnly"];
+
+function expectedPostQuantumKeyUsage(profileId, family) {
+  log.debug("Entering expectedPostQuantumKeyUsage(). " + profileId + "/" +
+      family);
+  const wanted = x509.profile(profileId).keyUsage || [];
+  let out;
+  if (family === "ML-KEM") {
+    const encrypts = wanted.some(function (u) {
+      return u === "keyEncipherment" || u === "dataEncipherment" ||
+          u === "keyAgreement";
+    });
+    out = encrypts ? ["keyEncipherment"] : [];
+  } else {
+    out = KU_ORDER.filter(function (u) {
+      return wanted.indexOf(u) >= 0 && SIGNATURE_KEY_USAGES.indexOf(u) >= 0;
+    });
+  }
+  log.debug("Leaving expectedPostQuantumKeyUsage(). " + out.join(","));
+  return out;
+}
+
+async function keyUsageDefaultsFollowThePostQuantumKey() {
+  log.debug("Entering keyUsageDefaultsFollowThePostQuantumKey().");
+  let cells = 0;
+  postQuantumAlgIds().forEach(function (algId) {
+    const family = familyOf(algId);
+    x509.profileIds().forEach(function (profileId) {
+      const expected = expectedPostQuantumKeyUsage(profileId, family);
+      const got = x509.defaultExtensions(profileId, algId).keyUsage.usages;
+      assert.deepStrictEqual(got, expected,
+        profileId + " with " + algId + ": the default keyUsage is " +
+        JSON.stringify(got) + ", expected " + JSON.stringify(expected));
+      assert.deepStrictEqual(x509.keyUsageFindings(got, algId), [],
+        profileId + " with " + algId + ": the module reports its own " +
+        "defaults as not conformant");
+      if (!expected.length) {
+        assert.ok(x509.defaultKeyUsage(profileId, algId).note,
+          profileId + " with " + algId + ": an empty keyUsage must come " +
+          "with a note saying why");
+      }
+      cells += 1;
+    });
+  });
+
+  // And the certificate #310 was found with: an ML-DSA TLS client carrying
+  // the profile's RSA-shaped digitalSignature + keyEncipherment, which is
+  // what the page issued before. It must still issue (the page is a
+  // debugger), and the describer must say what is wrong with it.
+  const caKey = await keyFor("ml-dsa-65");
+  const ca = await issue("ml-dsa-65", "CN=Finding CA,O=idptools");
+  const leafKey = await keyFor("ml-dsa-44");
+  const bad = await issue("ml-dsa-65", "CN=bad-ku,O=idptools", {
+    profile: "tls-client", subjectKey: leafKey, signerKey: caKey,
+    signerAlg: "ml-dsa-65", issuerCertPem: ca.pem, signatureAlg: "ml-dsa-65"
+  });
+  const described = await x509.describeCertificate(bad.pem);
+  assert.ok(described.findings.some(function (f) {
+    return f.indexOf("keyEncipherment") >= 0 && f.indexOf("RFC 9881") >= 0;
+  }), "an ML-DSA certificate asserting keyEncipherment was not reported: " +
+    JSON.stringify(described.findings));
+  log.info("Checked the default keyUsage of " + cells + " post-quantum key " +
+      "and profile combinations.");
+  log.debug("Leaving keyUsageDefaultsFollowThePostQuantumKey().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1014,9 +1202,11 @@ async function test() {
   await badInputIsRefusedByName();
   await certificationRequestsProvePossession();
   await everyProfileTakesAPostQuantumKey();
+  await keyUsageDefaultsFollowThePostQuantumKey();
   await hybridCertificatesCarryTwoSignatures();
   await theSlowParameterSetsVerifyWhatOpensslSigns();
   await compositeCertificatesNeedBothHalves();
+  await compositeEcdsaHalfIsDer();
   await mixedChainsVerifyEndToEnd();
   await pureCertificatesVerifyAgainstOpenssl();
   log.info("Cross-checked " + crossChecks + " facts against OpenSSL " +

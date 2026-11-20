@@ -1,6 +1,6 @@
 {
   "name": "id-proto-debugger-api",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "private": true,
   "description": "id-proto-debugger api service",
   "author": "Robert C. Broeckelmann Jr. <info@iyasec.io>",
@@ -10,29 +10,32 @@
   "dependencies": {
     "@grpc/grpc-js": "^1.14.5",
     "@grpc/proto-loader": "^0.8.1",
+    "@noble/curves": "1.4.0",
+    "@noble/hashes": "1.4.0",
+    "@noble/post-quantum": "^0.4.1",
     "@xmldom/xmldom": "^0.9.12",
+    "ajv": "8.20.0",
     "axios": "^1.20.0",
     "body-parser": "^2.4.0",
     "bunyan": "latest",
     "cors": "latest",
     "express": "^5.2.1",
     "express-logging": "latest",
-    "express-swagger-generator": "^1.1.17",
     "ldapjs": "file:node-ldapjs",
     "logops": "latest",
     "node-forge": "^1.4.3",
+    "swagger-ui-dist": "5.34.1",
     "xpath": "^0.0.34"
   },
   "overrides": {
-    "express-swagger-generator": {
-      "validator": "^13.15.22",
-      "js-yaml": "^3.15.1"
-    },
     "brace-expansion@1": "^1.1.17",
     "brace-expansion@2": "^2.1.3"
   },
   "optionalDependencies": {
     "node-hid": "3.4.0",
     "pcsclite": "1.0.1"
+  },
+  "scarfSettings": {
+    "enabled": false
   }
 }

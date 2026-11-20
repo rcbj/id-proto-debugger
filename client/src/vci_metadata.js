@@ -92,9 +92,15 @@ var VCI_CONFIG_METADATA = [
         "Request asks for." },
   { name: "format", type: "string", dflt: "dc+sd-jwt",
     desc: "REQUIRED. The credential format. dc+sd-jwt is the SD-JWT VC " +
-        "format identifier (vc+sd-jwt in earlier drafts); jwt_vc_json is a " +
-        "W3C Verifiable Credential secured as a JWT, which has no selective " +
-        "disclosure." },
+        "format identifier; jwt_vc_json and jwt_vc_json-ld are a W3C " +
+        "Verifiable Credential secured as a JWT; ldp_vc is one secured " +
+        "with a Data Integrity proof; mso_mdoc is an ISO/IEC 18013-5 " +
+        "mdoc. vc+jwt, vc+sd-jwt and vc+cose (W3C VC-JOSE-COSE), jpt " +
+        "(JSON Proof Token, a draft) and sd-cwt (a draft) have no " +
+        "OpenID4VCI format profile, so their media type names are used. " +
+        "Changing it resets the binding method, signing algorithms and " +
+        "proof types below to ones that format defines, unless they were " +
+        "edited by hand." },
   { name: "credential_definition", type: "json", dflt: "",
     desc: "REQUIRED for jwt_vc_json. The W3C credential definition — its " +
         "`type` array is what identifies the credential in that format, in " +
@@ -103,23 +109,45 @@ var VCI_CONFIG_METADATA = [
     desc: "REQUIRED for dc+sd-jwt. The Verifiable Credential Type — what " +
         "kind of credential this is, and the vct claim the issued SD-JWT VC " +
         "will carry." },
+  { name: "doctype", type: "string", dflt: "",
+    desc: "REQUIRED for mso_mdoc (OpenID4VCI 1.0 Appendix A.2). The ISO/IEC " +
+        "18013-5 document type, such as org.iso.18013.5.1.mDL for a mobile " +
+        "driving licence." },
   { name: "scope", type: "string", dflt: "identity_credential",
     desc: "OPTIONAL. The OAuth 2.0 scope that asks the authorization server " +
         "for authorization to issue this credential." },
   { name: "cryptographic_binding_methods_supported", type: "array", dflt: "jwk",
+    formatDependent: true,
     desc: "OPTIONAL. How the credential can be bound to the holder's key. " +
         "jwk means the holder's public key goes in the credential's " +
-        "cnf claim." },
+        "cnf claim; did:jwk and did:key name it as the credentialSubject's " +
+        "DID; cose_key puts it in an mdoc's MSO. Defaults to what the " +
+        "format defines." },
   { name: "credential_signing_alg_values_supported", type: "array",
-   dflt: "RS256",
-    desc: "The algorithms the issuer will sign the credential with." },
+   dflt: "ES256", formatDependent: true,
+    desc: "The algorithms the issuer will sign the credential with, in the " +
+        "format's own identifiers: JOSE alg names for the JWT formats, " +
+        "Data Integrity cryptosuites (eddsa-rdfc-2022, ecdsa-rdfc-2019, " +
+        "bbs-2023, ...) or Linked Data proof types (Ed25519Signature2020, " +
+        "JsonWebSignature2020, ...) for ldp_vc, and COSE algorithm numbers " +
+        "(-7 is ES256) for mso_mdoc. Defaults to what the format " +
+        "defines." },
   { name: "proof_signing_alg_values_supported", type: "array",
    dflt: "ES256, RS256",
     desc: "From proof_types_supported.jwt: the algorithms the issuer accepts " +
-        "on the wallet's JWT proof of possession." }
+        "on the wallet's JWT proof of possession." },
+  { name: "proof_types_supported", type: "array", dflt: "jwt",
+    formatDependent: true,
+    desc: "OPTIONAL. The key proof types the issuer accepts (OID4VCI 1.0 " +
+        "section 8.2.1): jwt is a holder-signed proof of possession, " +
+        "attestation is a Key Attestation JWT vouching for the holder keys. " +
+        "The Credential Request uses the type chosen on step 2, defaulting " +
+        "to jwt." }
 ];
 
 var metadataClient = require("./metadata_client");
+// What each credential format allows, for the defaults below (#474).
+var vcFormats = require("./vc_formats");
 // The "-->not defined<--" marking is implemented once, for the OpenID Provider
 // half of the same pane; the OID4VCI half gets it from there so the two cannot
 // drift apart. (No cycle: op_metadata does not know about this module.)
@@ -173,6 +201,22 @@ function writeToLocalStorage() {
   log.debug("Leaving writeToLocalStorage().");
 }
 
+// A member's placeholder value. The format-dependent ones (binding method,
+// signing algorithms) follow the format, so a wallet that has not read an
+// issuer's metadata yet still shows a combination the format defines.
+function defaultValue(m, formatId) {
+  log.debug("Entering defaultValue(). " + m.name);
+  if (m.formatDependent) {
+    var d = vcFormats.metadataDefaults(formatId || "dc+sd-jwt");
+    if (d && d[m.name] !== undefined) {
+      log.debug("Leaving defaultValue(). From the format.");
+      return d[m.name];
+    }
+  }
+  log.debug("Leaving defaultValue().");
+  return m.dflt;
+}
+
 function loadFromLocalStorage() {
   log.debug("Entering loadFromLocalStorage().");
   VCI_METADATA.concat(VCI_CONFIG_METADATA).forEach(function (m) {
@@ -182,9 +226,70 @@ function loadFromLocalStorage() {
     } catch (e) {
       // No storage available in this context.
     }
-    setFieldValue(idFor(m.name), (v === null || v === undefined) ? m.dflt : v);
+    // `format` comes before the members that depend on it, so its field
+    // already holds this load's value when they are reached.
+    setFieldValue(idFor(m.name), (v === null || v === undefined) ?
+        defaultValue(m, fieldValue(idFor("format"))) : v);
   });
   log.debug("Leaving loadFromLocalStorage().");
+}
+
+// Every member back to its placeholder, the format-dependent ones for the
+// default format.
+function restoreDefaultFields() {
+  log.debug("Entering restoreDefaultFields().");
+  VCI_METADATA.concat(VCI_CONFIG_METADATA).forEach(function (m) {
+    setFieldValue(idFor(m.name), defaultValue(m, fieldValue(idFor("format"))));
+  });
+  log.debug("Leaving restoreDefaultFields().");
+}
+
+// The format field changed from `previous`: every format-dependent member
+// still holding previous's default, or nothing, takes the new format's. One
+// the user typed is theirs and is left alone. Answers the names changed.
+function onFormatChange(previous) {
+  log.debug("Entering onFormatChange(). from " + previous);
+  var now = fieldValue(idFor("format"));
+  var changed = [];
+  VCI_CONFIG_METADATA.forEach(function (m) {
+    if (!m.formatDependent) return;
+    var current = fieldValue(idFor(m.name)).trim();
+    var wasDefault = !current || current === defaultValue(m, previous) ||
+        current === m.dflt;
+    if (wasDefault && vcFormats.format(now)) {
+      setFieldValue(idFor(m.name), defaultValue(m, now));
+      changed.push(m.name);
+    }
+  });
+  // The members that IDENTIFY the credential (vct, doctype,
+  // credential_definition) and a built-in configuration id belong to one
+  // format. One still holding the previous format's built-in value, or
+  // nothing, takes the new format's, which may be nothing: an mdoc has no
+  // vct. A value typed by hand is left alone.
+  var before = vcFormats.builtInConfiguration(previous) || {};
+  var after = vcFormats.builtInConfiguration(now);
+  if (after) {
+    ["vct", "doctype", "credential_definition",
+     "credential_configuration_id"].forEach(function (name) {
+      var key = name === "credential_configuration_id" ? "id" : name;
+      var current = fieldValue(idFor(name)).trim();
+      var old = before[key] === undefined ? "" : toField(before[key]);
+      var dflt = (VCI_CONFIG_METADATA.filter(function (m) {
+        return m.name === name;
+      })[0] || {}).dflt;
+      // An empty id stays empty: the section names no credential yet.
+      if (name === "credential_configuration_id" ? current === old && old :
+          (!current || current === old || current === dflt)) {
+        var v = after[key] === undefined ? "" : toField(after[key]);
+        if (v !== current) {
+          setFieldValue(idFor(name), v);
+          changed.push(name);
+        }
+      }
+    });
+  }
+  log.debug("Leaving onFormatChange(). " + changed.join(", "));
+  return changed;
 }
 
 function clearFields() {
@@ -245,6 +350,10 @@ function populateFromMetadata(info, configId) {
     } else if (m.name === "proof_signing_alg_values_supported") {
       var jwtProof = (cfg.proof_types_supported || {}).jwt || {};
       v = toField(jwtProof.proof_signing_alg_values_supported);
+    } else if (m.name === "proof_types_supported") {
+      // The advertised key proof types are the KEYS of the object, not the
+      // object itself (each value is that type's own parameters).
+      v = toField(Object.keys(cfg.proof_types_supported || {}));
     } else {
       v = toField(cfg[m.name]);
     }
@@ -261,6 +370,34 @@ function populateFromMetadata(info, configId) {
   });
   log.debug("Leaving populateFromMetadata().");
   return id;
+}
+
+// Fill the credential-configuration half of the pane from one of the
+// built-in configurations (vc_formats.builtInConfiguration()), for a format
+// the issuer does not advertise or before any metadata has been retrieved.
+// The issuer-level half is left as it is. Answers the id, or "" for a format
+// with no built-in configuration.
+function populateFromBuiltIn(formatId) {
+  log.debug("Entering populateFromBuiltIn(). " + formatId);
+  var cfg = vcFormats.builtInConfiguration(formatId);
+  if (!cfg) {
+    log.debug("Leaving populateFromBuiltIn(). None.");
+    return "";
+  }
+  VCI_CONFIG_METADATA.forEach(function (m) {
+    var v = m.name === "credential_configuration_id" ? cfg.id :
+        (cfg[m.name] === undefined ? "" : toField(cfg[m.name]));
+    setFieldValue(idFor(m.name), v);
+    // Not an issuer's document, so nothing in it is "not defined" by one.
+    opMetadata.markNotDefined(idFor(m.name), false);
+    try {
+      localStorage.setItem(idFor(m.name), v);
+    } catch (e) {
+      // No storage available in this context.
+    }
+  });
+  log.debug("Leaving populateFromBuiltIn().");
+  return cfg.id;
 }
 
 // What the rest of the workflow needs to make a Credential Request, read back
@@ -291,5 +428,9 @@ module.exports = {
   clearFields: clearFields,
   clearStorage: clearStorage,
   populateFromMetadata: populateFromMetadata,
+  populateFromBuiltIn: populateFromBuiltIn,
+  defaultValue: defaultValue,
+  restoreDefaultFields: restoreDefaultFields,
+  onFormatChange: onFormatChange,
   currentRequestConfig: currentRequestConfig
 };

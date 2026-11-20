@@ -82,6 +82,14 @@ COPY common/data.js /usr/src/app/src
 # same reason: it is in common/ because api/server.js signs with it too, and
 # the ten bundles that require('./xmldsig') resolve it from src/.
 COPY common/xmldsig.js /usr/src/app/src
+# The configuration this image bakes in, held to its model BEFORE anything is
+# bundled (models/config/client_config.tsp). A misspelt key would otherwise
+# reach every page as an `undefined` nobody sees. client/build.js runs the
+# same check for the static and embedded builds; BOTH have to be kept in step.
+COPY common/model/ /usr/src/common/model/
+COPY common/model_config.js /usr/src/common/model_config.js
+COPY client/check_config.js /usr/src/app/check_config.js
+RUN CONFIG_FILE=${CONFIG_FILE} node check_config.js
 # The Kerberos codec, staged into src/ the same way and for the same reason:
 # kerberos_decoder.js requires('./krb5_describe.js'), which requires its siblings,
 # so browserify has to find them beside the bundle entry point. They live in
@@ -96,6 +104,13 @@ COPY common/krb5/ /usr/src/app/src/
 # grammar that disagrees with itself. client/build.js does the equivalent
 # staging for the static deployments; BOTH have to be kept in step.
 COPY common/spiffe/ /usr/src/app/src/
+# The central crypto module of #463 — crypto_bytes, hash_tools,
+# symmetric_crypto, pk_encryption, pqc, hbs and the facade beside them —
+# staged flat into src/ the same way: the bundles still require('./pqc') and
+# friends. The whole directory, because nearly every bundle reaches it through
+# jws.js, jose_jwe.js or key_material.js. client/build.js stages the same
+# directory for the static and embedded builds; BOTH have to be kept in step.
+COPY common/crypto/ /usr/src/app/src/
 RUN browserify src/jwks.js -o public/js/jwks.js --debug --standalone jwks -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/oauth2_oidc_1.js -o public/js/oauth2_oidc_1.js --debug --standalone oauth2_oidc_1 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/token_detail.js -o public/js/token_detail.js --debug --standalone token_detail -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
@@ -135,9 +150,15 @@ RUN browserify src/vc_presentation_2.js -o public/js/vc_presentation_2.js --debu
 # DID Tools: a general-purpose DID verifier, reached from the VC Tools pane on
 # every page of both VC workflows.
 RUN browserify src/did_tools.js -o public/js/did_tools.js --debug --standalone didtools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_barcodes_page.js -o public/js/vc_barcodes_page.js --debug --standalone vcbarcodespage -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_barcodes_qr.js -o public/js/vc_barcodes_qr.js --debug --standalone vcbarcodesqr -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/gordian_envelope_page.js -o public/js/gordian_envelope_page.js --debug --standalone gordianenvelopepage -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/acdc_page.js -o public/js/acdc_page.js --debug --standalone acdcpage -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_predicates_page.js -o public/js/vc_predicates_page.js --debug --standalone vcpredicatespage -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/webauthn_lab.js -o public/js/webauthn_lab.js --debug --standalone webauthnlab -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/webauthn_analyzer.js -o public/js/webauthn_analyzer.js --debug --standalone webauthnanalyzer -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/vc_presentation_3.js -o public/js/vc_presentation_3.js --debug --standalone vcpresentation3 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_verifier.js -o public/js/vc_verifier.js --debug --standalone vcverifier -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wsfed_request.js -o public/js/wsfed_request.js --debug --standalone wsfed_request -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wsfed_response.js -o public/js/wsfed_response.js --debug --standalone wsfed_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/kerberos_decoder.js -o public/js/kerberos_decoder.js --debug --standalone kerberos_decoder -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
@@ -212,7 +233,7 @@ RUN if [ "$COVERAGE" = "true" ]; then \
       npm install --no-save babelify babel-plugin-istanbul @babel/core nyc ; \
     fi
 RUN if [ "$COVERAGE" = "true" ]; then \
-      for entry in "jwks:jwks" "oauth2_oidc_1:oauth2_oidc_1" "token_detail:token_detail" "oauth2_oidc_2:oauth2_oidc_2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "encryption_tools:encryption_tools" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "saml_authnrequest:saml_authnrequest" "saml_response_decoder:saml_response_decoder" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_request:wsfed_request" "wsfed_response:wsfed_response" "webauthn_lab:webauthnlab" "webauthn_analyzer:webauthnanalyzer" "kerberos_decoder:kerberos_decoder" "kerberos:kerberos" "kerberos_tgs:kerberos_tgs" "kerberos_ap:kerberos_ap" "kerberos_delegation:kerberos_delegation" "spnego:spnego" "ldap:ldap" "pki:pki" "scim:scim" "spiffe:spiffe" "ssf:ssf" "xacml:xacml" "smartcard:smartcard" "gnap:gnap" ; do \
+      for entry in "jwks:jwks" "oauth2_oidc_1:oauth2_oidc_1" "token_detail:token_detail" "oauth2_oidc_2:oauth2_oidc_2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "encryption_tools:encryption_tools" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "saml_authnrequest:saml_authnrequest" "saml_response_decoder:saml_response_decoder" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "vc_verifier:vcverifier" "did_tools:didtools" "vc_barcodes_page:vcbarcodespage" "vc_barcodes_qr:vcbarcodesqr" "wsfed_request:wsfed_request" "wsfed_response:wsfed_response" "webauthn_lab:webauthnlab" "webauthn_analyzer:webauthnanalyzer" "kerberos_decoder:kerberos_decoder" "kerberos:kerberos" "kerberos_tgs:kerberos_tgs" "kerberos_ap:kerberos_ap" "kerberos_delegation:kerberos_delegation" "spnego:spnego" "ldap:ldap" "pki:pki" "scim:scim" "spiffe:spiffe" "ssf:ssf" "xacml:xacml" "smartcard:smartcard" "gnap:gnap" "gordian_envelope_page:gordianenvelopepage" "acdc_page:acdcpage" "vc_predicates_page:vcpredicatespage" ; do \
         src_name="${entry%%:*}" ; \
         standalone="${entry##*:}" ; \
         browserify src/${src_name}.js -o public/js/${src_name}.js --debug --standalone ${standalone} -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ] -t [ babelify --plugins [ istanbul ] ] && \

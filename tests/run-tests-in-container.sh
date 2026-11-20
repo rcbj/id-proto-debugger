@@ -191,7 +191,7 @@ init()
   # krb5_mit_client.js has no page and no relay; `kinit` opens the socket in
   # the test's own process, so it reads KRB5_TEST_KDC_HOST and run-report.js
   # defaults THAT to localhost, which is right on a host launcher
-  # (local-tests.yml is host-networked, so the mock's port 88 is the host's).
+  # (keycloak-tests.yml is host-networked, so the mock's port 88 is the host's).
   # Here it is not: nothing listens on 88 in this
   # container, and `kinit` would answer `Cannot contact any KDC for realm
   # EXAMPLE.COM` — a message naming neither the variable nor the stack.
@@ -372,10 +372,16 @@ init()
     https://client:*|http://client:*)
       local shib_default="http://shibboleth-idp:8080/idp"
       SHIBBOLETH_IDP_URL="${SHIBBOLETH_IDP_URL:-${shib_default}}"
+      # The volume the side-car reads SP metadata from (#425): the browser
+      # job and the peers test register the debugger by writing its SAML 1.1
+      # SP metadata here.
+      local shib_sp_dir="/shibboleth-sp-metadata"
+      SHIBBOLETH_SP_METADATA_DIR="${SHIBBOLETH_SP_METADATA_DIR:-${shib_sp_dir}}"
       ;;
   esac
   SHIBBOLETH_IDP_URL="${SHIBBOLETH_IDP_URL:-}"
-  export SHIBBOLETH_IDP_URL
+  SHIBBOLETH_SP_METADATA_DIR="${SHIBBOLETH_SP_METADATA_DIR:-}"
+  export SHIBBOLETH_IDP_URL SHIBBOLETH_SP_METADATA_DIR
   # WHICH SERVICES THE LAUNCHER STARTED. ./docker-run-tests.sh's focused modes
   # (--saml-only=sts, --wsfed-only, --federation-only, ...) bring up only part
   # of the stack and say which part here; unset means the whole stack, which
@@ -395,6 +401,7 @@ init()
     if ! stackHas shibboleth-idp;
     then
       SHIBBOLETH_IDP_URL=""
+      SHIBBOLETH_SP_METADATA_DIR=""
     fi
   fi
   # THE MOCK STS'S BASE, as THIS container reaches it. The compose name on
@@ -507,7 +514,7 @@ init()
         echo "ERROR: the mock STS in this stack has no RFC 9700 trust realm," >&2
         echo "so the five RFC 9700 flow jobs cannot run. The likeliest cause" >&2
         echo "is a 401 — mintAdminApiToken() above having minted nothing. See" >&2
-        echo "docs/rfc9700.md. The run stops." >&2
+        echo "docs/v0.9.5/rfc9700.md. The run stops." >&2
         exit 1
       fi
       ;;

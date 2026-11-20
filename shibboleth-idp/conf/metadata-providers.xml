@@ -90,4 +90,17 @@
         xsi:type="FilesystemMetadataProvider"
         metadataFile="%{idp.home}/metadata/debugger-saml11-sp.xml" />
 
+    <!--
+    The debugger's own SP metadata, exactly as its SAML request page builds
+    it, written per run by tests/saml11_sso.js into the volume mounted at
+    metadata/sp. The file name is the lower-case hex SHA-1 of the entityID
+    plus .xml, which is how this provider finds it. Each run uses an
+    entityID of its own, so nothing a previous run left (or a lookup that
+    missed) is in the way.
+    -->
+    <MetadataProvider id="DebuggerDynamic"
+        xsi:type="LocalDynamicMetadataProvider"
+        sourceDirectory="%{idp.home}/metadata/sp"
+        negativeLookupCacheDuration="PT1S" />
+
 </MetadataProvider>

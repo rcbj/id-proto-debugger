@@ -5,7 +5,7 @@
 //
 // Renamed from wsfed_tools.js: this page BUILDS AND SENDS the sign-in request,
 // which is what saml_request.html is called for the same reason. The name
-// wsfed_tools survives nowhere — see docs/wsfed.md.
+// wsfed_tools survives nowhere — see docs/v0.9.5/wsfed.md.
 //
 // WS-Federation Test Tools — configuration page for the WS-Federation Passive
 // Requestor Profile. Loads/parses IdP federation metadata, builds the passive
@@ -28,7 +28,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
 // The post-quantum SignatureMethods and the bridge to their engines.
-// See docs/xmldsig-pqc.md.
+// See docs/v0.9.5/xmldsig-pqc.md.
 var xdPqc = require("./xmldsig_pqc");
 var pqc = require("./pqc");
 var hbs = require("./hbs");
@@ -117,7 +117,10 @@ function persistedEls() {
 // written before. wsfed_signer_cert is deliberately NOT in this list: it is the
 // IdP's signing certificate, someone else's public credential, not part of this
 // key pair — the counterpart of wst_enc_cert on the WS-Trust page.
-var KEYPAIR_FIELDS = ['wsfed_rp_private_key', 'wsfed_rp_cert'];
+// The model's (models/storage/, class `keypair`), not a list typed here:
+// the fields this page's save checkbox gates, as field ids.
+var KEYPAIR_FIELDS = require("./secret_storage")
+  .keyPairKeys(STORE_PREFIX + 'wsfed_save_keypair', STORE_PREFIX);
 
 function keyPairMayBeStored() {
   log.debug("Entering keyPairMayBeStored().");
@@ -938,7 +941,7 @@ function setReturnLink() {
 
 window.onload = function () {
   // The sixteen post-quantum SignatureMethods, from the registry. See
-  // client/src/xmldsig_pqc.js and docs/xmldsig-pqc.md.
+  // client/src/xmldsig_pqc.js and docs/v0.9.5/xmldsig-pqc.md.
   xdPqc.appendSignatureOptions(document.getElementById('wsfed_sig_alg'),
       xd.SIG_METHODS, xd.PQ_SIG_URIS);
   log.debug('Entering onload().');

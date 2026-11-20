@@ -1,0 +1,418 @@
+{
+  "family": "otp",
+  "about": "POST /otp/verify and GET /otp/limits. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md). Every well-formed request names its verifier as otp.invalid, which RFC 6761 guarantees never resolves, so it ends in the same 502 on any machine and never reaches YubiCloud.",
+  "cases": [
+    {
+      "name": "limits: the protocol and the five servers",
+      "method": "GET",
+      "path": "/otp/limits",
+      "expect": {
+        "status": 200,
+        "body": {
+          "maxBodyBytes": 2048,
+          "method": "GET",
+          "defaultVerifier": "https://api.yubico.com/wsapi/2.0/verify",
+          "servers": [
+            {
+              "server": 1,
+              "host": "api.yubico.com"
+            },
+            {
+              "server": 2,
+              "host": "api2.yubico.com"
+            },
+            {
+              "server": 3,
+              "host": "api3.yubico.com"
+            },
+            {
+              "server": 4,
+              "host": "api4.yubico.com"
+            },
+            {
+              "server": 5,
+              "host": "api5.yubico.com"
+            }
+          ],
+          "note": "The API key stays in the browser. This service sends, as an HTTP GET, a request the page already signed."
+        }
+      }
+    },
+    {
+      "name": "verify: an empty body is refused for its form",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The validation body is a form."
+        }
+      }
+    },
+    {
+      "name": "verify: a form that is a number",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": 5,
+        "verifier": "https://otp.invalid/wsapi/2.0/verify"
+      },
+      "changed": "The model types body as a string and refuses anything else naming the member. Until then otp_verify.js refused it with the sentence for a missing form.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "The validation body is a form."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `body` must be a JSON string. GET /api-docs describes what otpVerify takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "verify: a form with a line break",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1\notp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The validation body has a line break."
+        }
+      }
+    },
+    {
+      "name": "verify: a form past the size cap",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The validation body is longer than 2048 bytes."
+        }
+      }
+    },
+    {
+      "name": "verify: a body that is not a form",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "novalue",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The validation body is not a form."
+        }
+      }
+    },
+    {
+      "name": "verify: a form with an unknown field",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=&extra=1",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The validation body has an unknown field."
+        }
+      }
+    },
+    {
+      "name": "verify: a client id that is not digits",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=abc&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The client id is digits."
+        }
+      }
+    },
+    {
+      "name": "verify: an OTP that is not modhex",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A Yubico OTP is 32 to 48 modhex characters. The current form is 44."
+        }
+      }
+    },
+    {
+      "name": "verify: a nonce that is too short",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abc&h=aGVsbG8gd29ybGQ=",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A validation nonce is 16 to 40 letters and digits."
+        }
+      }
+    },
+    {
+      "name": "verify: a signature that is not base64",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=!!!",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The signature is base64."
+        }
+      }
+    },
+    {
+      "name": "verify: a verifier that is only spaces",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": "   "
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The verifier URL is empty."
+        }
+      }
+    },
+    {
+      "name": "verify: a verifier that is not a URL",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": "not a url"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The verifier URL is not a URL."
+        }
+      }
+    },
+    {
+      "name": "verify: a verifier that is not https",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": "http://otp.invalid/wsapi/2.0/verify"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The verifier URL is https."
+        }
+      }
+    },
+    {
+      "name": "verify: a verifier with userinfo",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": "https://u:p@otp.invalid/wsapi/2.0/verify"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The verifier URL has no userinfo."
+        }
+      }
+    },
+    {
+      "name": "verify: a verifier with a query string",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify?x=1"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The verifier URL has no query string."
+        }
+      }
+    },
+    {
+      "name": "verify: a verifier path with ..",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": "https://otp.invalid/a/../verify"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The verifier path must not contain '..'."
+        }
+      }
+    },
+    {
+      "name": "verify: a verifier that is a number",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": 5
+      },
+      "changed": "verifier is a string or null in the model. Until then a number was stringified and refused as not a URL.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "The verifier URL is not a URL."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `verifier` must be a JSON string or null. GET /api-docs describes what otpVerify takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "verify: a server outside 1 to 5",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "server": 9
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The YubiCloud server is 1 to 5."
+        }
+      }
+    },
+    {
+      "name": "verify: a server that is not a number",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "server": "two"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The YubiCloud server is 1 to 5."
+        }
+      }
+    },
+    {
+      "name": "verify: an sslValidate that is a number",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify",
+        "sslValidate": 0
+      },
+      "changed": "sslValidate is a boolean, a string or null in the model. Until then a 0 was read as 'not false', so certificate verification stayed on and the request went out.",
+      "before": {
+        "status": 502,
+        "body": {
+          "error": "The verifier could not be reached: getaddrinfo ENOTFOUND otp.invalid",
+          "code": "ENOTFOUND"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `sslValidate` must be a JSON boolean or a JSON string or null. GET /api-docs describes what otpVerify takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "verify: a well-formed request reaches the network (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify",
+        "sslValidate": false
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "The verifier could not be reached: getaddrinfo ENOTFOUND otp.invalid",
+          "code": "ENOTFOUND"
+        }
+      }
+    },
+    {
+      "name": "verify: a well-formed request with its HTTP trace",
+      "method": "POST",
+      "path": "/otp/verify",
+      "body": {
+        "body": "id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+        "verifier": "https://otp.invalid/wsapi/2.0/verify",
+        "http_trace": true
+      },
+      "volatile": [
+        "http_exchange.timing.totalMs",
+        "http_exchange.request.headers.User-Agent"
+      ],
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "The verifier could not be reached: getaddrinfo ENOTFOUND otp.invalid",
+          "code": "ENOTFOUND",
+          "http_exchange": {
+            "request": {
+              "method": "GET",
+              "url": "https://otp.invalid/wsapi/2.0/verify?id=1&otp=ccccccccccccbdefghijklnrtuvcbdefghijklnrtuvc&nonce=abcdef0123456789abcd&h=aGVsbG8gd29ybGQ=",
+              "headers": {
+                "User-Agent": "Identity Protocol Debugger/0.9.5.20261117040318"
+              },
+              "body": ""
+            },
+            "response": null,
+            "timing": {
+              "totalMs": 4
+            },
+            "error": "getaddrinfo ENOTFOUND otp.invalid"
+          }
+        }
+      }
+    }
+  ]
+}

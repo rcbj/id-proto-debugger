@@ -38,7 +38,21 @@ var log = bunyan.createLogger({
 });
 
 var metadataClient = require("./metadata_client");
+// Digests by crypto_provider.js (#463): pure JS, on every deployment.
+var provider = require("./crypto_provider");
 var vciMetadata = require("./vci_metadata");
+var mdoc = require("./mdoc");
+// Which proofs make a JSON object an ldp_vc, and which of them the holder
+// derives a presentation from (#475).
+var vcFormats = require("./vc_formats");
+// W3C VC-JOSE-COSE: vc+jwt, vc+sd-jwt and vc+cose (#477).
+var vcJoseCose = require("./vc_jose_cose");
+// JSON Web Proofs and SD-CWT, both drafts (#478).
+var jwpLib = require("./jwp");
+var sdCwt = require("./sd_cwt");
+// AnonCreds, held as a bundle with its schema and credential definition
+// (#479).
+var anoncredsWallet = require("./anoncreds_wallet");
 
 var KEYS = {
   // "active" while the workflow is driving oauth2_oidc_1.html /
@@ -1358,7 +1372,10 @@ function storedRequestConfig() {
     credentialConfigurationId: v("credential_configuration_id"),
     format: v("format"),
     vct: v("vct"),
-    proofAlgs: v("proof_signing_alg_values_supported")
+    proofAlgs: v("proof_signing_alg_values_supported"),
+    // The key proof types the issuer advertises (OID4VCI 1.0 section 8.2.1),
+    // which step 2 chooses among; empty means jwt, the universal default.
+    proofTypes: v("proof_types_supported")
   };
 }
 
@@ -1453,6 +1470,29 @@ function parseSdJwt(serialized) {
 var FORMAT_SD_JWT = "dc+sd-jwt";
 var FORMAT_JWT_VC_JSON = "jwt_vc_json";
 var FORMAT_LDP_VC = "ldp_vc";
+// ISO/IEC 18013-5 mdoc: base64url CBOR, as OpenID4VCI 1.0 Appendix A.2
+// delivers it. See mdoc.js.
+var FORMAT_MSO_MDOC = "mso_mdoc";
+// W3C VC-JOSE-COSE (#477). Not OpenID4VCI 1.0 identifiers — that
+// specification names none for these — but the media types' own names.
+var FORMAT_VC_JWT = vcJoseCose.FORMAT_VC_JWT;
+var FORMAT_VC_SD_JWT = vcJoseCose.FORMAT_VC_SD_JWT;
+var FORMAT_VC_COSE = vcJoseCose.FORMAT_VC_COSE;
+var JOSE_COSE_FORMATS = [FORMAT_VC_JWT, FORMAT_VC_SD_JWT, FORMAT_VC_COSE];
+
+// JPT (draft-ietf-jose-json-proof-token-15) and SD-CWT
+// (draft-ietf-spice-sd-cwt-09) (#478). OpenID4VCI 1.0 and OpenID4VP 1.0
+// name neither, so they go by their media types' names here.
+var FORMAT_JPT = "jpt";
+var FORMAT_SD_CWT = "sd-cwt";
+// AnonCreds (#479): no OpenID4VCI / OpenID4VP identifier exists either.
+var FORMAT_ANONCREDS = anoncredsWallet.FORMAT;
+
+function isJoseCose(format) {
+  log.debug("Entering isJoseCose().");
+  log.debug("Leaving isJoseCose().");
+  return JOSE_COSE_FORMATS.indexOf(format) !== -1;
+}
 
 // Which format some stored bytes are.
 //
@@ -1468,19 +1508,28 @@ function credentialFormat(serialized) {
   // "{" — which neither of the others can.
   if (serialized && typeof serialized === "object") {
     log.debug("Leaving credentialFormat().");
-    return (serialized.proof &&
-            serialized.proof.type === "DataIntegrityProof") ?
-            FORMAT_LDP_VC : "";
+    return vcFormats.isLdpSecured(serialized) ? FORMAT_LDP_VC : "";
   }
   var raw = String(serialized || "").trim();
   if (!raw) {
     log.debug("Leaving credentialFormat().");
     return "";
   }
+  // A VC-JOSE-COSE credential first: a W3C vc+sd-jwt has tildes too, and
+  // only its v2 @context (and the absence of vct) tells it from a dc+sd-jwt.
+  var joseCose = vcJoseCose.detect(raw);
+  if (joseCose && joseCose.kind === "vc") {
+    log.debug("Leaving credentialFormat(). " + joseCose.format);
+    return joseCose.format;
+  }
+  if (anoncredsWallet.looksLikeBundle(raw)) {
+    log.debug("Leaving credentialFormat(). anoncreds.");
+    return FORMAT_ANONCREDS;
+  }
   if (raw.charAt(0) === "{") {
     try {
       var doc = JSON.parse(raw);
-      if (doc && doc.proof && doc.proof.type === "DataIntegrityProof") {
+      if (vcFormats.isLdpSecured(doc)) {
         log.debug("Leaving credentialFormat().");
         return FORMAT_LDP_VC;
       }
@@ -1491,9 +1540,24 @@ function credentialFormat(serialized) {
     log.debug("Leaving credentialFormat().");
     return "";
   }
+  // A JPT has dots and tildes too: its header's alg is a JWP algorithm.
+  if (jwpLib.looksLikeJwp(raw)) {
+    log.debug("Leaving credentialFormat(). jpt.");
+    return FORMAT_JPT;
+  }
   if (raw.indexOf("~") >= 0) {
     log.debug("Leaving credentialFormat().");
     return FORMAT_SD_JWT;
+  }
+  // Base64url CBOR is an mdoc or an SD-CWT; its typ says which.
+  if (raw.indexOf(".") === -1 && sdCwt.looksLikeSdCwt(raw)) {
+    log.debug("Leaving credentialFormat(). sd-cwt.");
+    return FORMAT_SD_CWT;
+  }
+  // No dots and no tildes: base64url CBOR, which only an mdoc is here.
+  if (raw.indexOf(".") === -1 && mdoc.looksLikeMdoc(raw)) {
+    log.debug("Leaving credentialFormat(). mso_mdoc.");
+    return FORMAT_MSO_MDOC;
   }
   if (raw.split(".").length === 3) {
     log.debug("Leaving credentialFormat().");
@@ -1515,17 +1579,143 @@ function parseLdpVc(serialized) {
   var doc = (serialized && typeof serialized === "object")
     ? serialized : JSON.parse(String(serialized));
   var subject = doc.credentialSubject || {};
-  log.debug("Leaving parseLdpVc().");
+  // A proof SET is several proofs; the first one this wallet recognises is
+  // the one that decides how the credential is presented.
+  var proof = [].concat(doc.proof || []).filter(function (p) {
+    return vcFormats.isLdpSecured({ proof: p });
+  })[0] || {};
+  var suite = vcFormats.ldpSuiteOf(proof);
+  log.debug("Leaving parseLdpVc(). " + suite);
   return {
     serialized: typeof serialized === "string" ?
         serialized : JSON.stringify(doc),
     document: doc,
-    header: { cryptosuite: (doc.proof || {}).cryptosuite, type: (doc.proof ||
-             {}).type },
+    header: { cryptosuite: proof.cryptosuite, type: proof.type },
+    // The cryptosuite of a DataIntegrityProof, or the proof type of a legacy
+    // one, and whether the holder derives what it presents from it.
+    ldpSuite: suite,
+    ldpSelective: vcFormats.isSelectiveLdpSuite(suite),
     payload: doc,
-    signature: (doc.proof || {}).proofValue || "",
+    signature: proof.proofValue || proof.jws || "",
     credentialSubject: subject,
     disclosures: [],
+    kbJwt: ""
+  };
+}
+
+// An mdoc, parsed into the same shape as the other three. Each issued
+// element is a row the holder can select, keyed "namespace/element" (an
+// element identifier is only unique within its namespace). The device key
+// the MSO names is surfaced as payload.cnf.jwk, which is where every other
+// part of the wallet looks for the key a credential is bound to.
+// A JPT as the wallet holds it, issued: one row per payload slot, named by
+// the Issuer Header's claims array. The holder presentation key (hpk) is
+// the binding, so it is cnf here for the panes that read one.
+function parseJpt(serialized) {
+  log.debug("Entering parseJpt().");
+  var jwp = jwpLib.parse(String(serialized).trim());
+  var h = jwp.issuerHeader.value;
+  var names = Array.isArray(h.claims) ? h.claims : [];
+  var claims = {};
+  try {
+    claims = jwpLib.claimsOf(jwp);
+  } catch (e) {
+    log.debug("parseJpt(): " + e.message);
+  }
+  var payload = Object.assign({}, claims);
+  if (h.hpk) payload.cnf = { jwk: h.hpk };
+  if (h.iss && payload.iss === undefined) payload.iss = h.iss;
+  log.debug("Leaving parseJpt().");
+  return {
+    serialized: String(serialized).trim(), jwp: jwp, header: h,
+    payload: payload, signature: "", credentialSubject: {},
+    claimsFlat: claims,
+    disclosures: (jwp.payloads || []).map(function (p, i) {
+      var name = names[i] !== undefined ? String(names[i]) : "slot " + i;
+      return { encoded: String(i), name: name, value: claims[name] };
+    }),
+    kbJwt: ""
+  };
+}
+
+// An SD-CWT as the wallet holds it (base64url), issued: every disclosure a
+// row, the claims restored in holder mode, the cnf COSE_Key as a JWK.
+function parseSdCwtCredential(serialized) {
+  log.debug("Entering parseSdCwtCredential().");
+  var c = sdCwt.confirm(String(serialized).trim(), {});
+  var plain = sdCwt.toPlainClaims(c.claims || new Map());
+  var cnf = (((c.parsed || {}).sdCwt || {}).payload || new Map())
+    .get(sdCwt.CLAIMS.cnf);
+  var key = cnf instanceof Map ? cnf.get(1) : null;
+  var payload = Object.assign({}, plain);
+  delete payload.cnf;
+  if (key instanceof Map) payload.cnf = { jwk: sdCwt.coseKeyToJwk(key) };
+  var flat = {};
+  Object.keys(plain).forEach(function (k) {
+    if (["iss", "sub", "aud", "exp", "nbf", "iat", "cti", "cnf",
+         "cnonce"].indexOf(k) === -1) flat[k] = plain[k];
+  });
+  var prot = ((c.parsed || {}).sdCwt || {}).protected || new Map();
+  log.debug("Leaving parseSdCwtCredential().");
+  return {
+    serialized: String(serialized).trim(), sdCwt: c,
+    header: { alg: sdCwt.SIG_NAMES[String(prot.get(1))] || prot.get(1),
+              typ: prot.get(16) },
+    payload: payload, signature: "", credentialSubject: {},
+    claimsFlat: flat,
+    confirmErrors: c.errors || [],
+    disclosures: (c.disclosures || []).filter(function (r) {
+      return r.kind !== "decoy";
+    }).map(function (r) {
+      return { encoded: r.hash, name: r.kind === "claim" ? String(r.key) :
+                 "(array element)", value: r.value,
+               arrayElement: r.kind === "element" };
+    }),
+    kbJwt: ""
+  };
+}
+
+// An AnonCreds credential as held (a bundle): one row per attribute, named
+// as the credential spells it, its value the raw one the issuer signed the
+// encoding of.
+function parseAnoncreds(serialized) {
+  log.debug("Entering parseAnoncreds().");
+  var b = anoncredsWallet.parseBundle(serialized);
+  var values = b.credential.values || {};
+  var flat = {};
+  Object.keys(values).forEach(function (k) {
+    flat[k] = values[k].raw;
+  });
+  log.debug("Leaving parseAnoncreds().");
+  return {
+    serialized: String(serialized).trim(), anoncreds: b,
+    header: { alg: "CL", schema_id: b.schemaId, cred_def_id: b.credDefId },
+    payload: { iss: (b.credentialDefinition || {}).issuerId || "" },
+    signature: "", credentialSubject: {}, claimsFlat: flat,
+    disclosures: Object.keys(values).map(function (k) {
+      return { encoded: k, name: k, value: values[k].raw };
+    }),
+    kbJwt: ""
+  };
+}
+
+function parseMdoc(serialized) {
+  log.debug("Entering parseMdoc().");
+  var parsed = mdoc.parseIssuerSigned(serialized);
+  log.debug("Leaving parseMdoc().");
+  return {
+    serialized: String(serialized).trim(),
+    mdoc: parsed,
+    header: { alg: parsed.alg, docType: parsed.docType },
+    payload: { docType: parsed.docType, validity: parsed.validity,
+               cnf: parsed.deviceJwk ? { jwk: parsed.deviceJwk } : undefined },
+    signature: "",
+    credentialSubject: {},
+    disclosures: parsed.items.map(function (it) {
+      return { encoded: it.namespace + "/" + it.elementIdentifier,
+               name: it.elementIdentifier, value: it.value,
+               namespace: it.namespace };
+    }),
     kbJwt: ""
   };
 }
@@ -1574,6 +1764,19 @@ function claimsOf(parsed) {
     log.debug("Leaving claimsOf().");
     return out;
   }
+  if (parsed.claimsFlat) {
+    log.debug("Leaving claimsOf(). " + parsed.format);
+    return Object.assign({}, parsed.claimsFlat);
+  }
+  if (isJoseCose(parsed.format)) {
+    var csubject = [].concat(((parsed.document || {}).credentialSubject) ||
+                             [])[0] || {};
+    Object.keys(csubject).forEach(function (name) {
+      if (name !== "id") out[name] = csubject[name];
+    });
+    log.debug("Leaving claimsOf(). " + parsed.format);
+    return out;
+  }
   if (parsed.format === FORMAT_JWT_VC_JSON || parsed.format === FORMAT_LDP_VC) {
     var subject = parsed.credentialSubject || {};
     Object.keys(subject).forEach(function (name) {
@@ -1581,6 +1784,10 @@ function claimsOf(parsed) {
     });
     log.debug("Leaving claimsOf().");
     return out;
+  }
+  if (parsed.format === FORMAT_MSO_MDOC) {
+    log.debug("Leaving claimsOf(). mso_mdoc.");
+    return mdoc.claimsOf(parsed.mdoc);
   }
   (parsed.disclosures || []).forEach(function (d) {
     if (d && d.name != null) out[d.name] = d.value;
@@ -1593,26 +1800,43 @@ function claimsOf(parsed) {
 function parseCredential(serialized) {
   log.debug("Entering parseCredential().");
   var format = credentialFormat(serialized);
-  if (!format) throw new Error("This does not look like an SD-JWT VC or a " +
-      "jwt_vc_json credential.");
-  var parsed = format === FORMAT_LDP_VC ? parseLdpVc(serialized)
+  if (!format) throw new Error("This does not look like an SD-JWT VC, a " +
+      "jwt_vc_json, an ldp_vc or an ISO mdoc credential.");
+  var parsed = format === FORMAT_ANONCREDS ? parseAnoncreds(serialized)
+             : format === FORMAT_JPT ? parseJpt(serialized)
+             : format === FORMAT_SD_CWT ? parseSdCwtCredential(serialized)
+             : isJoseCose(format) ? vcJoseCose.parse(serialized)
+             : format === FORMAT_LDP_VC ? parseLdpVc(serialized)
              : format === FORMAT_JWT_VC_JSON ? parseJwtVc(serialized)
+             : format === FORMAT_MSO_MDOC ? parseMdoc(serialized)
              : parseSdJwt(serialized);
   parsed.format = format;
   parsed.claims = claimsOf(parsed);
   // ldp_vc IS selectively disclosable — more so than SD-JWT, and unlinkably —
   // but over canonical statements rather than Disclosures.
+  // Which ldp_vc depends on its proof: a bbs-2023 (or ecdsa-sd-2023)
+  // credential is derived from, an eddsa-rdfc-2022 one is presented whole.
   parsed.selectivelyDisclosable = format === FORMAT_SD_JWT ||
-      format === FORMAT_LDP_VC;
+      format === FORMAT_VC_SD_JWT || format === FORMAT_JPT ||
+      format === FORMAT_ANONCREDS ||
+      format === FORMAT_SD_CWT ||
+      (format === FORMAT_LDP_VC && parsed.ldpSelective) ||
+      format === FORMAT_MSO_MDOC;
   // What the credential says it IS: a vct for an SD-JWT VC, a type array for a
   // W3C VC. Both are surfaced so a caller can name the credential without
   // knowing which format it holds.
   parsed.vct = (parsed.payload || {}).vct || "";
+  // An mdoc names its type by docType, which plays vct's part.
+  parsed.docType = format === FORMAT_MSO_MDOC ? parsed.mdoc.docType : "";
   parsed.types = format === FORMAT_JWT_VC_JSON ? [].concat((parsed.vc ||
       {}).type || [])
-               : format === FORMAT_LDP_VC ? [].concat((parsed.document ||
-                   {}).type || [])
+               : format === FORMAT_LDP_VC || isJoseCose(format) ?
+                   [].concat((parsed.document || {}).type || [])
                : [];
+  if (isJoseCose(format)) {
+    parsed.credentialSubject = [].concat((parsed.document || {})
+      .credentialSubject || [])[0] || {};
+  }
   parsed.subject = (parsed.payload || {}).sub || (parsed.credentialSubject ||
       {}).id || "";
   log.debug("Leaving parseCredential(). format=" + format + ", " +
@@ -1628,14 +1852,15 @@ function credentialLabel(parsed) {
     log.debug("Leaving credentialLabel().");
     return "credential";
   }
-  if (parsed.format === FORMAT_JWT_VC_JSON || parsed.format === FORMAT_LDP_VC) {
+  if (parsed.format === FORMAT_JWT_VC_JSON || parsed.format === FORMAT_LDP_VC ||
+      isJoseCose(parsed.format)) {
     var types = (parsed.types ||
         []).filter(function (t) { return t !== "VerifiableCredential"; });
     log.debug("Leaving credentialLabel().");
     return types.length ? types.join(", ") : "Verifiable Credential";
   }
   log.debug("Leaving credentialLabel().");
-  return parsed.vct || "credential";
+  return parsed.vct || parsed.docType || "credential";
 }
 
 // --- holder binding, whichever way the format expresses it ------------------
@@ -1690,6 +1915,12 @@ function boundHolderJwk(parsed) {
     log.debug("Leaving boundHolderJwk().");
     return jwkFromDid((parsed.credentialSubject || {}).id);
   }
+  // A VC-JOSE-COSE credential is bound by cnf (section 4.1.3) when it has
+  // one, otherwise by the DID its subject is.
+  if (isJoseCose(parsed.format) && !((parsed.payload || {}).cnf || {}).jwk) {
+    log.debug("Leaving boundHolderJwk(). credentialSubject.id.");
+    return jwkFromDid((parsed.credentialSubject || {}).id);
+  }
   var cnf = (parsed.payload || {}).cnf;
   log.debug("Leaving boundHolderJwk().");
   return (cnf && cnf.jwk) || null;
@@ -1734,7 +1965,12 @@ function typeMemberName(parsed) {
 function validityWindowOf(parsed) {
   log.debug("Entering validityWindowOf().");
   var payload = (parsed && parsed.payload) || {};
-  if (parsed && parsed.format === FORMAT_LDP_VC) {
+  if (parsed && isJoseCose(parsed.format)) {
+    payload = Object.assign({}, parsed.document || {}, { nbf: payload.nbf,
+                                                        exp: payload.exp });
+  }
+  if (parsed && (parsed.format === FORMAT_LDP_VC ||
+      (isJoseCose(parsed.format) && !payload.exp && !payload.nbf))) {
     var from = payload.validFrom || payload.issuanceDate || "";
     var until = payload.validUntil || payload.expirationDate || "";
     log.debug("Leaving validityWindowOf(). ldp_vc: " + (from || "no start") +
@@ -1810,21 +2046,43 @@ function presentationReadiness() {
   // What a Verifier would be shown, said differently for the two formats
   // because the difference is the point: an SD-JWT offers a CHOICE of claims,
   // a jwt_vc_json offers all of them or nothing.
-  var offered = parsed.format === FORMAT_JWT_VC_JSON
+  var offered = parsed.format === FORMAT_VC_JWT ||
+      parsed.format === FORMAT_VC_COSE
+    ? "the " + credentialLabel(parsed) + " above (" + parsed.format +
+        ") — all " + Object.keys(parsed.claims).length + " of its claims, " +
+        "as an EnvelopedVerifiableCredential inside a presentation the " +
+        "holder signs"
+    : parsed.format === FORMAT_JWT_VC_JSON
     ? "the " + credentialLabel(parsed) + " above — all " +
         Object.keys(parsed.claims).length +
       " of its claims, because jwt_vc_json has no selective disclosure"
-    : parsed.format === FORMAT_LDP_VC
+    : parsed.format === FORMAT_LDP_VC && parsed.ldpSelective
       ? "the " + credentialLabel(parsed) +
-          " above (ldp_vc, bbs-2023) — you choose which statements " +
-        "go, and each presentation is a fresh proof that cannot be linked to the last"
+          " above (ldp_vc, " + parsed.ldpSuite + ") — you choose which " +
+        "claims go, and each presentation is a fresh proof that cannot " +
+        "be linked to the last"
+    : parsed.format === FORMAT_LDP_VC
+      ? "the " + credentialLabel(parsed) + " above (ldp_vc, " +
+        parsed.ldpSuite + ") — all " + Object.keys(parsed.claims).length +
+        " of its claims, because " + parsed.ldpSuite + " has no selective " +
+        "disclosure, inside a Verifiable Presentation the holder signs"
       : "the " + credentialLabel(parsed) + " above, with its " +
         parsed.disclosures.length + " selectively-disclosable claim(s)";
-  // ldp_vc needs no holder private key to present: the BBS derived proof IS the
-  // holder's act, and the credential names its subject by DID rather than by a
-  // cnf key the wallet must sign with. Gating it on a holder key would strand
-  // the user for a reason that does not apply to this format.
-  if (parsed.format === FORMAT_LDP_VC) {
+  // A selectively disclosable ldp_vc (bbs-2023) needs no holder private key
+  // to present: the BBS derived proof IS the holder's act, and the credential
+  // names its subject by DID rather than by a cnf key the wallet must sign
+  // with. Gating it on a holder key would strand the user for a reason that
+  // does not apply to it. Every other ldp_vc is presented whole inside a VP
+  // the holder signs, so it falls through to the holder-key checks below,
+  // exactly as a jwt_vc_json does.
+  // A BBS JPT, likewise: no holder key exists for it (JPA section 7.3.2).
+  if (parsed.format === FORMAT_JPT && (parsed.header || {}).alg === "BBS") {
+    log.debug("Leaving presentationReadiness(). BBS JPT, ready.");
+    return { ready: true, level: "vc-ok", message: "A Verifier would be " +
+             "offered " + offered + ", under a BBS presentation proof " +
+             "that needs no holder key." };
+  }
+  if (parsed.format === FORMAT_LDP_VC && parsed.ldpSelective) {
     log.debug("Leaving presentationReadiness(). ldp_vc, ready.");
     return { ready: true, level: "vc-ok",
             message: "A Verifier would be offered " + offered + "." };
@@ -1875,9 +2133,10 @@ function digestForDisclosure(encoded, sdAlg) {
   for (var i = 0; i < encoded.length; i++) { bytes[i] =
        encoded.charCodeAt(i) & 0xff; }
   log.debug("Leaving digestForDisclosure().");
-  return crypto.subtle.digest(webcrypto, bytes).then(function (buf) {
-    return metadataClient.bytesToB64u(buf);
-  });
+  return Promise.resolve(provider.digest(webcrypto, bytes))
+    .then(function (buf) {
+      return metadataClient.bytesToB64u(buf);
+    });
 }
 
 // Every _sd digest in the payload, at any nesting depth, plus the {"...": digest}
@@ -2009,6 +2268,14 @@ module.exports = {
   FORMAT_SD_JWT: FORMAT_SD_JWT,
   FORMAT_JWT_VC_JSON: FORMAT_JWT_VC_JSON,
   FORMAT_LDP_VC: FORMAT_LDP_VC,
+  FORMAT_VC_JWT: FORMAT_VC_JWT,
+  FORMAT_VC_SD_JWT: FORMAT_VC_SD_JWT,
+  FORMAT_VC_COSE: FORMAT_VC_COSE,
+  FORMAT_JPT: FORMAT_JPT,
+  FORMAT_SD_CWT: FORMAT_SD_CWT,
+  FORMAT_ANONCREDS: FORMAT_ANONCREDS,
+  isJoseCose: isJoseCose,
+  FORMAT_MSO_MDOC: FORMAT_MSO_MDOC,
   parseLdpVc: parseLdpVc,
   digestForDisclosure: digestForDisclosure,
   collectSdDigests: collectSdDigests,

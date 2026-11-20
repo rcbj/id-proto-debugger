@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 // SAML 1.1 HAS NO REQUEST MESSAGE, AND FIVE SETTINGS FOLLOW FROM THAT.
 //
-// The browser profiles (saml-profile-1.1 sections 4.1 and 4.2) are
+// The browser profiles (sstc-saml-bindings-1.1 sections 4.1.1 and 4.1.2) are
 // IDENTITY-PROVIDER-INITIATED. There is no `<samlp:AuthnRequest>`; what a real
 // SAML 1.1 service provider sends is Shibboleth's request profile — the query
 // parameters `providerId`, `shire`, `target` and `time`, as a GET. So:

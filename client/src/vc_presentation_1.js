@@ -30,6 +30,9 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
+var vpProtocols = require("./vp_protocols");
+var vpQuery = require("./vp_query");
+var x509 = require("./x509");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_1',
                                 level: appconfig.logLevel });
@@ -136,13 +139,27 @@ function clientIdentifier(clientId) {
                 "has to come in client_metadata."
     };
   }
+  if (prefix === "x509_hash" || prefix === "x509_san_dns") {
+    log.debug("Leaving clientIdentifier(). " + prefix + " prefix.");
+    return {
+      prefix: prefix, value: id.slice(colon + 1), signable: true,
+      note: prefix === "x509_hash" ?
+        "The Verifier is named by the SHA-256 of its own certificate, " +
+        "which the signed request carries in x5c. The wallet hashes that " +
+        "certificate, verifies the request with its key, and follows its " +
+        "chain to the trust anchor configured on step 0." :
+        "The Verifier is named by a DNS name its certificate certifies, " +
+        "carried in the signed request's x5c. The answer must go to that " +
+        "same host."
+    };
+  }
   log.debug("Leaving clientIdentifier(). prefix=" + prefix);
   return {
     prefix: prefix, value: id.slice(colon + 1), signable: true,
     note: "The prefix says how the wallet is meant to authenticate the " +
         "verifier and find its metadata. This " +
-          "workflow implements the pre-registered and redirect_uri " +
-              "cases; for " + prefix +
+          "workflow implements the pre-registered, redirect_uri, " +
+              "x509_hash and x509_san_dns cases; for " + prefix +
           " it shows what arrived without claiming to have validated it."
   };
 }
@@ -156,6 +173,10 @@ function adoptParams(params, source) {
     source: source,
     receivedAt: new Date().toISOString(),
     dcql: sdJwtVp.requestObjectValue(params, "dcql_query"),
+    // The OpenID4VP DRAFTS' query (DIF Presentation Exchange), removed in
+    // 1.0; read when there is no dcql_query (vp_query.js).
+    presentationDefinition: sdJwtVp.requestObjectValue(params,
+      "presentation_definition"),
     clientMetadata: sdJwtVp.requestObjectValue(params, "client_metadata"),
     signed: false,
     signatureVerdict: ""
@@ -166,13 +187,33 @@ function adoptParams(params, source) {
 
 // A request passed by reference: fetch the Request Object and, when it is a
 // signed JWT, verify it before believing a word of it.
-function fetchRequestObject(uri, clientId) {
-  log.debug("Entering fetchRequestObject(). uri=" + uri);
+function fetchRequestObject(uri, clientId, method) {
+  log.debug("Entering fetchRequestObject(). uri=" + uri + " method=" +
+            (method || "get"));
   status("vp_request_status", "Fetching the Request Object from " + uri + " …",
          "vc-pending");
+  var accept = "application/oauth-authz-req+jwt, application/jwt, " +
+               "application/json";
+  var init = { headers: { "Accept": accept } };
+  // request_uri_method=post (OpenID4VP 1.0 section 5.10): the wallet says
+  // what it can do, and sends a nonce the signed request must echo, so a
+  // Request Object made for some other wallet cannot be replayed at this one.
+  var walletNonce = "";
+  if (String(method || "").toLowerCase() === "post") {
+    walletNonce = vpProtocols.walletNonce();
+    init = {
+      method: "POST",
+      headers: { "Accept": accept,
+                 "Content-Type": "application/x-www-form-urlencoded" },
+      body: "wallet_metadata=" + encodeURIComponent(JSON.stringify(
+              vpProtocols.walletMetadata())) +
+            "&wallet_nonce=" + encodeURIComponent(walletNonce)
+    };
+  }
   log.debug("Leaving fetchRequestObject().");
-  return fetch(uri, { headers: { "Accept": "application/oauth-authz-req+jwt, " +
-               "application/jwt, application/json" } })
+  // Straight from the browser, or through the debugger's api when step 0
+  // says so (sd_jwt_vp.js verifierFetch()).
+  return sdJwtVp.verifierFetch(uri, init)
     .then(function (r) {
       if (!r.ok) throw new Error("the request_uri returned HTTP " + r.status +
           ".");
@@ -191,10 +232,18 @@ function fetchRequestObject(uri, clientId) {
         });
         adoptParams(params, "request_uri (signed Request Object)");
         request.signed = true;
+        request.outerClientId = clientId || "";
+        request.walletNonce = walletNonce;
+        request.requestUriMethod = walletNonce ? "post" : "get";
         request.requestObject = body;
         request.requestObjectHeader =
             metadataClient.b64uToJson(body.split(".")[0]);
         request.requestObjectPayload = payload;
+        var prefix = vpProtocols.clientIdPrefix(clientId ||
+            payload.client_id).prefix;
+        if (prefix === "x509_hash" || prefix === "x509_san_dns") {
+          return verifyX509Signature(body, clientId || payload.client_id);
+        }
         return verifyRequestSignature(body, clientId || payload.client_id);
       }
       // An unsigned Request Object is JSON (still allowed by reference).
@@ -211,6 +260,39 @@ function fetchRequestObject(uri, clientId) {
     });
 }
 
+// A Request Object whose Client Identifier is an x509 prefix: the key is the
+// leaf certificate's, the identity is the certificate's hash or DNS name, and
+// the trust is the chain up to the anchor configured on step 0.
+function verifyX509Signature(compact, clientId) {
+  log.debug("Entering verifyX509Signature().");
+  log.debug("Leaving verifyX509Signature().");
+  return vpProtocols.verifyX509Request({
+    compact: compact,
+    clientId: clientId,
+    responseTarget: vpProtocols.responseTarget(request.params),
+    trustAnchorPem: (sdJwtVc.get(sdJwtVp.KEYS.X509_TRUST_ANCHOR) || "")
+        .trim(),
+    verifyChain: x509.verifyChain
+  }).then(function (result) {
+    request.x509 = result;
+    var sig = result.checks.filter(function (c) {
+      return c.name === "signature";
+    })[0];
+    request.signatureValid = !!(sig && sig.ok);
+    request.signatureVerdict = result.checks.map(function (c) {
+      return (c.ok ? "OK " : "FAILED ") + c.name + " — " + c.detail;
+    }).join("\n");
+    log.debug("Leaving verifyX509Signature(). valid=" +
+              request.signatureValid);
+    return request;
+  }).catch(function (e) {
+    request.signatureValid = false;
+    request.signatureVerdict = "Could not be checked: " + e.message;
+    log.warn("the x509 Request Object could not be checked: " + e.message);
+    return request;
+  });
+}
+
 // The signature on a Request Object, against the keys this wallet is configured
 // to trust for the verifier. For a pre-registered client that configuration IS
 // the out-of-band knowledge OID4VP assumes.
@@ -225,7 +307,14 @@ function verifyRequestSignature(compact, clientId) {
     return Promise.resolve(request);
   }
   log.debug("Leaving verifyRequestSignature().");
-  return metadataClient.fetchJson(jwksUrl)
+  return sdJwtVp.verifierFetch(jwksUrl,
+      { headers: { "Accept": "application/json" } })
+    .then(function (r) {
+      if (!r.ok) {
+        throw new Error("the JWKS URL answered HTTP " + r.status + ".");
+      }
+      return r.json();
+    })
     .then(function (jwks) {
       return metadataClient.verifyJwsWithJwks(compact, jwks,
           "the Request Object");
@@ -267,65 +356,141 @@ function heldCredential() {
   }
 }
 
+// What the request asks for, against the credential in hand, in either
+// query language: one row per DCQL credential query or PE Input
+// Descriptor, each claim marked with what OpenID4VP 1.0 section 6.4.1 (or
+// PE's Input Evaluation) makes of it here, and the predicates below.
 function renderRequestedClaims() {
   log.debug("Entering renderRequestedClaims().");
-  var queries = sdJwtVp.dcqlCredentialQueries(request && request.dcql);
-  if (!queries.length) {
+  var held = heldCredential();
+  var planned = sdJwtVp.planForRequest(request, held && held.parsed);
+  var model = planned.model;
+  if (!model.items.length) {
     setHtml("vp_requested_table",
       '<tbody><tr><td>This request carries no <code>dcql_query</code>, so it ' +
           'does not say which credential ' +
       'or which claims it wants. OID4VP requires one (or a ' +
-          '<code>scope</code> standing for one).</td></tr></tbody>');
-    log.debug("Leaving renderRequestedClaims(). No DCQL.");
-    return;
-  }
-  var held = heldCredential();
-  var available = {};
-  if (held && held.parsed) {
-    // What the credential can answer with, whichever format it is: an SD-JWT's
-    // Disclosures plus its plain claims, or a jwt_vc_json's credentialSubject.
-    // parseCredential() reduces both to the same `claims` map, so this does not
-    // have to branch — and a jwt_vc_json, whose disclosures list is empty,
-    // would otherwise look like a credential that can answer nothing.
-    Object.keys(held.parsed.claims ||
-                {}).forEach(function (name) { available[name] = true; });
-    (held.parsed.disclosures || []).forEach(function (d) {
-      if (!d.error && d.name !== null) available[d.name] = true;
-    });
-    Object.keys(held.parsed.payload || {}).forEach(function (k) {
-      if (["_sd", "_sd_alg", "cnf", "vc"].indexOf(k) === -1) available[k] =
-          true;
-    });
+          '<code>scope</code> standing for one).' +
+      (model.errors.length && model.language ? " " +
+       esc(model.errors.join(" ")) : "") + '</td></tr></tbody>');
+    renderPredicates(planned);
+    log.debug("Leaving renderRequestedClaims(). No query.");
+    return planned;
   }
   var rows = "";
-  queries.forEach(function (q) {
-    var paths = sdJwtVp.dcqlClaimPaths(q);
-    var vcts = ((q.meta || {}).vct_values || []).join(", ");
-    var heldVct = held && held.parsed ? (held.parsed.payload || {}).vct : "";
+  model.items.forEach(function (item) {
+    var q = item.query || {};
+    // An mdoc query names its type by meta.doctype_value, which plays the
+    // part vct_values plays for an SD-JWT VC.
+    var vcts = ((q.meta || {}).vct_values ||
+                ((q.meta || {}).doctype_value ? [q.meta.doctype_value] :
+                 [])).join(", ");
+    var heldVct = held && held.parsed ? ((held.parsed.payload || {}).vct ||
+                                         held.parsed.docType || "") : "";
     var typeOk = !vcts || !heldVct || vcts.indexOf(heldVct) !== -1;
-    rows += "<tr><td>" + esc(q.id || "—") + "</td><td>" + esc(q.format || "—") +
-        "</td>" +
-            '<td class="' + (typeOk ? "vc-ok" : "vc-bad") + '">' + esc(vcts ||
-                "(any)") + "</td>" +
-            "<td>" + (sdJwtVp.requiresKeyBinding(q) ?
-                "required" : "not required") + "</td>" +
-            "<td>" + (paths.length
-              ? paths.map(function (p) {
-                  var have = !!available[p];
-                  return '<span class="' + (have ? "vc-ok" : "vc-bad") + '">' +
-                      esc(p) +
-                         (have ? "" : " (not in the credential you hold)") +
-                          "</span>";
-                }).join("<br>")
-              : "(no claims named — the whole credential)") + "</td></tr>";
+    var mine = planned.item === item ? planned.plan : null;
+    var claimRows = mine && mine.claims ? mine.claims.rows : [];
+    var cell = item.claims.length ? item.claims.map(function (c, i) {
+      var r = claimRows[i] || {};
+      var p = c.path.map(function (x) {
+        return x === null ? "*" : String(x);
+      }).join(".");
+      var ok = r.status === "available";
+      var why = !r.status ? "" : r.status === "available" ? "" :
+        r.status === "absent" ? " (not in the credential you hold)" :
+        " (" + r.status + ": " + r.reason + ")";
+      return '<span class="' + (ok ? "vc-ok" : "vc-bad") + '">' + esc(p) +
+        (c.values ? " = one of " + esc(JSON.stringify(c.values)) : "") +
+        esc(why) + "</span>";
+    }).join("<br>") : "(no claims named — the whole credential)";
+    if (item.claimSets) {
+      cell += "<br><em>claim_sets: " + esc(JSON.stringify(item.claimSets)) +
+        (mine && mine.claims ? " — " + esc(mine.claims.reason) : "") +
+        "</em>";
+    }
+    rows += "<tr><td>" + esc(item.id || "—") + "</td><td>" +
+      esc(item.formats.join(", ") || "—") + "</td>" +
+      '<td class="' + (typeOk ? "vc-ok" : "vc-bad") + '">' + esc(vcts ||
+        "(any)") + "</td>" +
+      "<td>" + (model.language === "dcql" ? (sdJwtVp.requiresKeyBinding(q) ?
+        "required" : "not required") : "(PE: by format)") + "</td>" +
+      "<td>" + cell + "</td></tr>";
   });
   setHtml("vp_requested_table",
-    "<thead><tr><th style='width:16%'>Query id</th><th " +
+    "<thead><tr><th style='width:16%'>" + (model.language === "pe" ?
+      "Input Descriptor" : "Query id") + "</th><th " +
         "style='width:12%'>Format</th>" +
     "<th style='width:22%'>vct wanted</th><th style='width:12%'>Holder " +
         "binding</th>" +
     "<th>Claims asked for</th></tr></thead><tbody>" + rows + "</tbody>");
+  setText("vp_query_language", model.language === "pe" ? model.label :
+    "DCQL (OpenID4VP 1.0 section 6)");
+  renderPredicates(planned);
   log.debug("Leaving renderRequestedClaims().");
+  return planned;
+}
+
+// The predicates the request asks to be PROVEN, and what is not revealed:
+// one row each, with how this credential proves it (or why it cannot).
+function renderPredicates(planned) {
+  log.debug("Entering renderPredicates().");
+  var plan = planned && planned.plan;
+  var item = planned && planned.item;
+  var ext = item && item.extension;
+  var notes = [];
+  if (ext && ext.note) notes.push(ext.note);
+  if (ext && ext.honoured) {
+    notes.push("Predicates come from the " + vpQuery.LABEL_EXT + ", " +
+               "honoured because the credential query lists " +
+               vpQuery.EXT_PREDICATES + " in " + vpQuery.EXT_CRIT + ".");
+  }
+  if (planned && planned.model.language === "pe") {
+    notes.push("Predicates come from DIF Presentation Exchange " +
+               vpQuery.PE_VERSION + "'s Predicate Feature (" +
+               vpQuery.LABEL_PE + ").");
+  }
+  if (!plan || !plan.predicates.length) {
+    setHtml("vp_predicates_table", "<tbody><tr><td>No predicates: this " +
+      "request asks only for claims." + (notes.length ? " " +
+      esc(notes.join(" ")) : "") + "</td></tr></tbody>");
+    log.debug("Leaving renderPredicates(). None.");
+    return;
+  }
+  setHtml("vp_predicates_table",
+    "<thead><tr><th style='width:22%'>Predicate</th><th style='width:10%'>" +
+    "Mode</th><th style='width:16%'>How</th><th>Detail</th></tr></thead>" +
+    "<tbody>" + plan.predicates.map(function (p) {
+      var cls = p.ok ? (p.method === "disclose" ? "vc-rule-warn" : "vc-ok") :
+        "vc-rule-block";
+      var how = p.method === "zk" ? "proven (zero knowledge)" :
+        p.method === "issuer-boolean" ? "issuer-computed claim" :
+        p.method === "disclose" ? "VALUE DISCLOSED" : "REFUSED";
+      return "<tr><td>" + esc(p.description) + "</td><td>" + esc(p.mode) +
+        '</td><td class="' + cls + '">' + how + "</td><td>" + esc(p.reason) +
+        "</td></tr>";
+    }).join("") + "</tbody>");
+  setText("vp_predicates_note", (plan.notRevealed.length ? "Not " +
+    "revealed, though a predicate is proven over it: " +
+    plan.notRevealed.join(", ") + ". " : "") + notes.join(" "));
+  log.debug("Leaving renderPredicates().");
+}
+
+// The chosen protocol's rules, one row each: what it demands of this request
+// and whether the request meets it. A blocking row is why Continue is off.
+function renderRules(protocol, rules) {
+  log.debug("Entering renderRules(). " + rules.length + " rule(s).");
+  setText("vp_protocol_label", protocol.label);
+  setHtml("vp_protocol_rules",
+    "<thead><tr><th style='width:22%'>Rule</th><th style='width:10%'>" +
+    "Result</th><th>Detail</th></tr></thead><tbody>" +
+    rules.map(function (r) {
+      var cls = r.ok ? "vc-ok" : (r.level === "block" ? "vc-rule-block" :
+                                  "vc-rule-warn");
+      var word = r.ok ? "OK" : (r.level === "block" ? "REFUSED" : "WARNING");
+      return "<tr><td>" + esc(r.id) + '</td><td class="' + cls + '">' +
+             word + "</td><td>" + esc(r.text) + "</td></tr>";
+    }).join("") + "</tbody>");
+  log.debug("Leaving renderRules().");
 }
 
 function renderRequest() {
@@ -351,7 +516,7 @@ function renderRequest() {
   setText("vp_nonce", p.nonce || "—");
   setText("vp_state", p.state || "—");
   setText("vp_source", request.source + " at " + request.receivedAt);
-  setJson("vp_dcql", request.dcql);
+  setJson("vp_dcql", request.dcql || request.presentationDefinition);
   setJson("vp_client_metadata", request.clientMetadata);
   setValue("vp_request_raw", JSON.stringify(p, null, 2));
   setText("vp_signature_verdict", request.signed
@@ -359,31 +524,64 @@ function renderRequest() {
     : "This request is not signed. " + (who.signable
         ? "A pre-registered client could have signed it; this one did not."
         : "With the redirect_uri prefix it cannot be, which is by design."));
-  renderRequestedClaims();
+  var planned = renderRequestedClaims();
 
-  // Everything the wallet needs before it can present anything.
-  var problems = [];
-  if (!p.nonce) problems.push("no nonce (nothing would stop the presentation " +
-      "being replayed)");
-  if (String(p.response_type ||
-      "") !== "vp_token") problems.push('response_type is not "vp_token"');
-  if (String(p.response_mode || "") === "direct_post" && !p.response_uri) {
-    problems.push("response_mode is direct_post but there is no response_uri " +
-                  "to post to");
-  }
-  if (!request.dcql) problems.push("no dcql_query, so the request does not " +
-      "say what it wants");
+  // Everything the wallet needs before it can answer: first what the chosen
+  // PROTOCOL demands of the request (vp_protocols.js), then what answering
+  // demands of this wallet.
+  var protocol = sdJwtVp.currentProtocol();
   var held = heldCredential();
+  var rules = vpProtocols.requestRules(protocol.id, {
+    request: request,
+    x509: request.x509 || null,
+    heldFormat: held && held.parsed ? held.parsed.format : "",
+    requestedFormat: sdJwtVp.firstCredentialQueryFormat(request.dcql) ||
+      (planned.item && planned.item.formats[0]) || ""
+  });
+  renderRules(protocol, rules);
+  var problems = vpProtocols.blockingRules(rules).map(function (r) {
+    return r.text.replace(/\.$/, "");
+  });
+  // What the QUERY makes impossible for the credential in hand: a values
+  // mismatch or no satisfiable claim_sets option (OpenID4VP 1.0 section
+  // 6.4.1: the credential is then not returned), a predicate it cannot
+  // prove without disclosing, a critical extension it does not understand.
+  if (!vpProtocols.asksForIdToken(p) || vpProtocols.asksForVpToken(p)) {
+    (planned.blocking || []).forEach(function (b) {
+      problems.push(String(b).replace(/\.$/, ""));
+    });
+  }
+  // An ID Token on its own presents no credential, so there is nothing about
+  // a held credential to check: the subject key is the holder key when there
+  // is one, and a pairwise key otherwise (step 2).
+  var idTokenOnly = vpProtocols.asksForIdToken(p) &&
+                    !vpProtocols.asksForVpToken(p);
   // The format this verifier asked for, which is not necessarily the one in
   // hand. Empty when the query does not say, in which case there is nothing to
   // disagree with and the check below stays silent.
   var requestedFormat = sdJwtVp.firstCredentialQueryFormat(request.dcql);
+  if (!request.dcql && planned.item && planned.item.formats.length &&
+      held && held.parsed &&
+      (planned.item.formats.indexOf(held.parsed.format) !== -1 ||
+       (held.parsed.format === "anoncreds" &&
+        planned.item.formats.indexOf("di_vc") !== -1))) {
+    // A PE descriptor may list several formats; the held one is among
+    // them, so there is nothing to disagree with.
+    requestedFormat = held.parsed.format;
+  } else if (!request.dcql && planned.item) {
+    requestedFormat = planned.item.formats[0] || "";
+  }
   // A missing holder key is only a dead end when there is no way to supply one.
   // Since the holder key pair can be deliberately kept out of localStorage
   // (issuance step 2), "not in storage" now has two meanings, and treating them
   // alike would strand the user one page before the field that fixes it.
   var holderKeyAdvisory = null;
-  if (!held) problems.push("this wallet holds no credential to present");
+  if (idTokenOnly) {
+    holderKeyAdvisory = "This request asks for a self-issued ID Token " +
+        "alone, so no credential is presented; step 2 chooses the key it " +
+        "is signed with.";
+  }
+  else if (!held) problems.push("this wallet holds no credential to present");
   else if (!held.parsed) problems.push("the credential in storage cannot " +
            "be parsed: " + held.error);
   // Asked for one format, holding another. This blocks rather than advises,
@@ -400,14 +598,25 @@ function renderRequest() {
           " one — a presentation cannot convert between formats, so issue a " +
       requestedFormat + " credential first");
   }
-  // ldp_vc needs no holder private key at all: the bbs-2023 derived proof IS
-  // the holder's act, and the credential names its subject by id rather than by
-  // a cnf key the wallet must sign with. Requiring one here refused every
-  // ldp_vc request for want of a key the format never uses.
-  else if (held.parsed && held.parsed.format === sdJwtVc.FORMAT_LDP_VC) {
-    holderKeyAdvisory = "This credential is ldp_vc with a bbs-2023 proof, so " +
-        "no holder key is needed: " +
+  // A selectively disclosable ldp_vc (bbs-2023) needs no holder private key
+  // at all: the derived proof IS the holder's act, and the credential names
+  // its subject by id rather than by a cnf key the wallet must sign with.
+  // Requiring one here refused every such request for want of a key the
+  // format never uses. Any other ldp_vc goes whole inside a VP the holder
+  // signs, so it needs the key like a jwt_vc_json does, below (#475).
+  else if (held.parsed && held.parsed.format === sdJwtVc.FORMAT_LDP_VC &&
+           held.parsed.ldpSelective) {
+    holderKeyAdvisory = "This credential is ldp_vc with a " +
+        held.parsed.ldpSuite + " proof, so no holder key is needed: " +
       "the derived proof itself is what proves the holder made this presentation.";
+  }
+  // A BBS JPT likewise: JPA section 7.3.2 needs no holder key, the
+  // presentation proof being the binding (#478).
+  else if (held.parsed && held.parsed.format === sdJwtVc.FORMAT_JPT &&
+           (held.parsed.header || {}).alg === "BBS") {
+    holderKeyAdvisory = "This credential is a BBS JSON Proof Token, so no " +
+      "holder key is needed: the presentation proof itself binds it to " +
+      "this request.";
   }
   else if (!sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK)) {
     if (sdJwtVc.holderPrivateKeyMayBeStored()) {
@@ -423,7 +632,9 @@ function renderRequest() {
         "step 2 — paste it on the next page so the Key Binding JWT can be signed.";
     }
   }
-  if (request.signed && request.signatureValid === false) {
+  if (request.signed && request.signatureValid === false &&
+      problems.indexOf("the Request Object's signature does not verify") ===
+      -1) {
     problems.push("the Request Object's signature does not verify");
   }
 
@@ -434,9 +645,18 @@ function renderRequest() {
   } else {
     status("vp_request_status",
       "Request read" + (request.signed ? " and its signature checked" : "") +
-      ". It asks for " + sdJwtVp.requestedClaims(request.dcql).length +
-          " claim(s) and nothing else has to be " +
-      "sent. Continue to choose what to disclose." +
+      " under " + protocol.label + ". " + (idTokenOnly ?
+        "It asks for a self-issued ID Token and no credential. Continue " +
+        "to sign it." :
+        "It asks for " + (planned.plan && !planned.plain ?
+          planned.plan.disclose.length :
+          sdJwtVp.requestedClaims(request.dcql).length) +
+        " claim(s)" + (planned.plan && planned.plan.predicates.length ?
+          " and " + planned.plan.predicates.length + " predicate(s) " +
+          "proven without disclosing " +
+          (planned.plan.notRevealed.join(", ") || "the value") : "") +
+        " and nothing else has to be sent. Continue to choose " +
+        "what to disclose.") +
       (holderKeyAdvisory ? " " + holderKeyAdvisory : ""),
       holderKeyAdvisory ? "vc-pending" : "vc-ok");
     disable("vp_continue_button", false);
@@ -470,7 +690,8 @@ function usePastedRequest() {
   }
   adoptParams(params, "pasted by hand");
   if (params.request_uri) {
-    fetchRequestObject(params.request_uri, params.client_id)
+    fetchRequestObject(params.request_uri, params.client_id,
+                       params.request_uri_method)
       .then(renderRequest)
       .catch(function (e) {
         status("vp_request_status", "Could not fetch the Request Object: " +
@@ -550,7 +771,8 @@ function onload() {
                                                  : "the verifier's redirect " +
                                                      "(by value)");
     if (fromQuery.request_uri) {
-      fetchRequestObject(fromQuery.request_uri, fromQuery.client_id)
+      fetchRequestObject(fromQuery.request_uri, fromQuery.client_id,
+                         fromQuery.request_uri_method)
         .then(renderRequest)
         .catch(function (e) {
           status("vp_request_status", "Could not fetch the Request Object: " +

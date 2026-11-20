@@ -384,13 +384,14 @@ async function registerApplication(spBase, callbackUri) {
 // the document proves that realm is up and answering as itself before anything
 // is configured against it.
 //
-// The document is asked for BY THE SERVICE PROVIDER'S entityID, which is the
-// URL realm 1's federated flow will put in the AuthnRequest's <Issuer>. The
-// mock mints per-service-provider identity provider metadata
-// (`saml2.perApplicationEntityId`), so a document fetched without that name
-// would carry a DIFFERENT entityID from the one the assertions will actually
-// arrive with — and `fedPeer` is checked against the Issuer, so the flow would
-// be refused with "it was issued by somebody else".
+// The document is asked for at the path named for the service provider's
+// entityID — the URL realm 1's federated flow will put in the AuthnRequest's
+// <Issuer> — which iya-sts still serves. The entityID is READ from it rather
+// than assumed, because `fedPeer` is checked against the Issuer and a wrong
+// one is refused with "it was issued by somebody else". Since iya-sts #523
+// (in 1.0.0) every SAML entityID of a realm is that realm's OAuth issuer, so
+// the name no longer changes it; `saml2.perApplicationEntityId` was retired
+// with the rest (#358).
 // ---------------------------------------------------------------------------
 async function readPartnerMetadata(idpBase, spEntityId) {
   log.debug("Entering readPartnerMetadata().");

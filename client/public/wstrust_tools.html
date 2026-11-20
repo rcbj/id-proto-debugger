@@ -269,9 +269,14 @@ http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname</textarea>
         </div>
         <div class="saml-sub" id="wst_encryption_section">
           <div class="saml-sub-title">Request Body Encryption (XML-Enc)</div>
-          <p class="saml-note"><strong>Note:</strong> most STSes will <em>not</em> process an encrypted request body; this is provided for inspection/education. Encryption is performed in the browser, always <strong>after</strong> any signature (sign-then-encrypt).</p>
+          <p class="saml-note"><strong>Note:</strong> Encryption runs in the
+            browser, after any signature. Paste the relying party's
+            WS-Trust decryption certificate, or, when that application
+            has none, the realm's SAML metadata
+            <code>KeyDescriptor use="encryption"</code>.
+            <code>GET /sts/cert</code> is the signing certificate.</p>
           <div class="saml-field">
-            <label class="saml-has-copy" title="Recipient (STS) certificate whose public key wraps the session key.">Encryption Certificate <button type="button" class="saml-copy" onclick="return wstrust_tools.copyField('wst_enc_cert');">Copy</button></label>
+            <label class="saml-has-copy" title="Recipient certificate that wraps the session key.">Encryption Certificate <button type="button" class="saml-copy" onclick="return wstrust_tools.copyField('wst_enc_cert');">Copy</button></label>
             <textarea class="stored" rows="5" id="wst_enc_cert" name="wst_enc_cert" title="Recipient certificate (PEM or bare base64 DER)."></textarea>
           </div>
           <div class="saml-row">

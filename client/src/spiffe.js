@@ -1660,12 +1660,12 @@ function init() {
   // THE FOUR ADDRESSES COME FROM `CONFIG_FILE`, and until this build they did
   // not: `spiffeTrustDomainDefault`, `spiffeWorkloadAddressDefault`,
   // `spiffeServerAddressDefault` and `spiffeBundleUrlDefault` were declared in
-  // every `client/src/env/*.js`, documented in docs/spiffe.md as "the page's
-  // defaults", and read by nothing at all — so a deployment that set them got
-  // an empty box and no complaint from anywhere. They are read here now, which
-  // is also why `prod.js` and `test-idptools-com.js` leave them EMPTY: those
-  // targets have no api, so neither gRPC surface exists and an address would
-  // be a suggestion to dial something unreachable.
+  // every `client/src/env/*.js`, documented in docs/v0.9.5/spiffe.md as "the
+  // page's defaults", and read by nothing at all — so a deployment that set
+  // them got an empty box and no complaint from anywhere. They are read here
+  // now, which is also why `prod.js` and `test-idptools-com.js` leave them
+  // EMPTY: those targets have no api, so neither gRPC surface exists and an
+  // address would be a suggestion to dial something unreachable.
   seed('spiffe_trust_domain', appconfig.spiffeTrustDomainDefault,
        'example.org');
   seed('spiffe_workload_address', appconfig.spiffeWorkloadAddressDefault, '');
