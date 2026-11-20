@@ -46,7 +46,7 @@ const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const { loadUrl } = require("./page_load.js");
 const paths = require("./module_paths.js");
-// The user guide's pictures (docs/v0.9.5/vc/). Inert unless DOC_SCREENSHOT_DIR
+// The user guide's pictures (docs/v0.9.6/vc/). Inert unless DOC_SCREENSHOT_DIR
 // is set, so an ordinary run takes none.
 const docShots = require("./doc_screenshots.js");
 var appconfig = require(process.env.CONFIG_FILE);

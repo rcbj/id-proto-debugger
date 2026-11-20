@@ -1,6 +1,6 @@
 {
   "family": "scim",
-  "about": "POST /scim and GET /scim/limits. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md). Every target is scim.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 502 on any machine. The request size cap (scimMaxRequestBytes, 1 MiB) is not recorded here: a body past it would make this file a megabyte; tests/scim_protocol.js drives it.",
+  "about": "POST /scim and GET /scim/limits. Recorded against the api as it was before the family switched to the model (docs/v0.9.6/data-model.md). Every target is scim.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 502 on any machine. The request size cap (scimMaxRequestBytes, 1 MiB) is not recorded here: a body past it would make this file a megabyte; tests/scim_protocol.js drives it.",
   "cases": [
     {
       "name": "scim: an empty body is refused for its url",

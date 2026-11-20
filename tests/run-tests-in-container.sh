@@ -514,7 +514,7 @@ init()
         echo "ERROR: the mock STS in this stack has no RFC 9700 trust realm," >&2
         echo "so the five RFC 9700 flow jobs cannot run. The likeliest cause" >&2
         echo "is a 401 — mintAdminApiToken() above having minted nothing. See" >&2
-        echo "docs/v0.9.5/rfc9700.md. The run stops." >&2
+        echo "docs/v0.9.6/rfc9700.md. The run stops." >&2
         exit 1
       fi
       ;;

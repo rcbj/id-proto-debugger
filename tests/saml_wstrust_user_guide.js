@@ -3,8 +3,8 @@
 
 // File: saml_wstrust_user_guide.js
 //
-// Walk the SAML and WS-Trust pages the way docs/v0.9.5/saml/ and
-// docs/v0.9.5/wstrust/ tell a reader to, against an identity provider at
+// Walk the SAML and WS-Trust pages the way docs/v0.9.6/saml/ and
+// docs/v0.9.6/wstrust/ tell a reader to, against an identity provider at
 // WSTRUST_STS_URL (default https://localhost:8081). Pictures are taken by
 // doc_screenshots.js and are inert unless DOC_SCREENSHOT_DIR is set. SAML
 // pictures go there; WS-Trust pictures go to WSTRUST_SCREENSHOT_DIR when that

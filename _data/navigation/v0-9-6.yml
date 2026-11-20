@@ -1,0 +1,124 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
+# The sidebar of the documentation version in docs/v0.9.6/, drawn by
+# _includes/sidebar.html. `url` is the page's address INSIDE its version
+# (`/foo.html` is docs/v0.9.6/foo.md, `/` that version's overview); the
+# sidebar prefixes the folder. `root: true` marks an address outside every
+# version, which is used as it stands. ADD A ROW when you add a page.
+- section: Start here
+  items:
+    - { title: Overview, url: /, root: true }
+    - { title: What a protocol debugger is,
+        url: /what-is-a-protocol-debugger.html }
+    - { title: Getting started, url: /getting-started.html }
+    - { title: Running the debugger, url: /running.html }
+    - { title: Supported specifications,
+        url: /supported-specs.html }
+    - { title: Identity provider notes,
+        url: /identity-providers.html }
+    - { title: Privacy and security,
+        url: /privacy-and-security.html }
+    - title: "User guide: OAuth2 / OIDC"
+      url: /oauth2-oidc/
+      children:
+        - { title: OAuth 2.0 grants,
+            url: /oauth2-oidc/oauth2-grants.html }
+        - { title: OpenID Connect flows,
+            url: /oauth2-oidc/oidc-flows.html }
+        - { title: Dynamic client registration,
+            url: /oauth2-oidc/dynamic-client-registration.html }
+        - { title: Token detail and related tools,
+            url: /oauth2-oidc/related-tools.html }
+        - { title: Request options and JWT validation,
+            url: /oauth2-oidc/options.html }
+
+- section: OAuth 2.0 and OpenID Connect
+  items:
+    - { title: The six OIDC flows, url: /oidc-flows.html }
+    - { title: DPoP (RFC 9449), url: /dpop.html }
+    - { title: RFC 9700 compliance mode, url: /rfc9700.html }
+    - { title: What is left to implement, url: /spec-roadmap.html }
+
+- section: SAML and WS-*
+  items:
+    - title: Using the SAML workflow
+      url: /saml/
+      children:
+        - { title: Protocol, url: /saml/protocol.html }
+        - { title: Configuration reference,
+            url: /saml/reference.html }
+        - { title: Tutorials, url: /saml/tutorials.html }
+        - { title: Pointing it at iya-sts,
+            url: /saml/setup-iya-sts.html }
+    - { title: SAML 1.1, url: /saml11.html }
+    - { title: SAML Assertion Tool, url: /saml-assertion.html }
+    - { title: SAML decoders, url: /saml-decoders.html }
+    - { title: WS-Federation, url: /wsfed.html }
+    - title: Using the WS-Trust workflow
+      url: /wstrust/
+      children:
+        - { title: Protocol, url: /wstrust/protocol.html }
+        - { title: Configuration reference,
+            url: /wstrust/reference.html }
+        - { title: Tutorials, url: /wstrust/tutorials.html }
+        - { title: Pointing it at iya-sts,
+            url: /wstrust/setup-iya-sts.html }
+    - { title: Post-quantum XML Signature, url: /xmldsig-pqc.html }
+
+- section: Verifiable credentials
+  items:
+    - { title: SD-JWT VC issuance, url: /sd-jwt-vc-issuance.html }
+    - { title: Using the VC presentation workflow,
+        url: /vc-presentation-guide.html }
+    - { title: SD-JWT VC presentation,
+        url: /sd-jwt-vc-presentation.html }
+    - { title: DIDs, url: /dids.html }
+
+- section: Authentication
+  items:
+    - { title: WebAuthn, url: /webauthn.html }
+    - { title: Smart cards, url: /smartcard.html }
+    - { title: Kerberos v5, url: /kerberos.html }
+    - { title: SPNEGO, url: /spnego.html }
+
+- section: Directories, provisioning and workloads
+  items:
+    - { title: LDAP, url: /ldap.html }
+    - { title: SCIM 2.0, url: /scim.html }
+    - { title: SPIFFE / SPIRE, url: /spiffe.html }
+
+- section: Authorization
+  items:
+    - { title: Using the XACML editor, url: /xacml-guide.html }
+    - { title: "XACML 3.0: editor and decisions", url: /xacml.html }
+    - { title: Using the GNAP workflow, url: /gnap-guide.html }
+    - { title: "GNAP (RFC 9635): a client", url: /gnap.html }
+
+- section: Shared Signals
+  items:
+    - { title: "SSF: the pipe", url: /ssf.html }
+    - { title: "CAEP: sessions", url: /caep.html }
+    - { title: "RISC: accounts", url: /risc.html }
+
+- section: Cryptography and PKI
+  items:
+    - { title: PKI and TLS, url: /pki.html }
+    - { title: Encryption / Decryption, url: /encryption.html }
+    - { title: Hashing, url: /hashing.html }
+    - { title: JWT Tools, url: /jwt-tools.html }
+    - { title: Digital Signature, url: /digital-signature.html }
+    - { title: Stateful hash-based signatures, url: /hbs.html }
+
+- section: Development
+  items:
+    - { title: The mock STS, url: /mock-sts.html }
+    - { title: Running the tests, url: /running-tests.html }
+    - { title: What each test covers, url: /test-suite-map.html }
+    - { title: Testing against the deployed sites,
+        url: /live-site-testing.html }
+    - { title: Code coverage, url: /COVERAGE.html, root: true }
+    - { title: "Releases, versions and images", url: /releases.html }
+    - { title: Version history, url: /version-history.html }
+    - { title: Kerberos design plan, url: /kerberos-plan.html }
+    - { title: WebAuthn design plan, url: /webauthn-plan.html }

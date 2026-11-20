@@ -19,7 +19,7 @@
 #     smartcardReaderEnabled. The relay sends ANY APDU the page is given to
 #     the card — a few wrong-PIN VERIFYs block a PIN, and PIV and OpenPGP
 #     have reset commands — which is why it is a separate file and not the
-#     default. See docs/v0.9.5/smartcard.md.
+#     default. See docs/v0.9.6/smartcard.md.
 #
 # With it, the smart-card page's Reader pane lists the key and transmits,
 # and challenge-response works in a browser with no WebHID (Firefox) by

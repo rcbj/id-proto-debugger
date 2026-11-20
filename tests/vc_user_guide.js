@@ -4,11 +4,11 @@
 // File: vc_user_guide.js
 //
 // ---------------------------------------------------------------------------
-// THE VC WORKFLOWS AS docs/v0.9.5/vc/ DESCRIBES THEM, DRIVEN AGAINST ANY
+// THE VC WORKFLOWS AS docs/v0.9.6/vc/ DESCRIBES THEM, DRIVEN AGAINST ANY
 // OPENID4VCI CREDENTIAL ISSUER, AND THE SCREENSHOTS THAT GUIDE IS ILLUSTRATED
 // WITH.
 //
-// docs/v0.9.5/vc/ is the user guide to the Verifiable Credential pages, and its
+// docs/v0.9.6/vc/ is the user guide to the Verifiable Credential pages, and its
 // tutorials are the walks this job takes. It takes them the way the guide
 // tells a reader to: the issuer is ANY OpenID4VCI Credential Issuer
 // (OID4VCI_ISSUER_URL, here iya-sts), every value typed into a page comes
@@ -51,7 +51,7 @@
 // SCREENSHOTS: every snap() below is inert unless DOC_SCREENSHOT_DIR is set
 // (see doc_screenshots.js), so an ordinary run takes none:
 //
-//   DOC_SCREENSHOT_DIR=$PWD/../docs/v0.9.5/vc/images \
+//   DOC_SCREENSHOT_DIR=$PWD/../docs/v0.9.6/vc/images \
 //     CONFIG_FILE=$PWD/env/local.js node vc_user_guide.js -u <client>
 //
 // Every assertion here holds whether or not pictures are being taken.
@@ -1064,7 +1064,7 @@ async function test() {
 const program = new Command();
 program
   .name("vc_user_guide")
-  .description("Drive the VC workflows the way docs/v0.9.5/vc/ " +
+  .description("Drive the VC workflows the way docs/v0.9.6/vc/ " +
       "describes them, against any OpenID4VCI Credential Issuer, and take " +
       "the guide's screenshots when DOC_SCREENSHOT_DIR is set.")
   .addOption(new Option("-u, --url <url>",

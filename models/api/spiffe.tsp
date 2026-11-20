@@ -8,7 +8,7 @@
 // endpoint, and a limits document that publishes the method catalogue.
 // gRPC is HTTP/2 with its status in the trailers, which `fetch` can neither
 // send nor read, so api/spiffe_client.js makes the call. See
-// docs/v0.9.5/spiffe.md.
+// docs/v0.9.6/spiffe.md.
 //
 // ONE operation for forty-nine methods, as the route is: every method is
 // (service, method, request) over one wire format, and the method list is

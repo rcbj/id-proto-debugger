@@ -1,6 +1,6 @@
 {
   "family": "smartcard",
-  "about": "GET /smartcard/limits and /smartcard/readers, POST /smartcard/transmit, /smartcard/session, /smartcard/session/transmit, /smartcard/session/close and /smartcard/otp/challenge. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md), on api/env/docker-tests.js, where the reader relay is ON and reaches nothing: the containerized api has no pcscd socket and no HID device, so every request that passes validation fails for want of a service. That failure's sentence depends on what the api has installed (pcsclite, node-hid, the client's yubico_otp.js), so it is volatile; the status is not. No case here can reach a card.",
+  "about": "GET /smartcard/limits and /smartcard/readers, POST /smartcard/transmit, /smartcard/session, /smartcard/session/transmit, /smartcard/session/close and /smartcard/otp/challenge. Recorded against the api as it was before the family switched to the model (docs/v0.9.6/data-model.md), on api/env/docker-tests.js, where the reader relay is ON and reaches nothing: the containerized api has no pcscd socket and no HID device, so every request that passes validation fails for want of a service. That failure's sentence depends on what the api has installed (pcsclite, node-hid, the client's yubico_otp.js), so it is volatile; the status is not. No case here can reach a card.",
   "cases": [
     {
       "name": "limits: the relay is on, and what it can reach",

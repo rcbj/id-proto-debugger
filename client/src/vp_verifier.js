@@ -199,7 +199,7 @@ var DI_SUITES_NOT_VERIFIED = {
 var FEDERATION_NOTE = "openid_federation needs an OpenID Federation 1.0 " +
   "trust chain (entity statements from the Verifier up to a trust anchor), " +
   "which this debugger does not build or resolve. OpenID Federation 1.0 is " +
-  "out of scope; see the note in docs/v0.9.5/spec-roadmap.md.";
+  "out of scope; see the note in docs/v0.9.6/spec-roadmap.md.";
 
 var PASS = "pass";
 var FAIL = "fail";

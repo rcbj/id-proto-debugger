@@ -31,7 +31,7 @@
 // three is an input to the single "Generate Key Pair & Issue Certificate"
 // button at the TOP of it. So a new block of fields belongs inside that pane
 // under a `.pki-group` heading rather than in a sixth pane; tests/pki_page.js
-// asserts the pane list by name, and docs/v0.9.5/pki.md says what the merge
+// asserts the pane list by name, and docs/v0.9.6/pki.md says what the merge
 // bought and what it costs when the layout that made it possible collapses.
 //
 // ---------------------------------------------------------------------------

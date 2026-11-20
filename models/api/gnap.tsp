@@ -8,7 +8,7 @@
 // so this service sends exactly that URL and that body string; the signing
 // key never arrives here. The one exception is the mtls proof, whose
 // certificate and key are presented on a connection opened for that one
-// call. See docs/v0.9.5/gnap.md.
+// call. See docs/v0.9.6/gnap.md.
 //
 // THE THREE OUTCOMES: a refusal by this service is a 400, a network failure
 // is a 502, and a GNAP error from the authorization server is a 200 carrying

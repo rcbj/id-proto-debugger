@@ -1,6 +1,6 @@
 {
   "family": "otp",
-  "about": "POST /otp/verify and GET /otp/limits. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md). Every well-formed request names its verifier as otp.invalid, which RFC 6761 guarantees never resolves, so it ends in the same 502 on any machine and never reaches YubiCloud.",
+  "about": "POST /otp/verify and GET /otp/limits. Recorded against the api as it was before the family switched to the model (docs/v0.9.6/data-model.md). Every well-formed request names its verifier as otp.invalid, which RFC 6761 guarantees never resolves, so it ends in the same 502 on any machine and never reaches YubiCloud.",
   "cases": [
     {
       "name": "limits: the protocol and the five servers",

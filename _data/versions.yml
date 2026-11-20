@@ -14,7 +14,8 @@
 #
 # A release snapshot adds a row here and a navigation file; docs/CLAUDE.md,
 # *Adding a version*, is the recipe. Labels are M.N.P, never a build number.
-- { folder: v0.9.5, nav: v0-9-5, label: "0.9.5", note: "latest", home: "/" }
+- { folder: v0.9.6, nav: v0-9-6, label: "0.9.6", note: "latest", home: "/" }
+- { folder: v0.9.5, nav: v0-9-5, label: "0.9.5", note: "release", home: "/docs/v0.9.5/" }
 - { folder: v0.9.4, nav: v0-9-4, label: "0.9.4", note: "release", home: "/docs/v0.9.4/" }
 - { folder: v0.9.3, nav: v0-9-3, label: "0.9.3", note: "release", home: "/docs/v0.9.3/" }
 - { folder: v0.9.2, nav: v0-9-2, label: "0.9.2", note: "release", home: "/docs/v0.9.2/" }

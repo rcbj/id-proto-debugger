@@ -11,7 +11,7 @@
 // its address and port policy, times the call and hands the reply back. The
 // password never leaves this page, no key is derived anywhere but here, and every
 // pane can honestly say "these are the bytes that went on the wire" because this
-// file produced them. See docs/v0.9.5/kerberos-plan.md for why that shape was
+// file produced them. See docs/v0.9.6/kerberos-plan.md for why that shape was
 // chosen over protocol-aware endpoints.
 //
 // **This page cannot work on the static deployments**, and says so on arrival

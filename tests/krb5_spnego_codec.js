@@ -9,7 +9,7 @@
 // WHY THE ASSERTIONS HERE ARE OFFSETS AND NOT ROUND TRIPS.
 //
 // The standard of evidence for a wire codec in this project is the one stated
-// in docs/v0.9.5/kerberos.md: a reader and a writer that share one
+// in docs/v0.9.6/kerberos.md: a reader and a writer that share one
 // misunderstanding agree perfectly with each other and with nothing else in the
 // world. So the values below are derived by hand from RFC 4178 section 4 and
 // from the OIDs' own registrations, and the DER is asserted as bytes rather

@@ -219,7 +219,7 @@ var config = {
   // a reader on the machine this api runs on, with any APDU the caller
   // sends (a wrong-PIN VERIFY blocks a PIN; PIV and OpenPGP have
   // reset/terminate commands). Off unless this is true. See
-  // docs/v0.9.5/smartcard.md.
+  // docs/v0.9.6/smartcard.md.
   smartcardReaderEnabled: false,
   spiffeMaxStreamMessages: 4,
   spiffeStreamTimeout: 45000,

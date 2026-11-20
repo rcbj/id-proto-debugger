@@ -460,7 +460,7 @@ function holderKeyFits(jwk, issuerAlgs, formatId) {
 //
 // AnonCreds is the one format left out: a CL credential is issued against a
 // blinded link secret, which an OpenID4VCI Credential Request has no member
-// for, so no valid configuration of it exists (docs/v0.9.5/anoncreds.md).
+// for, so no valid configuration of it exists (docs/v0.9.6/anoncreds.md).
 var BUILT_IN_PREFIX = "builtin:";
 var W3C_V1_CONTEXT = "https://www.w3.org/2018/credentials/v1";
 var W3C_V2_CONTEXT = "https://www.w3.org/ns/credentials/v2";

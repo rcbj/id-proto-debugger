@@ -6,7 +6,7 @@
 // SHARED SIGNALS (OpenID SSF 1.0, RFC 8417, RFC 8935, RFC 8936): one call to
 // a transmitter on the page's behalf, the limits document, and the RFC 8935
 // PUSH RECEIVER this api hosts because a page is not an HTTP server. See
-// docs/v0.9.5/ssf.md.
+// docs/v0.9.6/ssf.md.
 //
 // THE CALL keeps the SCIM proxy's three outcomes: a refusal by this service
 // is a 400, a network failure is a 502, and an SSF error from the

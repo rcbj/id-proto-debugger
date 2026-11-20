@@ -86,7 +86,7 @@ var clear = panes.clear;
 // Sixteen is the width every hex dump has used since od(1), and it is not
 // arbitrary here either: the offset column stays four digits for anything under
 // 64KB, and 16 bytes plus an ASCII gutter fits the pane without the horizontal
-// scroll docs/v0.9.5/kerberos.md's one-screen budget is about.
+// scroll docs/v0.9.6/kerberos.md's one-screen budget is about.
 var BYTES_PER_ROW = 16;
 
 // How many section tints there are. A KDC message has a handful of top-level
