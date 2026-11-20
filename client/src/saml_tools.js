@@ -35,7 +35,7 @@ var xd = require("./xmldsig");
 // The post-quantum SignatureMethods this page can offer, and the bridge to
 // the engines that perform them. `xmldsig.js` holds the sixteen identifiers
 // and no cryptography — see its own header — so the lattice arrives here.
-// See docs/v0.9.5/xmldsig-pqc.md.
+// See docs/v0.9.6/xmldsig-pqc.md.
 var xdPqc = require("./xmldsig_pqc");
 var pqc = require("./pqc");
 var hbs = require("./hbs");

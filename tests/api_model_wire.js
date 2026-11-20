@@ -7,7 +7,7 @@
 // THE API ANSWERS WHAT IT ANSWERED BEFORE ITS MODEL, AND WHAT ITS MODEL SAYS.
 //
 // Every family of api endpoints moved onto common/model/openapi.json the same
-// way (docs/v0.9.5/data-model.md, "How a family switches"): its requests were
+// way (docs/v0.9.6/data-model.md, "How a family switches"): its requests were
 // sent to the api as it WAS, and each answer was written into
 // fixtures/api_model/<family>.json. Then the family's model was written, the
 // route was given its validator, and the hand-written check it replaced was

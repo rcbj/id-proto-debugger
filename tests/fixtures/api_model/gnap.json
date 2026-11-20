@@ -1,6 +1,6 @@
 {
   "family": "gnap",
-  "about": "POST /gnap/call and GET /gnap/limits. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md). Every target is gnap.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 502 on any machine. The size caps (gnapMaxRequestBytes, 64 KiB of PEM) and a certificate and key that do not match are driven by tests/api_gnap.js.",
+  "about": "POST /gnap/call and GET /gnap/limits. Recorded against the api as it was before the family switched to the model (docs/v0.9.6/data-model.md). Every target is gnap.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 502 on any machine. The size caps (gnapMaxRequestBytes, 64 KiB of PEM) and a certificate and key that do not match are driven by tests/api_gnap.js.",
   "cases": [
     {
       "name": "gnap: an empty body is refused for its url",

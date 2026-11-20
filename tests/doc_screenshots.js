@@ -7,7 +7,7 @@
 // SCREENSHOTS FOR THE USER DOCUMENTATION, TAKEN BY THE TESTS THAT DRIVE THE
 // PAGES BEING DOCUMENTED.
 //
-// docs/v0.9.5/oauth2-oidc/ walks a reader through every OAuth 2.0 grant and
+// docs/v0.9.6/oauth2-oidc/ walks a reader through every OAuth 2.0 grant and
 // every OpenID Connect flow the debugger offers, one screen at a time, and the
 // pictures in it come from here. They are taken by the Selenium jobs that
 // already drive those exact screens — oauth2_*.js, oidc_flows.js and the
@@ -20,7 +20,7 @@
 // through the jobs are inert. Set it to a directory and each call writes one
 // PNG there:
 //
-//   DOC_SCREENSHOT_DIR=docs/v0.9.5/oauth2-oidc/images node oidc_flows.js -u ...
+//   DOC_SCREENSHOT_DIR=docs/v0.9.6/oauth2-oidc/images node oidc_flows.js -u ...
 //
 // A file is named `<prefix>-<name>.png`. The prefix is the GRANT or FLOW
 // (`setPrefix()`, called once by the job), and the name is the STEP, which is

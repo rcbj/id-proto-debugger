@@ -22,7 +22,7 @@
  * one of those, in an auto-layout table sized to min-content, is exactly how a
  * pane ends up wider than the viewport — so the token, URI and value cells are
  * capped and break on any character, and every readout is a `textarea` rather
- * than a `pre` for the reason docs/v0.9.5/scim.md records: a fieldset's
+ * than a `pre` for the reason docs/v0.9.6/scim.md records: a fieldset's
  * `min-inline-size: min-content` sizes the pane to the longest line in it, and
  * one percent-encoded value took a pane there to 7511px.
  */

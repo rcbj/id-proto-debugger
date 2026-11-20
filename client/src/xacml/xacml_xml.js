@@ -19,7 +19,7 @@
 // text. It uses no XPath at all — the policy grammar is walked by element
 // name, because an XPath per element would be slower and would hide what is
 // actually a very small tree walk. (An `AttributeSelector` is read and
-// carried, and the PDP refuses to evaluate one: `docs/v0.9.5/xacml.md`.)
+// carried, and the PDP refuses to evaluate one: `docs/v0.9.6/xacml.md`.)
 //
 // ---------------------------------------------------------------------------
 // THE PARSER IS DELIBERATELY STRICT, AND SIX CONFORMANCE CASES DEPEND ON IT.

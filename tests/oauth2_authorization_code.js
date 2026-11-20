@@ -20,7 +20,7 @@ var logout_post_redirect_uri_value = baseUrl + "/logout.html";
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-// Pictures for docs/v0.9.5/oauth2-oidc/, taken only when DOC_SCREENSHOT_DIR is
+// Pictures for docs/v0.9.6/oauth2-oidc/, taken only when DOC_SCREENSHOT_DIR is
 // set.
 const docShots = require("./doc_screenshots.js");
 docShots.setPrefix("oauth2-authorization-code");

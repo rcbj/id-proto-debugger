@@ -7,7 +7,7 @@
 // (RFC 4178) HTTP exchange and a limits document. Kerberos is DER over TCP
 // and UDP port 88, so a browser cannot reach a KDC: the api is a guarded
 // byte relay (api/krb5_relay.js, api/krb5_frame.js) rather than a proxy of
-// anything HTTP-shaped. See docs/v0.9.5/kerberos.md and docs/v0.9.5/spnego.md.
+// anything HTTP-shaped. See docs/v0.9.6/kerberos.md and docs/v0.9.6/spnego.md.
 //
 // THE THREE OUTCOMES, which every answer below keeps apart:
 //

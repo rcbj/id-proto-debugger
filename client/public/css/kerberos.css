@@ -16,7 +16,7 @@
  * auto-layout table sized to min-content is exactly how such a value pushes a
  * pane past the edge of the viewport. So the value column is capped and wraps on
  * any character, and the mono spans wrap too. See the SD-JWT VC notes in
- * docs/v0.9.5/sd-jwt-vc-issuance.md, which cost a debugging round to learn.
+ * docs/v0.9.6/sd-jwt-vc-issuance.md, which cost a debugging round to learn.
  */
 
 /* The way back, on the SAME LINE as the page title rather than on a row of its
@@ -409,7 +409,7 @@ textarea.krb-field {
    are sized to fit; letting them wrap turns the trail into a two-line
    block that
    pushes the first pane below the fold, which is the thing
-   docs/v0.9.5/kerberos.md's
+   docs/v0.9.6/kerberos.md's
    one-screen budget is about.
    ------------------------------------------------------------------------ */
 /* MARGINS AND PADDING HERE ARE PART OF A BUDGET, not taste. The trail and the
@@ -899,7 +899,7 @@ table.krb-op-history .krb-op-target {
    is somebody else's HTML source and its lines can be arbitrarily long, so
    wrapping it is the difference between a readable pane and a horizontal
    scrollbar the length of the page. Bounded in height for the same reason the
-   SD-JWT VC panes are (docs/v0.9.5/sd-jwt-vc-issuance.md): a narrow pane
+   SD-JWT VC panes are (docs/v0.9.6/sd-jwt-vc-issuance.md): a narrow pane
    MULTIPLIES
    height once real content arrives, and a protected page can be any size. */
 .krb-body {

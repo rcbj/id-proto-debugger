@@ -2410,7 +2410,7 @@ var OUTCOME_FINDINGS = 'findings';
 // RFC 8935 has the receiver answer a push before this page can look at it,
 // and the api answers 202 for anything it can store. So a pushed SET that
 // fails here was ALREADY ACCEPTED as far as the transmitter knows, and
-// nothing can refuse it now. See docs/v0.9.5/ssf.md.
+// nothing can refuse it now. See docs/v0.9.6/ssf.md.
 var ALREADY_ACCEPTED = 'ALREADY ACCEPTED: the api answered this push 202 ' +
   'before this page checked it, so the transmitter believes it was ' +
   'delivered and RFC 8935 has no way to take that back. Do not act on it; ' +

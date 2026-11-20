@@ -315,7 +315,7 @@ function samlRequest() {
 //   * WS-Federation has wsignout1.0, section 13.2.4.
 //   * OAuth 2.0 / OIDC has /oauth2/logout.
 //   * **SAML 1.1 has NO Single Logout at all** — that is the protocol and not
-//     a gap in the mock; `docs/v0.9.5/saml11.md` records it as one of the five
+//     a gap in the mock; `docs/v0.9.6/saml11.md` records it as one of the five
 //     things switched off rather than missing.
 //   * **SPNEGO has none either**: it authenticates a request and defines
 //     nothing about ending anything.

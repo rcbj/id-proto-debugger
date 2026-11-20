@@ -11,7 +11,7 @@
 // 4120 and [MS-PAC] as the client it is being used to check, so the two agree
 // by construction — and a disagreement with Windows would not show up in any of
 // them. This test is the one that can only pass if the client interoperates
-// with software this project did not write. docs/v0.9.5/kerberos.md names it as
+// with software this project did not write. docs/v0.9.6/kerberos.md names it as
 // the open risk; this is the thing that closes it.
 //
 // WHAT IT DRIVES. A single-DC forest on EC2, built by

@@ -208,7 +208,7 @@ var config = {
   // "any".
   scimMaxRequestBytes: 1048576,
   // ---------------------------------------------------------------------------
-  // SHARED SIGNALS (client/public/ssf.html, docs/v0.9.5/ssf.md).
+  // SHARED SIGNALS (client/public/ssf.html, docs/v0.9.6/ssf.md).
   //
   // `POST /ssf/call` is the SCIM proxy's shape and not the LDAP relay's: SSF's
   // management API is ordinary HTTPS with a JSON body, so the page calls a
@@ -226,7 +226,7 @@ var config = {
   // or a request_uri POST); see api/oid4vp_proxy.js.
   oid4vpMaxRequestBytes: 262144,
   // ---------------------------------------------------------------------------
-  // GNAP (client/public/gnap.html, docs/v0.9.5/gnap.md).
+  // GNAP (client/public/gnap.html, docs/v0.9.6/gnap.md).
   //
   // POST /gnap/call forwards one request the page has already signed.
   // This bounds that request body. maxContentLength bounds the
@@ -397,7 +397,7 @@ var config = {
   // a reader on the machine this api runs on, with any APDU the caller
   // sends (a wrong-PIN VERIFY blocks a PIN; PIV and OpenPGP have
   // reset/terminate commands). Off unless this is true. See
-  // docs/v0.9.5/smartcard.md. On a local stack it follows
+  // docs/v0.9.6/smartcard.md. On a local stack it follows
   // SMARTCARD_READER_ENABLED, which only docker-compose-smartcard.yml sets
   // (with the host's pcscd socket mounted beside it), so a plain
   // `docker-compose up` keeps it off. The boolean, exactly: any other value is

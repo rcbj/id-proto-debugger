@@ -24,7 +24,7 @@
 // it. crypto.subtle offers AES in GCM, CBC and CTR and nothing else — no CFB,
 // no OFB, no ECB, no DES, no 3DES — and Chrome refuses every AES-192 operation
 // outright (jose_jwe.js carries a capability probe for exactly that, and
-// docs/v0.9.5/encryption.md records it). A page whose point is to show what a
+// docs/v0.9.6/encryption.md records it). A page whose point is to show what a
 // mode does cannot offer three of the six and refuse a key size, so the block
 // ciphers here are forge's pure-JS implementations throughout, which behave
 // identically in every browser and in node. ChaCha20 is written out below

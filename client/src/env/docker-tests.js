@@ -184,7 +184,7 @@ var config = {
   ldapPasswordDefault: "password!",
 
   // ---------------------------------------------------------------------------
-  // SPIFFE (client/public/spiffe.html, docs/v0.9.5/spiffe.md).
+  // SPIFFE (client/public/spiffe.html, docs/v0.9.6/spiffe.md).
   //
   // **BOTH gRPC ADDRESSES FOLLOW THE SAME RULE AS ldapUrlDefault ABOVE, AND FOR
   // THE SAME REASON.** A browser cannot produce gRPC at all, so both surfaces
@@ -216,7 +216,7 @@ var config = {
   spiffeBundleUrlDefault: "https://sts:8081/spiffe/bundle",
 
   // ---------------------------------------------------------------------------
-  // SCIM 2.0 (client/public/scim.html, docs/v0.9.5/scim.md).
+  // SCIM 2.0 (client/public/scim.html, docs/v0.9.6/scim.md).
   //
   // The service root the page opens on — the host plus the SCIM base path,
   // which is `/scim/v2` on essentially every implementation. NOT a resource
@@ -251,7 +251,7 @@ var config = {
   scimSignInUrlDefault: "",
 
   // ---------------------------------------------------------------------------
-  // SHARED SIGNALS (client/public/ssf.html, docs/v0.9.5/ssf.md).
+  // SHARED SIGNALS (client/public/ssf.html, docs/v0.9.6/ssf.md).
   //
   // The TRANSMITTER's base URL. The page looks for
   // /.well-known/ssf-configuration under it in BOTH shapes — RFC 8414 inserts

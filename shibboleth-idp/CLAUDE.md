@@ -8,8 +8,8 @@ SPDX-License-Identifier: MIT
 Scope: this image and its one compose service. Two tests use it:
 `tests/saml11_peers.js`, with no browser, and the two Shibboleth jobs of
 `tests/saml11_sso.js` (`SAML11_PEER=shibboleth`), which drive the debugger's
-own pages and api against it (see both entries in `docs/v0.9.5/test-suite-map.md`);
-what SAML 1.1 is and how the debugger speaks it is `docs/v0.9.5/saml11.md`.
+own pages and api against it (see both entries in `docs/v0.9.6/test-suite-map.md`);
+what SAML 1.1 is and how the debugger speaks it is `docs/v0.9.6/saml11.md`.
 
 **What it is.** Shibboleth Identity Provider **4.3.3** on **Jetty 10.0.22**,
 on `eclipse-temurin:11-jdk`. It answers Shibboleth's AuthnRequest profile at

@@ -1,6 +1,6 @@
 {
   "family": "krb5",
-  "about": "POST /krb5/kdc, /krb5/service, /krb5/spnego and GET /krb5/limits. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md), on api/env/docker-tests.js. Every target that gets past the pre-flight is a *.invalid name, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 502 on any machine. The messages are the smallest frames the pre-flight accepts: 6a00 (an AS-REQ) and 6e00 (a bare AP-REQ).",
+  "about": "POST /krb5/kdc, /krb5/service, /krb5/spnego and GET /krb5/limits. Recorded against the api as it was before the family switched to the model (docs/v0.9.6/data-model.md), on api/env/docker-tests.js. Every target that gets past the pre-flight is a *.invalid name, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 502 on any machine. The messages are the smallest frames the pre-flight accepts: 6a00 (an AS-REQ) and 6e00 (a bare AP-REQ).",
   "cases": [
     {
       "name": "kdc: an empty body is refused",

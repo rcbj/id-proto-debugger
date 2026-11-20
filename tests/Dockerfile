@@ -233,7 +233,7 @@ COPY tests/sts_sign_out.js ./
 COPY tests/console_signin.js ./
 
 # THE DOCUMENTATION SCREENSHOT HELPER, required by the OAuth2 / OIDC jobs that
-# photograph the screens docs/v0.9.5/oauth2-oidc/ walks through (oauth2_*.js,
+# photograph the screens docs/v0.9.6/oauth2-oidc/ walks through (oauth2_*.js,
 # oidc_flows.js, oauth2_auth_style.js). It does nothing unless
 # DOC_SCREENSHOT_DIR is set, and nothing here sets it — but the require runs
 # on every job, so without this line all of them die with MODULE_NOT_FOUND in
@@ -664,7 +664,7 @@ COPY tests/captures ./captures
 # tests/ecdsa_sd_2023_engine.js does (#476). Here rather than beside bbs2023.js in files1, which is
 # at this suite's layer budget.
 COPY tests/fixtures/vc_di_bbs_vectors.json tests/fixtures/vc_di_ecdsa_sd_vectors.json tests/fixtures/jwp_jpa15_vectors.json tests/fixtures/sd_cwt_09_vectors.json tests/fixtures/acdc_vectors.json ./fixtures/
-# The walk through docs/v0.9.5/vc/'s tutorials. Here rather than beside
+# The walk through docs/v0.9.6/vc/'s tutorials. Here rather than beside
 # vci_offer_modes.js in files1, which is at this suite's layer budget.
 COPY tests/vc_user_guide.js tests/saml_wstrust_user_guide.js ./
 

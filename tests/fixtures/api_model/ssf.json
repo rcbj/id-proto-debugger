@@ -1,6 +1,6 @@
 {
   "family": "ssf",
-  "about": "POST /ssf/call, GET /ssf/limits and the push receiver's four routes. Recorded against the api as it was before the family switched to the model (docs/v0.9.5/data-model.md). Every outbound target is ssf.invalid, which RFC 6761 guarantees never resolves. A receiver's id is generated, so the cases that reach an inbox by id use one that was never created; the inbox created here asks for a 1 ms idle lifetime, so it is gone by the next request and replaying this file never reaches ssfReceiverMaxInboxesPerCaller. The size caps (ssfMaxRequestBytes, ssfReceiverMaxEventBytes) and the refusals of a push to a live inbox are driven by tests/api_ssf.js.",
+  "about": "POST /ssf/call, GET /ssf/limits and the push receiver's four routes. Recorded against the api as it was before the family switched to the model (docs/v0.9.6/data-model.md). Every outbound target is ssf.invalid, which RFC 6761 guarantees never resolves. A receiver's id is generated, so the cases that reach an inbox by id use one that was never created; the inbox created here asks for a 1 ms idle lifetime, so it is gone by the next request and replaying this file never reaches ssfReceiverMaxInboxesPerCaller. The size caps (ssfMaxRequestBytes, ssfReceiverMaxEventBytes) and the refusals of a push to a live inbox are driven by tests/api_ssf.js.",
   "cases": [
     {
       "name": "ssf call: an empty body is refused for its url",

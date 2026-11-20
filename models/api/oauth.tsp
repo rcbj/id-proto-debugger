@@ -9,7 +9,7 @@
 // revocation (RFC 7009), token exchange (RFC 8693), device authorization
 // (RFC 8628), dynamic client registration (RFC 7591 / RFC 7592) and
 // UserInfo (OIDC Core 5.3) — plus the IANA JWT claims registry the token
-// page labels claims from. See docs/v0.9.5/oauth2-oidc/.
+// page labels claims from. See docs/v0.9.6/oauth2-oidc/.
 //
 // THIS IS THE FAMILY WHERE THE PASSTHROUGH RULE MATTERS MOST. Everything a
 // user typed — grant_type, client_id, client_secret, code, redirect_uri,

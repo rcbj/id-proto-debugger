@@ -511,7 +511,7 @@ function runSearch() {
 // (api/ldap_client.js, withConnection()), so there is nothing left for a
 // second HTTP request to hand a cookie back to. Adding it means giving the api
 // a session that outlives a request, which is a different change from this one
-// and is written up in docs/v0.9.5/ldap.md.
+// and is written up in docs/v0.9.6/ldap.md.
 //
 // What follows from that is the wording, which is deliberate everywhere it
 // appears: the pager says how many entries THIS SEARCH RETURNED, never how

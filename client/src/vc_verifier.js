@@ -14,7 +14,7 @@
 // WHY THE API IS INVOLVED. `direct_post` has the wallet POST its answer to a
 // `response_uri`, and a request by reference has it GET (or POST) a
 // `request_uri`. A page can be neither, so the api hosts both on the page's
-// behalf (api/oid4vp_verifier.js, docs/v0.9.5/vc-verifier-api.md), exactly as
+// behalf (api/oid4vp_verifier.js, docs/v0.9.6/vc-verifier-api.md), exactly as
 // it hosts the Shared Signals push receiver. The api is a STORE: the page signs
 // the Request Object with a key that never leaves this tab, hands the api the
 // compact JWS and the root certificate the leaf's Authority Information Access

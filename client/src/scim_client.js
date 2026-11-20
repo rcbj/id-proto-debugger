@@ -1274,7 +1274,7 @@ function randomUser(options) {
     // `phoneNumbers`, which keep theirs. tests/scim_engine.js pins this so
     // that re-adding a `type` here fails in node with the reason rather than
     // as a 400 from whichever server is being debugged. See
-    // docs/v0.9.5/scim.md.
+    // docs/v0.9.6/scim.md.
     // ---------------------------------------------------------------------
     roles: [
       { value: pick(rng, ['reader', 'writer', 'approver']),

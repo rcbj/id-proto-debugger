@@ -616,7 +616,7 @@ startSideCars()
       # into RFC 9700 mode is a broken stack, not five optional jobs.
       echo "ERROR: the mock STS this launcher started has no RFC 9700 trust" >&2
       echo "realm, so the five RFC 9700 flow jobs cannot run. The run stops." >&2
-      echo "See the reason above, and docs/v0.9.5/rfc9700.md." >&2
+      echo "See the reason above, and docs/v0.9.6/rfc9700.md." >&2
       exit 1
     fi
   fi

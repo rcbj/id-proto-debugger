@@ -25,7 +25,7 @@
 //
 // `snap` is optional, and is tests/doc_screenshots.js's function of that name:
 // the flows below photograph each screen they pass through for the user
-// documentation under docs/v0.9.5/oauth2-oidc/. Injected rather than required
+// documentation under docs/v0.9.6/oauth2-oidc/. Injected rather than required
 // for the reason everything else here is, and it defaults to doing nothing, so
 // a caller that does not pass it behaves exactly as before. Even when it is
 // passed it writes nothing unless DOC_SCREENSHOT_DIR is set.

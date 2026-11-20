@@ -19,7 +19,7 @@ var baseUrl = "https://localhost:3000"
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-// Pictures for docs/v0.9.5/oauth2-oidc/, taken only when DOC_SCREENSHOT_DIR is
+// Pictures for docs/v0.9.6/oauth2-oidc/, taken only when DOC_SCREENSHOT_DIR is
 // set.
 const docShots = require("./doc_screenshots.js");
 docShots.setPrefix("oauth2-device-authorization");

@@ -8,7 +8,7 @@
 # version, which is used as it stands. ADD A ROW when you add a page.
 - section: Start here
   items:
-    - { title: Overview, url: /, root: true }
+    - { title: Overview, url: / }
     - { title: What a protocol debugger is,
         url: /what-is-a-protocol-debugger.html }
     - { title: Getting started, url: /getting-started.html }

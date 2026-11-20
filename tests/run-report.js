@@ -228,7 +228,7 @@ function jobTypeOf(script) {
 //     admin_api.js, sts_admin_api_operations.js, sts_admin_console.js and
 //     sts_metadata.js — drove the mock's own /admin and /admin-api surface
 //     and were removed from this suite on 2026-08-28; they live in the mock
-//     STS's own suite now (see the note in docs/v0.9.5/mock-sts.md), which
+//     STS's own suite now (see the note in docs/v0.9.6/mock-sts.md), which
 //     is the tree that changes them.
 //
 //     A SECOND SHAPE NEEDED IT FOR ONE DAY, and the record is worth keeping
@@ -285,7 +285,7 @@ const JOB_LOCKS = {
   "oid4vci_request_encryption.js": "sts-vc",
   "dpop_workflow.js": "sts-vc",
   "vci_offer_modes.js": "sts-vc",
-  // The user guide's walk through the VC pages (docs/v0.9.5/vc/): it collects
+  // The user guide's walk through the VC pages (docs/v0.9.6/vc/): it collects
   // credentials through the same shared wallet entry the job above declares.
   "vc_user_guide.js": "sts-vc",
   "metadata_schema_validation.js": "sts-vc",
@@ -770,7 +770,7 @@ function buildJobs() {
   // a REALM, since a realm binds no socket. common/common.sh's
   // configureStsRfc9700Realm() creates it and is what leaves this variable
   // unset — and therefore these five jobs unscheduled — when the mock is too
-  // old to have it. See docs/v0.9.5/rfc9700.md.
+  // old to have it. See docs/v0.9.6/rfc9700.md.
   if (env.RFC9700_STS_URL) {
     const RFC9700_JOBS = [
       ["refused", "the refusals, and that the mode is reversible"],
@@ -1061,7 +1061,7 @@ function buildJobs() {
   // Then it SAVES THE PICTURES. That register is in memory and dies with the
   // process, so the only moment the map of this chain can be drawn is while the
   // run is happening; the SVGs land in this run's own report directory. See
-  // docs/v0.9.5/test-suite-map.md.
+  // docs/v0.9.6/test-suite-map.md.
   //
   // The mock only, in EITHER of its modes, and the job asks it which
   // (`GET /admin-api/mode`). In development it needs nothing beyond the four
@@ -2800,7 +2800,7 @@ function buildJobs() {
   // rcbj/iya-sts submodule. The mock was written from the same reading of RFC
   // 4120 and [MS-PAC] as the client it checks, so the two agree by construction
   // and a shared misreading is invisible to all of them. This job is the answer
-  // to that, and it is the open risk docs/v0.9.5/kerberos.md names.
+  // to that, and it is the open risk docs/v0.9.6/kerberos.md names.
   //
   // It needs a real Windows Server domain controller, which is what
   // infra/terraform-krb5 stands up and infra/krb5-test.sh drives:
@@ -4407,7 +4407,7 @@ function buildJobs() {
     // console walked in a browser). All four asserted things about the mock
     // STS rather than about this debugger, and the mock's own suite drives
     // them now, in the tree where a change to that console is made. They were
-    // removed here on 2026-08-28; see docs/v0.9.5/mock-sts.md.
+    // removed here on 2026-08-28; see docs/v0.9.6/mock-sts.md.
     jobs.push({
       name: "VC Issuance — issuer named by DID (did:web, domain linkage, " +
           "both formats)",
@@ -4559,7 +4559,7 @@ function buildJobs() {
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
-    // THE USER GUIDE'S TUTORIALS, walked the way docs/v0.9.5/vc/ tells a reader
+    // THE USER GUIDE'S TUTORIALS, walked the way docs/v0.9.6/vc/ tells a reader
     // to walk them: step 1 from the issuer's metadata, pre-authorized offers
     // (Transaction Code, DPoP, deferred, every format the issuer offers), DID
     // Tools against the issuer's origin, and a presentation to the debugger's
@@ -4567,7 +4567,7 @@ function buildJobs() {
     // an api. Its doc_screenshots.js calls are inert unless DOC_SCREENSHOT_DIR
     // is set.
     jobs.push({
-      name: "VC user guide — the tutorials of docs/v0.9.5/vc/ (issuance by " +
+      name: "VC user guide — the tutorials of docs/v0.9.6/vc/ (issuance by " +
           "pre-authorized offer, DID Tools, presentation to the debugger's " +
           "own Verifier)",
       script: "vc_user_guide.js",
@@ -4578,8 +4578,8 @@ function buildJobs() {
             (env.API_URL || "https://localhost:4000"),
       },
     });
-    // THE SAML AND WS-TRUST USER GUIDES' WALK (docs/v0.9.5/saml/,
-    // docs/v0.9.5/wstrust/), the way vc_user_guide.js walks docs/v0.9.5/vc/: a
+    // THE SAML AND WS-TRUST USER GUIDES' WALK (docs/v0.9.6/saml/,
+    // docs/v0.9.6/wstrust/), the way vc_user_guide.js walks docs/v0.9.6/vc/: a
     // SAML 2.0 sign-in from saml_request.html, then the WS-Trust pages' Issue,
     // OnBehalfOf and ActAs. It creates its two accounts (guide-saml,
     // guide-wstrust) on iya-sts with passwords made here for this run, and
@@ -4588,7 +4588,7 @@ function buildJobs() {
     // DOC_SCREENSHOT_DIR is set.
     jobs.push({
       name: "SAML and WS-Trust user guides — the walks of " +
-          "docs/v0.9.5/saml/ and docs/v0.9.5/wstrust/",
+          "docs/v0.9.6/saml/ and docs/v0.9.6/wstrust/",
       script: "saml_wstrust_user_guide.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,

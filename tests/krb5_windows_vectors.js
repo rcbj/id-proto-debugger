@@ -284,7 +284,7 @@ async function theWindowsPacParsesAndVerifies(capture) {
   // not what one might assume: both post-CVE-2020-17049 signatures are here
   // (ticket checksum, extended KDC checksum) and PAC_ATTRIBUTES_INFO (17) and
   // PAC_REQUESTOR (18) are NOT. The mock puts 17 and 18 in a service ticket;
-  // see the note in docs/v0.9.5/kerberos.md.
+  // see the note in docs/v0.9.6/kerberos.md.
   assert.ok(types.indexOf(pacMod.TYPE.TICKET_CHECKSUM) >= 0,
     "Windows Server 2025 includes a ticket checksum in a service ticket's PAC");
   assert.ok(types.indexOf(pacMod.TYPE.EXTENDED_KDC_CHECKSUM) >= 0,

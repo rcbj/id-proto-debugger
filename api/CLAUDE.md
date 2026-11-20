@@ -75,7 +75,7 @@ The mock STS serves its **main port over TLS** in this project's test stacks
 preference: the RFC 9700 pass is a **trust realm** on that one instance now
 rather than a second container, a realm binds no socket of its own, and the pass
 is only honest over https — requirement 8.1 is that every configured endpoint is
-https and the client under test enforces it. `docs/v0.9.5/rfc9700.md` argues all of it.
+https and the client under test enforces it. `docs/v0.9.6/rfc9700.md` argues all of it.
 
 This service reaches that port for SCIM, for the WS-Trust / SAML / OIDC proxying
 the browser asks it to do, and for the Kerberos MS-KKDCP relay, and every one of
@@ -156,7 +156,7 @@ What bounds the service endpoint is therefore the **payload check**, and it is s
 
 What bounds it is narrower than the other two and needs no setting of its own. The method is `GET` and nothing else, and the **only** header a caller can influence is `Authorization`, whose value this service builds itself as `Negotiate <base64>` from a token whose alphabet it has validated (node's base64 decoder is lenient — see the trap above — so an unreadable token would otherwise reach the far end shorter and different, and be refused by somebody else's machine). A caller cannot inject a header, a method or a body. Everything else is the shared axios instance, so the SSRF guard, the four limits and the `User-Agent` apply unchanged and automatically; there is no `krb5SpnegoPorts` because there is nothing here that the existing HTTP endpoints do not already do. `GET /krb5/limits` publishes `spnegoEnabled` so the page can tell an older api from a broken one, and `spnegoBodyChars` — a **display** cap on the body, separate from `maxContentLength`, because what is being debugged is the handshake in the headers and the body is a page meant for a browser.
 
-One thing it must not treat as a failure: **a 401 is the protocol.** The first request is supposed to be refused and the refusal carries the challenge, so `validateStatus` returns true for everything. A handler that threw on 4xx would make the normal case an error path. See `docs/v0.9.5/spnego.md`.
+One thing it must not treat as a failure: **a 401 is the protocol.** The first request is supposed to be refused and the refusal carries the challenge, so `validateStatus` returns true for everything. A handler that threw on 4xx would make the normal case an error path. See `docs/v0.9.6/spnego.md`.
 
 One thing the Kerberos service endpoint must not report as a failure: a service that **closes the connection without answering**. A client that did not request mutual authentication is not owed a reply, so the handler answers 200 with a null reply and a note saying that nothing has proved the service is who it claims to be — which is the fact that matters, and is not an error.
 
@@ -180,7 +180,7 @@ The four existing limits are reused unchanged, and **a tenth setting is new**: `
 
 Two refusals are published rather than left to be discovered: **a referral is recorded and NOT followed** — chasing one means opening a connection to a URL the *directory* chose, which is a server-side request forgery with a specification citation attached, the same reason WS-Federation's `wreqptr` is never dereferenced — and there is no StartTLS and no SASL, simple bind only.
 
-One implementation detail that is not optional: **the bind waits for the socket.** ldapjs's client is created not-yet-connected, and an operation issued before its `connect` event is refused with result code 80 and the message "connection unavailable" when `queueDisable` is set — which looks exactly like a directory answering `other`. The first working version of this file reported a healthy local server as a failed bind with a code that has nothing to do with credentials. `reconnect` is off for a related reason: a silent retry turns an intermittent failure into a report saying everything worked. See `docs/v0.9.5/ldap.md`.
+One implementation detail that is not optional: **the bind waits for the socket.** ldapjs's client is created not-yet-connected, and an operation issued before its `connect` event is refused with result code 80 and the message "connection unavailable" when `queueDisable` is set — which looks exactly like a directory answering `other`. The first working version of this file reported a healthy local server as a failed bind with a code that has nothing to do with credentials. `reconnect` is off for a related reason: a silent retry turns an intermittent failure into a report saying everything worked. See `docs/v0.9.6/ldap.md`.
 
 ## SCIM: an ordinary HTTP proxy, and the one workflow that does not need it
 
@@ -242,7 +242,7 @@ sanitises; `server.js` makes the call. That split is what lets
 server on the other end — so a rule that stopped being enforced fails a test
 naming the rule rather than timing out against a host. `GET /scim/limits`
 publishes the methods, the refused headers, the caps and the status rule, and is
-also how the page discovers whether there is an api at all. See `docs/v0.9.5/scim.md`.
+also how the page discovers whether there is an api at all. See `docs/v0.9.6/scim.md`.
 
 ## OpenID4VP: the wallet's route to a Verifier that sends no CORS headers
 
@@ -393,7 +393,7 @@ That is `pushSet()` in `server.js`, an ordinary axios call with the shared
 agents, `callTimeout`, `maxContentLength`, `maxRedirects` and the User-Agent,
 so the address policy covers it like every other. The receiver's secret is
 never handed back to anybody. Bounds and expiry mirror the inbox's, under
-`ssfTransmitter*` in `api/env/*.js`; see `docs/v0.9.5/ssf.md`, *The other way round*.
+`ssfTransmitter*` in `api/env/*.js`; see `docs/v0.9.6/ssf.md`, *The other way round*.
 
 **THE BODY PARSER IS PART OF THIS AND IS EASY TO MISS.** A Security Event Token
 arrives as `application/secevent+jwt` (RFC 8417 section 2.3), which neither
@@ -422,7 +422,7 @@ failed to connect, and went red on a GitHub Actions runner where
 themselves belong to `tests/api_ssrf_guard.js`, which drives the guard module
 directly and needs no network. The SCHEME check (`file:`, `data:`) is not
 configurable and is on either way. `tests/api_ssf.js` drives the routes;
-`tests/ssf_engine.js` drives both modules with no listener. See `docs/v0.9.5/ssf.md`.
+`tests/ssf_engine.js` drives both modules with no listener. See `docs/v0.9.6/ssf.md`.
 
 ## GNAP: the page signs, and this service forwards the signed request
 
@@ -451,7 +451,7 @@ the length is a property of the body this service sends. `GET
 and it is how the page learns there is an api at all. A static
 deployment has no api. The page can then call the authorization server
 from the browser, which works when that server allows the origin. See
-`docs/v0.9.5/gnap.md`.
+`docs/v0.9.6/gnap.md`.
 
 **mtls is the one GNAP proof this service MAKES rather than forwards**
 (RFC 9635 section 7.3.2): the key is the TLS client certificate and a
@@ -599,13 +599,13 @@ Both are handled from typed-out tables (`WRAPPED_FIELDS`, `STRUCT_FIELDS`)
 rather than by walking descriptors, because a descriptor's `typeName` is a
 RELATIVE protobuf name and resolving one means implementing protobuf's own
 name-resolution algorithm. `tests/spiffe_engine.js` reads every `.proto` and
-fails if such a field is missing from either table. See `docs/v0.9.5/spiffe.md`.
+fails if such a field is missing from either table. See `docs/v0.9.6/spiffe.md`.
 
 ## The TLS probe: a second raw socket, and the ninth setting
 
 `POST /tls/connect` (`api/tls_probe.js`) opens a TLS — or **mutual** TLS —
 connection to a caller-named host and reports both sides of the handshake. It
-exists for the PKI page (`client/public/pki.html`, `docs/v0.9.5/pki.md`), and it exists
+exists for the PKI page (`client/public/pki.html`, `docs/v0.9.6/pki.md`), and it exists
 **because a browser cannot do this and is not close**:
 
 * the **client certificate** is chosen by the browser's own UI from the browser's
@@ -757,7 +757,7 @@ server that said nothing — so the page can say what this service will do befor
 call fails rather than reporting its own limits as somebody else's fault. And **the
 no-response branch must answer**, as everywhere else here: a refusal by policy is
 a 400, a network failure is a 502, and a failed HANDSHAKE is neither — it
-resolves with a report, because the alert is the answer. See `docs/v0.9.5/pki.md`.
+resolves with a report, because the alert is the answer. See `docs/v0.9.6/pki.md`.
 
 ## Smart cards: a reader on THIS machine, off by default
 
@@ -770,7 +770,7 @@ PIV and OpenPGP both have reset and terminate commands. So the relay
 answers 403 unless the env file sets **`smartcardReaderEnabled: true`**,
 and all four `api/env/*.js` ship it `false`. A transmit is a sequence of
 up to 16 APDUs on one connection (exclusive when there is more than one),
-with GET RESPONSE and the 6Cxx retry; see `docs/v0.9.5/smartcard.md`.
+with GET RESPONSE and the 6Cxx retry; see `docs/v0.9.6/smartcard.md`.
 `POST /otp/verify` (`api/otp_verify.js`) is an ordinary outbound call on
 the shared agents, sent as the HTTP GET Validation Protocol 2.0 specifies.
 
@@ -858,7 +858,7 @@ namespace. Note SAML 1.1's is `urn:oasis:names:tc:SAML:1.0:protocol` and that is
 not a typo: the schemas were never renamed between 1.0 and 1.1 — the version
 travels in `MajorVersion`/`MinorVersion` attributes instead.
 
-See `docs/v0.9.5/saml11.md`.
+See `docs/v0.9.6/saml11.md`.
 
 ## Dependency overrides
 

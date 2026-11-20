@@ -391,7 +391,7 @@ function handSessionToSharedSignals(assertion) {
   var subj = tags(assertion, 'Subject')[0];
   // SAML 1.1 spells it <saml:NameIdentifier> and 2.0 <saml:NameID>. Reading
   // only one of them would hand over a session with no subject on whichever
-  // version this reader was not written for — see `docs/v0.9.5/saml11.md`.
+  // version this reader was not written for — see `docs/v0.9.6/saml11.md`.
   var nameId = subj
     ? (tags(subj, 'NameID')[0] || tags(subj, 'NameIdentifier')[0])
     : null;
