@@ -324,7 +324,8 @@ function apiBase() {
 
 function viaApi() {
   log.debug("Entering viaApi().");
-  var on = sdJwtVc.get(KEYS.VIA_API) === "1" && !!apiBase();
+  var on = sdJwtVc.get(KEYS.VIA_API) === "1" && !!apiBase() &&
+    backendAvailable();
   log.debug("Leaving viaApi(). " + on);
   return on;
 }
@@ -382,12 +383,30 @@ function verifierFetch(url, init) {
   });
 }
 
-// Whether this deployment has an api that offers the route at all: a static
-// deployment answers nothing at /oid4vp/limits.
+// Whether this deployment has an api that offers the route at all. A static
+// build says it has none (backendAvailable: false), and is not asked: its
+// apiUrl is the site itself, which answers /oid4vp/limits with a 404 that
+// the browser logs as an error on every VC Presentation page.
+function backendAvailable() {
+  log.debug("Entering backendAvailable().");
+  var available = true;
+  try {
+    available = require(process.env.CONFIG_FILE).backendAvailable !== false;
+  } catch (e) {
+    available = true;
+  }
+  log.debug("Leaving backendAvailable(). " + available);
+  return available;
+}
+
 function apiRouteAvailable() {
   log.debug("Entering apiRouteAvailable().");
   if (!apiBase()) {
     log.debug("Leaving apiRouteAvailable(). No api configured.");
+    return Promise.resolve(false);
+  }
+  if (!backendAvailable()) {
+    log.debug("Leaving apiRouteAvailable(). A static build has no api.");
     return Promise.resolve(false);
   }
   log.debug("Leaving apiRouteAvailable().");

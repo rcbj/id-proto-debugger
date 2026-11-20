@@ -1522,8 +1522,15 @@ async function samlGuide(driver) {
   await samlLogout(driver);
   await samlRequestPage(driver);
   await samlRoundTrip(driver, "post", samlUser);
-  await samlRequestPage(driver);
-  await samlRoundTrip(driver, "artifact", samlUser);
+  if (process.env.SAML_BACKEND_AVAILABLE === "false") {
+    // The Artifact binding's ArtifactResolve is a server-side SOAP
+    // back-channel, which a static site cannot make under any arrangement
+    // (the SAML Artifact jobs skip there for the same reason).
+    log.info("Artifact binding left out: this target has no api backend.");
+  } else {
+    await samlRequestPage(driver);
+    await samlRoundTrip(driver, "artifact", samlUser);
+  }
   await saml11(driver, samlUser);
   log.debug("Leaving samlGuide().");
 }
